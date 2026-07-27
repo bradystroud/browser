@@ -20,10 +20,14 @@ if [[ ! -f "${MANIFEST}" ]]; then
   exit 1
 fi
 
+# A secure timestamp is required by notarization (every signature in the
+# bundle needs one) but is a harmless no-op for ad-hoc signing (identity "-")
+# -- codesign silently skips it since there's no cert chain to timestamp, so
+# this is always safe to pass, dev builds included.
 sign_with_entitlements() {
   local target="$1"
   local entitlements="$2"
-  codesign --force --options runtime --timestamp=none \
+  codesign --force --options runtime --timestamp \
     --sign "${IDENTITY}" \
     --entitlements "${entitlements}" \
     "${target}"
@@ -37,16 +41,18 @@ if [[ ! -d "${FRAMEWORK_DIR}" ]]; then
 fi
 
 # 1. Innermost first: support dylibs inside the framework (ANGLE/SwANGLE etc).
+#    Hardened runtime here too -- notarization requires it on every piece of
+#    executable code in the bundle, not just the app/helpers.
 if [[ -d "${FRAMEWORK_DIR}/Libraries" ]]; then
   while IFS= read -r -d '' lib; do
     echo "Signing (lib): ${lib}"
-    codesign --force --sign "${IDENTITY}" --timestamp=none "${lib}"
+    codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${lib}"
   done < <(find "${FRAMEWORK_DIR}/Libraries" -type f \( -name "*.dylib" -o -name "*.so" \) -print0)
 fi
 
 # 2. The framework bundle itself.
 echo "Signing (framework): ${FRAMEWORK_DIR}"
-codesign --force --sign "${IDENTITY}" --timestamp=none "${FRAMEWORK_DIR}"
+codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${FRAMEWORK_DIR}"
 
 # 3. Helper app bundles, then the main app last -- exactly the order CMake
 #    wrote into the manifest (helpers first, "app|.|..." appended last).
