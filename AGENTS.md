@@ -24,6 +24,8 @@ Launching the app to confirm it starts, and reading logs/crash reports, is fine.
 
 ## Conventions
 
+- **Shared-tree commits:** multiple agents work in this tree concurrently. Always commit with explicit paths (`git commit -m "..." -- <your files>`) — never bare `git commit` (it sweeps whatever anyone else has staged) and never `git add -A`/`git add .`.
+
 - Plans live in `docs/plans/`, filenames `YYYY-MM-DD-TOPIC.md`. Research reports in `docs/research/`.
 - CEF binary distributions are large; they live under `third_party/cef/` and are gitignored — `scripts/fetch-cef.sh` downloads the pinned version (currently 150.0.14, macOS arm64 Standard distribution).
 - The link-routing rule model + matcher (`RoutingRule`/`RuleMatcher`) live in `RoutingCore/`, a standalone SwiftPM package with its own unit tests (`cd RoutingCore && swift test`) so the matching logic can be tested independent of the full CEF/Xcode app build. `Sources/App/CMakeLists.txt` compiles those same source files directly into the Browser executable — one copy of the logic, two ways to build it. See `docs/ai-tasks/m2-routing-notes.md`.
