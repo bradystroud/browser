@@ -37,6 +37,7 @@ set(BROWSER_SWIFT_SRCS
   ShortcutsHelp.swift
   ShortcutsOverlayController.swift
   ShortcutsOverlayPanelFactory.swift
+  TabCyclingController.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift

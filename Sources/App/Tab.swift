@@ -25,6 +25,20 @@ final class Tab: NSObject, BRWBrowserDelegate {
     private(set) var canGoBack = false
     private(set) var canGoForward = false
 
+    /// True until this tab's first load finishes, then consumed. CEF's
+    /// CefFocusHandler::OnSetFocus defaults to allowing the browser's own
+    /// focus requests (and BRWClientHandler doesn't override it), so the
+    /// freshly created native view reliably grabs first responder for
+    /// itself once its initial paint completes -- shortly *after*
+    /// BrowserWindowController.addTab's own makeFirstResponder(omniboxField)
+    /// call on the very same tick, winning that race every time (confirmed
+    /// by reproducing a fresh tab's omnibox losing focus by the time a
+    /// keypress arrives ~0.5s later). Re-asserting the omnibox once loading
+    /// settles, exactly once per tab, fixes it without permanently blocking
+    /// the browser from ever taking focus (e.g. when the user clicks into
+    /// the page deliberately).
+    var needsInitialOmniboxFocus = true
+
     weak var delegate: TabDelegate?
 
     init(profileName: String, initialURL: String) {

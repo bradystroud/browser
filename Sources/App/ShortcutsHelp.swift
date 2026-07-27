@@ -49,11 +49,18 @@ enum ShortcutsHelp {
         #selector(NSApplication.terminate(_:)): .general,
     ]
 
-    /// ⌘1-9 deliberately has no menu item (nine near-identical entries would
-    /// be clutter -- see BrowserWindow.performKeyEquivalent), so it's the one
-    /// entry not read live from a real menu item.
+    /// Entries with no real menu item behind them, so they can't be derived
+    /// live: ⌘1-9 (nine near-identical entries would be clutter -- see
+    /// BrowserWindow.performKeyEquivalent) and Ctrl+Tab/Ctrl+Shift+Tab (a
+    /// bare-Control keyDown never reaches AppKit's menu key-equivalent
+    /// routing, so these are a raw NSEvent monitor instead -- see
+    /// TabCyclingController).
     private static let extraEntries: [ShortcutCategory: [ShortcutEntry]] = [
-        .tabs: [ShortcutEntry(key: "⌘1–9", title: "Select Tab")],
+        .tabs: [
+            ShortcutEntry(key: "⌘1–9", title: "Select Tab"),
+            ShortcutEntry(key: "⌃⇥", title: "Next Tab"),
+            ShortcutEntry(key: "⌃⇧⇥", title: "Previous Tab"),
+        ],
     ]
 
     static func sections() -> [(ShortcutCategory, [ShortcutEntry])] {

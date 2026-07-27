@@ -171,6 +171,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         )
         if makeActive {
             activateTab(at: newIndex)
+            // New tabs (Cmd+T, the tab strip's "+" button, and a new
+            // window's first tab via show()) land in the omnibox with its
+            // text selected, ready to type a URL -- standard browser
+            // behavior. Tab-switching between existing tabs (selectTab)
+            // deliberately doesn't do this -- only genuinely new tabs.
+            //
+            // Deferred a run-loop turn: called synchronously here, the
+            // field's selection reliably doesn't stick (focus does, but the
+            // select-all silently doesn't survive whatever AppKit/CEF
+            // window-settling happens moments later) -- confirmed by
+            // reproducing a fresh tab ending up focused-but-unselected.
+            // needsInitialOmniboxFocus's re-assertion below is the more
+            // important guard against CEF's own focus grab; this immediate
+            // call is a fast-path for the common case where that race
+            // doesn't happen at all.
+            DispatchQueue.main.async { [weak self] in
+                self?.focusOmnibox(nil)
+            }
         }
         return tab
     }
@@ -261,6 +279,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
         }
+        // See Tab.needsInitialOmniboxFocus: CEF's own view reliably takes
+        // first responder for itself shortly after the tab's initial load
+        // settles, winning the race against addTab's earlier
+        // makeFirstResponder(omniboxField) call. Re-assert once, right when
+        // that settling happens, so the omnibox actually ends up focused --
+        // deferred a run-loop turn for the same reason as addTab's own call
+        // (the selection silently doesn't stick when done synchronously
+        // here, same as there).
+        if tab.needsInitialOmniboxFocus, !tab.isLoading, tab === activeTab {
+            tab.needsInitialOmniboxFocus = false
+            DispatchQueue.main.async { [weak self] in
+                self?.focusOmnibox(nil)
+            }
+        }
     }
 
     // MARK: - TabStripViewDelegate
@@ -281,7 +313,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // NSWindowController is automatically next-responder after its window).
 
     @objc func newTab(_ sender: Any?) {
-        addTab(url: "https://example.com", makeActive: true)
+        // Blank page + focused, selected address bar is the standard new-tab
+        // UX -- loading a real page here would fight with the omnibox-focus
+        // flow (the user is about to type over it anyway).
+        addTab(url: "about:blank", makeActive: true)
     }
 
     @objc func closeTab(_ sender: Any?) {

@@ -18,8 +18,16 @@ final class WindowManager {
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
         }
-        controller.show()
+        // Activate the app *before* showing the window and focusing its
+        // omnibox (see BrowserWindowController.addTab): if the process isn't
+        // yet the active application (e.g. launched by directly exec'ing the
+        // binary rather than via Launch Services), a first-responder change
+        // made before activation completes doesn't reliably stick once
+        // activation catches up -- confirmed by reproducing a fresh window's
+        // omnibox failing to end up focused/selected with this ordering
+        // reversed.
         NSApp.activate(ignoringOtherApps: true)
+        controller.show()
         return controller
     }
 
