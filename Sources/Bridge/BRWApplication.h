@@ -18,6 +18,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// then exit -- instead of letting AppKit's default -terminate: tear the
 /// process down immediately. See the .mm file for why this can't be done via
 /// NSApplicationDelegate's -applicationShouldTerminate:.
+
+/// True from the moment -terminate: starts running its close-and-wait
+/// sequence. AppDelegate's -applicationShouldTerminateAfterLastWindowClosed:
+/// checks this to avoid redundantly re-entering -terminate: when closing the
+/// last window is itself a side effect of -terminate: already running,
+/// rather than the user manually closing it.
+@property (nonatomic, readonly) BOOL isTerminating;
+
 @end
 
 NS_ASSUME_NONNULL_END

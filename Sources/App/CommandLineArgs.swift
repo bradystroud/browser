@@ -22,11 +22,34 @@ enum CommandLineArgs {
         return "https://example.com"
     }
 
+    /// `--test-no-activate` launch flag for contained, non-interactive quit
+    /// testing: WindowManager skips NSApp.activate(ignoringOtherApps:) and
+    /// positions new windows off the visible screen frame, so a test process
+    /// exercises the same real NSWindow/close paths without ever stealing
+    /// keyboard focus or becoming visible on the actual display -- see
+    /// docs/ai-tasks/quit-crash-notes.md (a stray real click on a focus-
+    /// stolen test window is what this exists to prevent). No-ops (returns
+    /// false) unless explicitly passed, so normal launches are unaffected.
+    static func testNoActivate() -> Bool {
+        CommandLine.arguments.contains("--test-no-activate")
+    }
+
     /// CefSettings.root_cache_path -- all profile cache_paths must live under
-    /// this shared parent (see AGENTS.md / docs/research).
+    /// this shared parent (see AGENTS.md / docs/research). `--profiles-root
+    /// <path>` overrides the default `~/Library/Application Support/Browser/
+    /// Profiles` -- CEF's process-singleton lock is scoped to this one
+    /// directory (not per-profile), so this is the only way to run a second,
+    /// fully independent instance for testing without quitting whichever one
+    /// is already running against the default path.
     static func profilesRootPath() -> String {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let profilesRoot = appSupport.appendingPathComponent("Browser").appendingPathComponent("Profiles")
+        let args = CommandLine.arguments
+        let profilesRoot: URL
+        if let index = args.firstIndex(of: "--profiles-root"), index + 1 < args.count {
+            profilesRoot = URL(fileURLWithPath: args[index + 1])
+        } else {
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            profilesRoot = appSupport.appendingPathComponent("Browser").appendingPathComponent("Profiles")
+        }
         try? FileManager.default.createDirectory(at: profilesRoot, withIntermediateDirectories: true)
         return profilesRoot.path
     }

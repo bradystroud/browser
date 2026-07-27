@@ -44,9 +44,12 @@ std::string &ProfilesRootPath() {
 }
 
 // Non-nil while +requestShutdownWithCompletion: is waiting for every open
-// browser's OnBeforeClose. Checked after each +doMessageLoopWork tick (the
-// only place those callbacks are delivered, given external_message_pump) and
-// fired -- exactly once -- as soon as BRWClientHandler::LiveCount() reaches 0.
+// browser's OnBeforeClose. Checked (via +[BRWEngine checkShutdownCompletion])
+// after every real CefDoMessageLoopWork() tick -- BRWMessagePump::DoWork(),
+// not +[BRWEngine doMessageLoopWork] (nothing calls that method; CEF's actual
+// external-pump ticks all run through BRWMessagePump, which calls
+// CefDoMessageLoopWork() directly) -- and fired, exactly once, as soon as
+// BRWClientHandler::LiveCount() reaches 0.
 using ShutdownCompletionBlock = void (^)(void);
 ShutdownCompletionBlock __strong &PendingShutdownCompletion() {
   static ShutdownCompletionBlock completion = nil;
@@ -60,6 +63,13 @@ void CheckShutdownCompletion() {
   ShutdownCompletionBlock completion = PendingShutdownCompletion();
   PendingShutdownCompletion() = nil;
   completion();
+}
+
+// Set via +setWindowCloseHandler:. See that method's doc comment.
+using WindowCloseHandlerBlock = void (^)(void);
+WindowCloseHandlerBlock __strong &WindowCloseHandler() {
+  static WindowCloseHandlerBlock handler = nil;
+  return handler;
 }
 
 }  // namespace
@@ -112,9 +122,17 @@ CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &pro
   CheckShutdownCompletion();
 }
 
++ (void)checkShutdownCompletion {
+  CheckShutdownCompletion();
+}
+
 + (void)shutdown {
   ProfileContexts().clear();
   CefShutdown();
+}
+
++ (void)setWindowCloseHandler:(void (^)(void))handler {
+  WindowCloseHandler() = [handler copy];
 }
 
 + (void)requestShutdownWithCompletion:(void (^)(void))completion {
@@ -127,6 +145,14 @@ CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &pro
       completion();
     }
   } copy];
+  // Closes every Swift-owned window through its normal close path first --
+  // this is what actually tears down the Tab/BrowserWindowController objects
+  // (and, through Tab.close(), most CefBrowsers) before CefShutdown runs.
+  // CloseAll() below is then just the safety net for anything that path
+  // couldn't reach yet (see its own doc comment).
+  if (WindowCloseHandler()) {
+    WindowCloseHandler()();
+  }
   BRWClientHandler::CloseAll();
   // CloseAll() may not have needed to touch CEF at all (no open browsers),
   // in which case doMessageLoopWork's next tick could be arbitrarily far

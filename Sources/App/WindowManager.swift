@@ -26,7 +26,13 @@ final class WindowManager {
         // activation catches up -- confirmed by reproducing a fresh window's
         // omnibox failing to end up focused/selected with this ordering
         // reversed.
-        NSApp.activate(ignoringOtherApps: true)
+        //
+        // Skipped under --test-no-activate: activating steals real keyboard
+        // focus on the actual display, which is exactly what that flag exists
+        // to avoid for contained test launches -- see CommandLineArgs.
+        if !CommandLineArgs.testNoActivate() {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         controller.show()
         return controller
     }
@@ -60,6 +66,25 @@ final class WindowManager {
     /// is safe and doesn't affect this iteration).
     func closeAllWindows(forProfileId profileId: String) {
         for controller in windowControllers where controller.profile.id == profileId {
+            controller.window?.close()
+        }
+    }
+
+    /// Registered with BRWEngine (see AppDelegate.applicationDidFinishLaunching)
+    /// as the block +[BRWEngine requestShutdownWithCompletion:] runs before it
+    /// touches CEF directly. Closing every window the normal way -- rather
+    /// than leaving them alive for CefShutdown+exit(0) to race against --
+    /// runs each BrowserWindowController's ordinary windowWillClose, which
+    /// closes every tab's BRWBrowser and releases the Tab/controller objects
+    /// synchronously, before AppKit's own at-exit window teardown would
+    /// otherwise get to them *after* CEF's global state is already torn down
+    /// (the EXC_BAD_ACCESS this fixes: see docs/ai-tasks/quit-crash-notes.md).
+    /// -[NSWindow close] completing -- not merely CloseBrowser() being called
+    /// -- is also what triggers CEF's own OnBeforeClose delivery for a
+    /// windowed-rendering browser (see BRWClientHandler::DoClose's comment),
+    /// so this is required for CEF's own sake too, not just to avoid the UAF.
+    func closeAllWindowsForShutdown() {
+        for controller in windowControllers {
             controller.window?.close()
         }
     }

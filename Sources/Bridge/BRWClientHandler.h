@@ -45,6 +45,19 @@ class BRWClientHandler : public CefClient,
 
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
+
+  // DoClose is deliberately NOT overridden -- CefLifeSpanHandler's default
+  // (returning false) is what's required here. Per its own doc comment,
+  // returning true means "the application will send a non-standard close
+  // notification and complete the browser close itself," and if it then
+  // doesn't, "the browser will be left in a partially closed state that
+  // interferes with proper functioning." The default instead makes CEF send
+  // the standard close notification (-performClose: on macOS, given windowed
+  // rendering) to the SetAsChild host view's top-level NSWindow -- our own
+  // BrowserWindowController's window -- and it's that window's teardown
+  // completing (handled by our own windowWillClose, which closes every
+  // tab's BRWBrowser) that actually triggers OnBeforeClose, not
+  // CloseBrowser() by itself.
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler methods:
@@ -81,11 +94,26 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   bool IsClosed() const { return closed_; }
 
+  // Requests that this handler's browser close -- force-closing (skipping
+  // JS beforeunload) -- exactly once no matter how many times this is
+  // called, from whichever of -[BRWBrowser close] (a single tab's normal
+  // close), CloseAll() (quitting), or OnAfterCreated's pending_close_ flush
+  // reaches it first. This dedup is load-bearing, not just tidiness:
+  // CefBrowserHost::CloseBrowser() a second time on a browser that's already
+  // mid-close never delivers OnBeforeClose at all -- confirmed by hanging
+  // shutdown forever (CheckShutdownCompletion ticking correctly, LiveCount()
+  // stuck above 0) when a normal per-tab close and CloseAll()'s own pass
+  // both requested the same browser's close moments apart. See
+  // docs/ai-tasks/quit-crash-notes.md.
+  void RequestClose();
+
   // Force-closes every handler with a live browser (i.e. constructed but not
   // yet OnBeforeClose'd). CEF requires every CefBrowser to be closed -- and
   // OnBeforeClose delivered for it -- before CefShutdown runs; this is the
   // "close all browsers" half of that sequence, driven by +[BRWEngine
-  // requestShutdownWithCompletion:]. Safe to call with zero live handlers.
+  // requestShutdownWithCompletion:]. Safe to call with zero live handlers,
+  // and safe to call for a handler whose close was already requested some
+  // other way (see RequestClose()).
   static void CloseAll();
 
   // Number of handlers still awaiting OnBeforeClose. +[BRWEngine
@@ -97,10 +125,14 @@ class BRWClientHandler : public CefClient,
   NSView* host_view_;
   CefRefPtr<CefBrowser> browser_;
   bool closed_ = false;
-  // Set by CloseAll() when it runs before OnAfterCreated has fired for this
-  // handler (CreateBrowser is asynchronous) -- there's no CefBrowser yet to
-  // close, so OnAfterCreated closes it immediately instead of loading.
+  // Set by RequestClose() when it runs before OnAfterCreated has fired for
+  // this handler (CreateBrowser is asynchronous) -- there's no CefBrowser
+  // yet to close, so OnAfterCreated closes it immediately instead of loading.
   bool pending_close_ = false;
+  // Set the first time RequestClose() actually calls CloseBrowser() --
+  // guards against calling it a second time on the same browser (see
+  // RequestClose()'s doc comment for why that breaks OnBeforeClose delivery).
+  bool close_requested_ = false;
   __weak id<BRWBrowserDelegate> delegate_;
   std::string pending_url_;
 

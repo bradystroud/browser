@@ -60,8 +60,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Orders the window on screen and creates the first tab's CEF browser.
     /// Mirrors the M0 spike's ordering (window on screen, then CreateBrowser)
     /// deliberately -- SetAsChild needs the host view's real frame.
+    ///
+    /// Under --test-no-activate (contained testing, see CommandLineArgs),
+    /// the window is moved off the visible screen frame and ordered in
+    /// without becoming key -- a real NSWindow with a real frame (so
+    /// SetAsChild's bounds are still valid and every close path is still
+    /// exercised for real), just invisible and focus-neutral on the actual
+    /// display.
     func show() {
-        window?.makeKeyAndOrderFront(nil)
+        if CommandLineArgs.testNoActivate() {
+            window?.setFrameOrigin(NSPoint(x: -3000, y: -3000))
+            window?.orderBack(nil)
+        } else {
+            window?.makeKeyAndOrderFront(nil)
+        }
         if tabs.isEmpty {
             addTab(url: initialURL, makeActive: true)
         }

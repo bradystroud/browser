@@ -18,8 +18,19 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Pumps the CEF message loop. The caller integrates this with its own run
 /// loop (e.g. an NSTimer firing in common run loop modes); CEF is configured
-/// with external_message_pump so it never spins its own loop.
+/// with external_message_pump so it never spins its own loop. Currently
+/// unused -- BRWMessagePump.mm calls CefDoMessageLoopWork() directly rather
+/// than through this method; kept for whatever future integration wants a
+/// single Obj-C entry point for it, but +checkShutdownCompletion below (the
+/// thing that actually needs to run on every real tick) is called from
+/// BRWMessagePump instead, not from here.
 + (void)doMessageLoopWork;
+
+/// Checked by BRWMessagePump after every real CefDoMessageLoopWork() tick
+/// (the only place CEF's close/OnBeforeClose callbacks actually get
+/// delivered): fires +requestShutdownWithCompletion:'s completion once every
+/// browser has confirmed closed. Not for any other caller.
++ (void)checkShutdownCompletion;
 
 /// Runs CefShutdown. CEF crashes (EXC_BREAKPOINT) if this runs while any
 /// CefBrowser is still alive -- callers must go through
@@ -27,11 +38,30 @@ NS_ASSUME_NONNULL_BEGIN
 /// Exposed only for that method's own use once every browser has closed.
 + (void)shutdown;
 
-/// Begins process-wide app termination: force-closes every open BRWBrowser,
-/// waits for CEF's required OnBeforeClose callback from each (delivered via
-/// the ongoing +doMessageLoopWork pump), then runs CefShutdown and invokes
-/// `completion` on the main thread. Safe to call with zero open browsers.
-/// This is the only supported way to shut CEF down.
+/// Registers the block the Swift app layer uses to close every window it
+/// owns -- WindowManager.shared's Swift-side NSWindow/BrowserWindowController/
+/// Tab objects, which this bridge has no visibility into otherwise. Call once
+/// at launch (after +initializeWithProfilesRootPath: succeeds).
+/// +requestShutdownWithCompletion: invokes this synchronously, before it
+/// force-closes any browser itself, so that quitting tears down the same
+/// Swift objects (and, through their normal close path, the same CefBrowsers)
+/// a single window's ordinary close button would -- see that method's doc
+/// comment for why leaving them alive is a crash, not just a leak.
++ (void)setWindowCloseHandler:(void (^)(void))handler;
+
+/// Begins process-wide app termination: first invokes the block registered
+/// via +setWindowCloseHandler: (synchronously closing every Swift-owned
+/// window, which closes its tabs' BRWBrowsers through their normal path),
+/// then force-closes any BRWBrowser that's still open regardless -- CEF's
+/// CreateBrowser is asynchronous, so a browser requested moments before
+/// quitting can still be pre-OnAfterCreated and thus untouched by the normal
+/// per-tab close path; see BRWClientHandler::CloseAll()'s pending_close_
+/// handling for that case specifically. Then waits for CEF's required
+/// OnBeforeClose callback from every browser (delivered via the ongoing
+/// +doMessageLoopWork pump), runs CefShutdown, and invokes `completion` on
+/// the main thread. Safe to call with zero open browsers, and safe to call
+/// with no window-close handler registered. This is the only supported way
+/// to shut CEF down.
 ///
 /// The caller must return control to the normal NSApplication run loop
 /// immediately after calling this (rather than blocking, or handing control

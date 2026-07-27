@@ -20,6 +20,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // will- and didFinishLaunching. RoutingCoordinator queues the route
         // until markReady() below, since BRWEngine/profiles aren't up yet.
         URLEventHandler.shared.register()
+
+        // Explicit kAEQuitApplication handler -- Dock "Quit", "quit" via
+        // AppleScript/osascript, and logout/restart/shutdown all deliver this
+        // Apple Event rather than a direct -terminate: message send (unlike
+        // Cmd+Q and the app's own Quit menu item, which dispatch straight to
+        // -[NSApplication terminate:] via the menu's key-equivalent/action).
+        // NSApplication has its own private, undocumented bridge from this
+        // event to -terminate: -- registering our own handler here (same
+        // pattern as URLEventHandler's kAEGetURL, just above) replaces that
+        // bridge with something we control and can debug, rather than relying
+        // on framework-internal wiring that isn't documented.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleQuitEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass),
+            andEventID: AEEventID(kAEQuitApplication)
+        )
+    }
+
+    @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        NSApp.terminate(nil)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -53,6 +74,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // See -[BRWApplication terminate:] and WindowManager.closeAllWindowsForShutdown:
+        // quitting must close every Swift-owned window (and thus its tabs'
+        // BRWBrowsers) through their normal path before CefShutdown runs, not
+        // leave them for AppKit's own at-exit teardown to reach afterward.
+        BRWEngine.setWindowCloseHandler {
+            WindowManager.shared.closeAllWindowsForShutdown()
+        }
+
         // A route already queued here means this was a cold launch via a
         // routed link (see applicationWillFinishLaunching above) -- in that
         // case markReady() below opens the right profile's window for that
@@ -67,8 +96,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // Normally true (closing the last window quits, standard for this kind
+    // of app) -- except while -[BRWApplication terminate:] is already mid-
+    // sequence (BRWApplication.isTerminating), since then it's the one
+    // closing every window as a step in its own close-and-wait-for-CEF
+    // sequence, and there's no need for AppKit to also re-enter -terminate:
+    // from here (that reentrant call is harmless -- see -terminate:'s guard
+    // -- but redundant).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !((NSApp as? BRWApplication)?.isTerminating ?? false)
     }
 
     // CEF's required shutdown sequencing (close every browser, wait for

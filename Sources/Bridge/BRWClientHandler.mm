@@ -27,7 +27,8 @@ void BRWClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   browser_ = browser;
 
   if (pending_close_) {
-    browser_->GetHost()->CloseBrowser(/*force_close=*/true);
+    pending_close_ = false;
+    RequestClose();
     return;
   }
 
@@ -63,6 +64,32 @@ void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   Registry().erase(this);
 }
 
+void BRWClientHandler::RequestClose() {
+  CEF_REQUIRE_UI_THREAD();
+  if (closed_ || close_requested_) {
+    return;
+  }
+  if (!browser_) {
+    // OnAfterCreated hasn't fired yet -- flag it so it closes immediately
+    // once CEF finishes creating the browser instead of loading a page.
+    pending_close_ = true;
+    return;
+  }
+  close_requested_ = true;
+
+  // CEF's Alloy/SetAsChild close-detection on macOS appears to depend on the
+  // browser-created native view actually being removed from the AppKit view
+  // hierarchy -- without this, CloseBrowser() completes without error but
+  // OnBeforeClose is never delivered, hanging shutdown forever (confirmed:
+  // message pump ticking correctly, LiveCount() stuck > 0). Not documented
+  // in CEF's own header, but matches an identical report from another
+  // Swift+CEF project: github.com/lvsti/CEF.swift/issues/22.
+  NSView *cef_view = (__bridge NSView *)(void *)browser_->GetHost()->GetWindowHandle();
+  [cef_view removeFromSuperview];
+
+  browser_->GetHost()->CloseBrowser(/*force_close=*/true);
+}
+
 // static
 void BRWClientHandler::CloseAll() {
   CEF_REQUIRE_UI_THREAD();
@@ -71,16 +98,7 @@ void BRWClientHandler::CloseAll() {
   // out from under a live iterator.
   std::vector<BRWClientHandler*> handlers(Registry().begin(), Registry().end());
   for (BRWClientHandler* handler : handlers) {
-    if (handler->closed_) {
-      continue;
-    }
-    if (handler->browser_) {
-      handler->browser_->GetHost()->CloseBrowser(/*force_close=*/true);
-    } else {
-      // OnAfterCreated hasn't fired yet -- flag it so it closes immediately
-      // once CEF finishes creating the browser instead of loading a page.
-      handler->pending_close_ = true;
-    }
+    handler->RequestClose();
   }
 }
 

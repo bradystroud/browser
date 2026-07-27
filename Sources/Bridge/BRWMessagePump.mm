@@ -6,6 +6,8 @@
 
 #include "include/cef_app.h"
 
+#import "BRWEngine.h"
+
 namespace {
 // Special timer delay placeholder value, matching CEF's own reference
 // implementation: signals "schedule the maximum allowed delay" without
@@ -148,6 +150,12 @@ bool BRWMessagePump::PerformMessageLoopWork() {
   is_active_ = true;
   CefDoMessageLoopWork();
   is_active_ = false;
+
+  // This -- not +[BRWEngine doMessageLoopWork], which nothing calls -- is the
+  // one place every real CefDoMessageLoopWork() tick lands, so it's the only
+  // place +[BRWEngine requestShutdownWithCompletion:]'s "every browser closed
+  // yet?" poll can actually observe an OnBeforeClose that just arrived.
+  [BRWEngine checkShutdownCompletion];
 
   return reentrancy_detected_;
 }

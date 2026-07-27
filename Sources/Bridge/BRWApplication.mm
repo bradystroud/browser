@@ -57,6 +57,10 @@
 // CEF's own reference apps (tests/cefclient, tests/cefsimple) hit this same
 // incompatibility and override -terminate: for the same reason -- see their
 // mac.mm files' -terminate: doc comments.
+- (BOOL)isTerminating {
+  return _isTerminating;
+}
+
 - (void)terminate:(id)sender {
   if (_isTerminating) {
     return;  // A second Cmd+Q (or Quit + logout) while already quitting.
