@@ -42,6 +42,13 @@ final class ProfileManager {
         profiles.first { $0.name == name }
     }
 
+    /// Looked up by stable `id` (not the mutable display `name`) -- this is
+    /// what routing rules key on (RoutingRule.Action.profileId), so a rule
+    /// stays valid even if profile renaming is added later.
+    func profile(id: String) -> Profile? {
+        profiles.first { $0.id == id }
+    }
+
     /// Looks up a profile by name, auto-creating it if missing -- this is
     /// what keeps the `--profile <name>` launch argument working for any
     /// name, per AGENTS.md.

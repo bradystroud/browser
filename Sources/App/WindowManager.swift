@@ -26,4 +26,21 @@ final class WindowManager {
     var keyBrowserWindowController: BrowserWindowController? {
         (NSApp.keyWindow?.windowController as? BrowserWindowController) ?? windowControllers.last
     }
+
+    /// The frontmost open window belonging to `profileId`, if any -- used by
+    /// RoutingCoordinator to decide "open a new tab in an existing window"
+    /// vs. "open a new window" for a routed link. Frontmost is approximated
+    /// by NSApp.orderedWindows (front-to-back z-order) rather than key/main
+    /// status, since the routed link's target profile is very often not the
+    /// currently-key window's profile.
+    func frontmostWindowController(forProfileId profileId: String) -> BrowserWindowController? {
+        for window in NSApp.orderedWindows {
+            if let controller = window.windowController as? BrowserWindowController,
+               controller.profile.id == profileId,
+               windowControllers.contains(where: { $0 === controller }) {
+                return controller
+            }
+        }
+        return nil
+    }
 }

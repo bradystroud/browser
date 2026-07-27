@@ -34,12 +34,37 @@ set(BROWSER_SWIFT_SRCS
   TabButtonView.swift
   TabStripView.swift
   WindowManager.swift
+  ShortcutsHelp.swift
+  ShortcutsOverlayController.swift
+  ShortcutsOverlayPanelFactory.swift
+  Routing/RoutingRulesStore.swift
+  Routing/RoutingCoordinator.swift
+  Routing/SourceAppResolver.swift
+  Routing/URLEventHandler.swift
+  Routing/RoutingRulesWindowController.swift
+  Routing/RoutingRuleEditor.swift
+  Routing/RunningApplicationPicker.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
+
+# RoutingCore's Rule model + matcher (../../RoutingCore/Sources/RoutingCore)
+# are pure Swift/Foundation with no AppKit dependency, so they're also
+# packaged standalone as RoutingCore/ at the repo root for a fast, isolated
+# `swift test` (see docs/ai-tasks/m2-routing-notes.md). Rather than linking
+# that package from this Xcode-generator CMake target (SwiftPM/CMake-Xcode
+# interop is its own can of worms), these same source files are just compiled
+# directly into the Browser executable here -- one copy of the logic, two ways
+# to build it.
+set(BROWSER_ROUTING_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RoutingRule.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RuleMatcher.swift
+  )
+source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
+  ${BROWSER_ROUTING_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
