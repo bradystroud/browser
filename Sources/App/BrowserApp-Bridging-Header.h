@@ -2,3 +2,4 @@
 // sees. CEF C++ types must never appear, directly or transitively.
 #import "../Bridge/BRWApplication.h"
 #import "../Bridge/BRWEngine.h"
+#import "../Bridge/BRWBrowser.h"

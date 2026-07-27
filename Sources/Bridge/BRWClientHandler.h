@@ -11,7 +11,7 @@
 #include "include/cef_download_handler.h"
 #include "include/cef_download_item.h"
 
-#import "BRWEngine.h"  // for the BRWBrowserDelegate protocol only.
+#import "BRWBrowser.h"  // for the BRWBrowserDelegate protocol only.
 
 // Per-browser callbacks. One instance per BRWBrowser. Owns a reference to the
 // NSView the browser is parented into so it can make the CEF-created native

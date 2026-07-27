@@ -14,6 +14,9 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWClientHandler.mm
   ../Bridge/BRWEngine.h
   ../Bridge/BRWEngine.mm
+  ../Bridge/BRWEngineInternal.h
+  ../Bridge/BRWBrowser.h
+  ../Bridge/BRWBrowser.mm
   )
 source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
 
