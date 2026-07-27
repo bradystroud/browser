@@ -42,6 +42,7 @@ final class MainMenuBuilder {
         main.addItem(topLevelItem(title: "View", submenu: viewMenu()))
         main.addItem(topLevelItem(title: "History", submenu: historyMenu))
         main.addItem(topLevelItem(title: "Bookmarks", submenu: bookmarksMenu))
+        main.addItem(topLevelItem(title: "Developer", submenu: developerMenu()))
         main.addItem(topLevelItem(title: "Profiles", submenu: profilesMenu))
         main.addItem(topLevelItem(title: "Window", submenu: windowMenu))
         main.addItem(topLevelItem(title: "Help", submenu: helpMenu()))
@@ -225,6 +226,20 @@ final class MainMenuBuilder {
         // focus (Cmd-modified keys never type as characters, so this one
         // needs no such gating).
         menu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(BrowserWindowController.showKeyboardShortcuts(_:)), keyEquivalent: "/")
+        return menu
+    }
+
+    /// "JavaScript Console" aliases the same action as "Open Developer
+    /// Tools" for now (browser-6hi.1) -- CEF's ShowDevTools always opens the
+    /// full inspector, there's no separate console-only entry point to
+    /// route to instead. Placement matches Safari's own top-level "Develop"
+    /// menu (History, Bookmarks, Develop, then Window/Help).
+    private func developerMenu() -> NSMenu {
+        let menu = NSMenu(title: "Developer")
+        menu.addItem(withTitle: "Open Developer Tools", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "i")
+            .keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(withTitle: "JavaScript Console", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "j")
+            .keyEquivalentModifierMask = [.command, .option]
         return menu
     }
 

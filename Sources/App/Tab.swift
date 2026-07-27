@@ -105,6 +105,19 @@ final class Tab: NSObject, BRWBrowserDelegate {
     func goForward() { browser?.goForward() }
     func reload() { browser?.reload() }
 
+    // TODO(browser-6hi.1): wire to BRWBrowser.showDevTools()/closeDevTools()
+    // (CefBrowserHost::ShowDevTools/CloseDevTools) once that's exposed on the
+    // bridge. Blocked for now: BRWBrowser has no file of its own -- it's
+    // declared inside BRWEngine.h/.mm, which currently has live, uncommitted
+    // work from the quit-crash-fix session, so this session isn't touching
+    // it without team-lead sign-off (see docs/ai-tasks/m3-furniture-notes.md's
+    // DevTools section). Logs instead of silently no-op'ing so it's obvious
+    // in Console.app that the menu item/shortcut reached here but the bridge
+    // side isn't wired up yet.
+    func showDevTools() {
+        NSLog("Browser: DevTools requested for tab %@ -- bridge wiring pending (browser-6hi.1)", urlString)
+    }
+
     func close() {
         browser?.close()
         browser = nil

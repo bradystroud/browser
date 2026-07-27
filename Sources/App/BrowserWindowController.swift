@@ -528,6 +528,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         DownloadsWindowManager.shared.show(for: profile)
     }
 
+    /// ⌥⌘I -- matches Chrome/Safari's DevTools shortcut. "JavaScript
+    /// Console" in the Developer menu aliases this same action for now (see
+    /// docs/ai-tasks/m3-furniture-notes.md's DevTools section) -- CEF's
+    /// ShowDevTools always opens the full inspector, there's no separate
+    /// "console-only" entry point to route to instead.
+    @objc func showDevTools(_ sender: Any?) {
+        activeTab?.showDevTools()
+    }
+
     // MARK: - TabDelegate (furniture)
 
     func tab(_ tab: Tab, didCommitNavigationTo url: String) {
