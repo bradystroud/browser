@@ -51,4 +51,16 @@ final class WindowManager {
         }
         return nil
     }
+
+    /// Closes every open window for `profileId` -- used before deleting a
+    /// profile, so CEF isn't left holding a browser against a cache
+    /// directory that's about to be removed. Iterates a snapshot of
+    /// `windowControllers` (Swift arrays are value types, so mutating the
+    /// real property via each window's close-completion callback mid-loop
+    /// is safe and doesn't affect this iteration).
+    func closeAllWindows(forProfileId profileId: String) {
+        for controller in windowControllers where controller.profile.id == profileId {
+            controller.window?.close()
+        }
+    }
 }

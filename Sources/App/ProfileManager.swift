@@ -1,5 +1,15 @@
 import Foundation
 
+extension Notification.Name {
+    /// Posted whenever ProfileManager's persisted profile list changes
+    /// (create/rename/recolor/delete) -- lets MainMenuBuilder keep the
+    /// Profiles menu in sync without ProfileManager needing to know about
+    /// menus, and lets the Settings window's Profiles pane and Routing
+    /// Rules pane (which shows profile names) refresh themselves regardless
+    /// of which one triggered the change.
+    static let profileManagerDidChange = Notification.Name("ProfileManagerDidChange")
+}
+
 /// Profiles persisted as JSON under
 /// ~/Library/Application Support/Browser/profiles.json. This is the single
 /// source of truth for what profiles exist and their display identity (name,
@@ -36,6 +46,7 @@ final class ProfileManager {
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         try? data.write(to: fileURL, options: .atomic)
+        NotificationCenter.default.post(name: .profileManagerDidChange, object: self)
     }
 
     func profile(named name: String) -> Profile? {
@@ -72,5 +83,47 @@ final class ProfileManager {
         let used = Set(profiles.map { $0.colorHex })
         return ProfileColorPalette.hexValues.first { !used.contains($0) }
             ?? ProfileColorPalette.hexValues[profiles.count % ProfileColorPalette.hexValues.count]
+    }
+
+    /// Renames a profile and/or changes its color in place, preserving its
+    /// stable `id` (routing rules and anything else keyed on id are
+    /// unaffected). A profile's on-disk cache directory is keyed by its
+    /// *name*, not its id (see Sources/Bridge/BRWEngine.mm: `cache_path =
+    /// root_cache_path + "/" + profile_name`), so a rename best-effort moves
+    /// that directory too, so a future window opened under the new name
+    /// still finds the existing cookies/history/cache. This is best-effort,
+    /// not guaranteed: a window already open for this profile at rename time
+    /// keeps operating on its already-opened file handles regardless (POSIX
+    /// rename-of-an-open-directory is safe), but that window's title bar and
+    /// menu label were captured at open time and won't reflect the new name
+    /// until it's closed and reopened.
+    func updateProfile(id: String, name: String, colorHex: String) {
+        guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
+        let oldName = profiles[index].name
+        if oldName != name {
+            let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
+            try? FileManager.default.moveItem(at: root.appendingPathComponent(oldName), to: root.appendingPathComponent(name))
+        }
+        profiles[index].name = name
+        profiles[index].colorHex = colorHex
+        save()
+    }
+
+    /// Deletes a profile's persisted entry and its on-disk cache directory.
+    /// Refuses to delete the last remaining profile (returns false; Browser
+    /// always needs at least one profile to launch into). This only touches
+    /// ProfileManager's own state and the filesystem -- callers must close
+    /// any open windows for this profile *before* calling this (see
+    /// WindowManager.closeAllWindows(forProfileId:)), so CEF isn't left
+    /// operating against a cache directory that's just been removed.
+    @discardableResult
+    func deleteProfile(id: String) -> Bool {
+        guard profiles.count > 1, let index = profiles.firstIndex(where: { $0.id == id }) else { return false }
+        let name = profiles[index].name
+        profiles.remove(at: index)
+        save()
+        let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
+        try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
+        return true
     }
 }

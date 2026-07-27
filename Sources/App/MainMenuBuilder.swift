@@ -8,6 +8,31 @@ import AppKit
 final class MainMenuBuilder {
     let profilesMenu = NSMenu(title: "Profiles")
     let windowMenu = NSMenu(title: "Window")
+    let historyMenu = NSMenu(title: "History")
+    let bookmarksMenu = NSMenu(title: "Bookmarks")
+
+    /// Item counts captured right after each menu's static items are built,
+    /// so rebuildRecentHistory(for:)/rebuildBookmarksMenu(for:) know how many
+    /// trailing items are their own dynamic content to clear before
+    /// repopulating -- simpler than scanning for a sentinel separator.
+    private var historyMenuStaticCount = 0
+    private var bookmarksMenuStaticCount = 0
+
+    /// Keeps the Profiles menu in sync with ProfileManager regardless of
+    /// which UI surface made the change (this menu's own "New Profile…",
+    /// or the Settings window's Profiles pane create/rename/recolor/delete)
+    /// -- decouples menu upkeep from every call site that mutates profiles,
+    /// rather than requiring each one to remember to call
+    /// rebuildProfilesMenu() itself.
+    private var profileChangeObserver: NSObjectProtocol?
+
+    init() {
+        profileChangeObserver = NotificationCenter.default.addObserver(
+            forName: .profileManagerDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.rebuildProfilesMenu()
+        }
+    }
 
     func build() -> NSMenu {
         let main = NSMenu()
@@ -15,11 +40,14 @@ final class MainMenuBuilder {
         main.addItem(topLevelItem(title: "File", submenu: fileMenu()))
         main.addItem(topLevelItem(title: "Edit", submenu: editMenu()))
         main.addItem(topLevelItem(title: "View", submenu: viewMenu()))
-        main.addItem(topLevelItem(title: "History", submenu: historyMenu()))
+        main.addItem(topLevelItem(title: "History", submenu: historyMenu))
+        main.addItem(topLevelItem(title: "Bookmarks", submenu: bookmarksMenu))
         main.addItem(topLevelItem(title: "Profiles", submenu: profilesMenu))
         main.addItem(topLevelItem(title: "Window", submenu: windowMenu))
         main.addItem(topLevelItem(title: "Help", submenu: helpMenu()))
 
+        buildHistoryMenuStaticItems()
+        buildBookmarksMenuStaticItems()
         buildWindowMenuStaticItems()
         rebuildProfilesMenu()
         return main
@@ -72,6 +100,9 @@ final class MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Copy Current Page URL", action: #selector(BrowserWindowController.copyCurrentURL(_:)), keyEquivalent: "c")
             .keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Downloads…", action: #selector(BrowserWindowController.showDownloads(_:)), keyEquivalent: "j")
+            .keyEquivalentModifierMask = [.command, .shift]
         return menu
     }
 
@@ -95,11 +126,95 @@ final class MainMenuBuilder {
         return menu
     }
 
-    private func historyMenu() -> NSMenu {
-        let menu = NSMenu(title: "History")
-        menu.addItem(withTitle: "Back", action: #selector(BrowserWindowController.goBackAction(_:)), keyEquivalent: "\u{F702}")
-        menu.addItem(withTitle: "Forward", action: #selector(BrowserWindowController.goForwardAction(_:)), keyEquivalent: "\u{F703}")
-        return menu
+    /// Back/Forward/"Show All History…" are static; everything after them is
+    /// a live-rebuilt list of the key window's profile's recent history --
+    /// see rebuildRecentHistory(for:), called from AppDelegate whenever the
+    /// key window changes or a new visit is recorded.
+    private func buildHistoryMenuStaticItems() {
+        historyMenu.addItem(withTitle: "Back", action: #selector(BrowserWindowController.goBackAction(_:)), keyEquivalent: "\u{F702}")
+        historyMenu.addItem(withTitle: "Forward", action: #selector(BrowserWindowController.goForwardAction(_:)), keyEquivalent: "\u{F703}")
+        historyMenu.addItem(.separator())
+        historyMenu.addItem(withTitle: "Show All History…", action: #selector(BrowserWindowController.showHistory(_:)), keyEquivalent: "y")
+        historyMenuStaticCount = historyMenu.items.count
+    }
+
+    /// Rebuilds the History menu's recent-items section for `profile` --
+    /// safe to call often (e.g. after every recorded visit in the key
+    /// window); ten items is cheap to regenerate from HistoryStore each time
+    /// rather than tracking incremental deltas.
+    func rebuildRecentHistory(for profile: Profile) {
+        while historyMenu.items.count > historyMenuStaticCount {
+            historyMenu.removeItem(at: historyMenu.items.count - 1)
+        }
+        let entries = (try? ProfileDataStoreManager.shared.stores(for: profile).history.entries(limit: 10)) ?? []
+        guard !entries.isEmpty else { return }
+        historyMenu.addItem(.separator())
+        for entry in entries {
+            let item = NSMenuItem(
+                title: entry.title.isEmpty ? entry.url : entry.title,
+                action: #selector(AppDelegate.openMenuURL(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = entry.url
+            historyMenu.addItem(item)
+        }
+    }
+
+    /// "Add Bookmark"/"Show All Bookmarks…" are static; everything after is
+    /// a live-rebuilt one-level-deep bookmark tree for the key window's
+    /// profile -- deeper folder nesting is only reachable via the Bookmarks
+    /// manager window (see docs/ai-tasks/m3-furniture-notes.md).
+    private func buildBookmarksMenuStaticItems() {
+        bookmarksMenu.addItem(withTitle: "Add Bookmark", action: #selector(BrowserWindowController.addBookmark(_:)), keyEquivalent: "d")
+        bookmarksMenu.addItem(withTitle: "Show All Bookmarks…", action: #selector(BrowserWindowController.showBookmarksManager(_:)), keyEquivalent: "")
+        bookmarksMenuStaticCount = bookmarksMenu.items.count
+    }
+
+    /// Rebuilds the Bookmarks menu's dynamic section for `profile`.
+    func rebuildBookmarksMenu(for profile: Profile) {
+        while bookmarksMenu.items.count > bookmarksMenuStaticCount {
+            bookmarksMenu.removeItem(at: bookmarksMenu.items.count - 1)
+        }
+        let store = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
+        let topLevel = (try? store.children(of: nil)) ?? []
+        guard !topLevel.isEmpty else { return }
+        bookmarksMenu.addItem(.separator())
+        appendBookmarkItems(topLevel, to: bookmarksMenu, store: store)
+    }
+
+    private func appendBookmarkItems(_ items: [BookmarkItem], to menu: NSMenu, store: BookmarkStore) {
+        for item in items {
+            switch item.kind {
+            case .bookmark:
+                let menuItem = NSMenuItem(title: item.title, action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
+                menuItem.representedObject = item.url
+                menu.addItem(menuItem)
+            case .folder:
+                let submenu = NSMenu(title: item.title)
+                let children = (try? store.children(of: item.id)) ?? []
+                for child in children {
+                    switch child.kind {
+                    case .bookmark:
+                        let childItem = NSMenuItem(title: child.title, action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
+                        childItem.representedObject = child.url
+                        submenu.addItem(childItem)
+                    case .folder:
+                        // One level of nesting only -- see this method's doc
+                        // comment; a nested subfolder shows as a prompt into
+                        // the full manager instead of recursing indefinitely.
+                        let placeholder = NSMenuItem(
+                            title: "\(child.title) (open in Bookmarks manager)",
+                            action: #selector(BrowserWindowController.showBookmarksManager(_:)),
+                            keyEquivalent: ""
+                        )
+                        submenu.addItem(placeholder)
+                    }
+                }
+                let folderItem = NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
+                folderItem.submenu = submenu
+                menu.addItem(folderItem)
+            }
+        }
     }
 
     private func helpMenu() -> NSMenu {
