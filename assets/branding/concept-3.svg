@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Concept 3: Portal — bold minimal ring with a routed link entering the aperture -->
+  <defs>
+    <linearGradient id="c3-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5B21B6"/>
+      <stop offset="0.55" stop-color="#3E2496"/>
+      <stop offset="1" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <radialGradient id="c3-portal" cx="0.38" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#FDE68A"/>
+      <stop offset="0.45" stop-color="#FB7185"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </radialGradient>
+    <linearGradient id="c3-sheen" x1="512" y1="140" x2="512" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="c3-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
+    </filter>
+    <clipPath id="c3-clip">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+  </defs>
+
+  <rect x="100" y="114" width="824" height="824" rx="185" ry="185" fill="#000000" opacity="0.30" filter="url(#c3-shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c3-bg)"/>
+
+  <g clip-path="url(#c3-clip)">
+    <!-- arrow feeding into the portal from below -->
+    <path d="M512 792 L410 632 L614 632 Z" fill="#F5F3FF"/>
+
+    <!-- ring -->
+    <circle cx="512" cy="466" r="256" fill="none" stroke="#F5F3FF" stroke-width="92"/>
+
+    <!-- portal interior -->
+    <circle cx="512" cy="466" r="206" fill="url(#c3-portal)"/>
+
+    <!-- glossy sheen across the top -->
+    <rect x="100" y="100" width="824" height="400" fill="url(#c3-sheen)"/>
+  </g>
+</svg>

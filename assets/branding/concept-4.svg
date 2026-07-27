@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Concept 4: Prism — one beam refracting into three profile-colored routes, gradient/glow depth -->
+  <defs>
+    <linearGradient id="c4-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1C1D28"/>
+      <stop offset="1" stop-color="#08080D"/>
+    </linearGradient>
+    <linearGradient id="c4-glass" x1="512" y1="420" x2="512" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#C9CFFF" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="c4-beamTeal" x1="560" y1="560" x2="800" y2="300" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2FE0D0"/>
+      <stop offset="1" stop-color="#2FE0D0" stop-opacity="0.15"/>
+    </linearGradient>
+    <linearGradient id="c4-beamPink" x1="560" y1="580" x2="840" y2="500" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0559C"/>
+      <stop offset="1" stop-color="#F0559C" stop-opacity="0.15"/>
+    </linearGradient>
+    <linearGradient id="c4-beamAmber" x1="560" y1="600" x2="800" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FBBF3D"/>
+      <stop offset="1" stop-color="#FBBF3D" stop-opacity="0.15"/>
+    </linearGradient>
+    <filter id="c4-glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <filter id="c4-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
+    </filter>
+    <clipPath id="c4-clip">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+  </defs>
+
+  <rect x="100" y="114" width="824" height="824" rx="185" ry="185" fill="#000000" opacity="0.30" filter="url(#c4-shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c4-bg)"/>
+
+  <g clip-path="url(#c4-clip)">
+    <!-- glow layer behind the beams -->
+    <g filter="url(#c4-glow)" opacity="0.75">
+      <path d="M240 792 L468 566" fill="none" stroke="#F3F5FF" stroke-width="58" stroke-linecap="round"/>
+      <path d="M560 552 L806 296" fill="none" stroke="#2FE0D0" stroke-width="46" stroke-linecap="round"/>
+      <path d="M560 576 L846 500" fill="none" stroke="#F0559C" stroke-width="46" stroke-linecap="round"/>
+      <path d="M560 600 L806 726" fill="none" stroke="#FBBF3D" stroke-width="46" stroke-linecap="round"/>
+    </g>
+
+    <!-- incoming beam -->
+    <path d="M240 792 L468 566" fill="none" stroke="#F3F5FF" stroke-width="54" stroke-linecap="round"/>
+
+    <!-- prism -->
+    <path d="M512 428 L604 616 L420 616 Z" fill="url(#c4-glass)" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="6"/>
+
+    <!-- outgoing beams -->
+    <path d="M560 552 L806 296" fill="none" stroke="url(#c4-beamTeal)" stroke-width="42" stroke-linecap="round"/>
+    <path d="M560 576 L846 500" fill="none" stroke="url(#c4-beamPink)" stroke-width="42" stroke-linecap="round"/>
+    <path d="M560 600 L806 726" fill="none" stroke="url(#c4-beamAmber)" stroke-width="42" stroke-linecap="round"/>
+  </g>
+</svg>

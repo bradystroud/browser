@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Concept 1: Waypoint — a single path branching into three profile-colored destinations -->
+  <defs>
+    <linearGradient id="c1-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#242A5C"/>
+      <stop offset="1" stop-color="#141733"/>
+    </linearGradient>
+    <linearGradient id="c1-sheen" x1="512" y1="100" x2="512" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="c1-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="18"/>
+    </filter>
+    <clipPath id="c1-clip">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+  </defs>
+
+  <!-- drop shadow -->
+  <rect x="100" y="114" width="824" height="824" rx="185" ry="185" fill="#000000" opacity="0.30" filter="url(#c1-shadow)"/>
+
+  <!-- squircle background -->
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c1-bg)"/>
+
+  <g clip-path="url(#c1-clip)">
+    <!-- stem -->
+    <path d="M512 792 L512 548" fill="none" stroke="#F3F5FF" stroke-width="66" stroke-linecap="round"/>
+
+    <!-- three branches fanning to destinations -->
+    <path d="M512 560 Q400 470 358 316" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+    <path d="M512 560 Q512 440 512 268" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+    <path d="M512 560 Q624 470 666 316" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+
+    <!-- junction node -->
+    <circle cx="512" cy="560" r="34" fill="#F3F5FF"/>
+
+    <!-- destination halos (separate the badges from the stem visually) -->
+    <circle cx="358" cy="292" r="90" fill="#171A3B"/>
+    <circle cx="512" cy="244" r="90" fill="#171A3B"/>
+    <circle cx="666" cy="292" r="90" fill="#171A3B"/>
+
+    <!-- destination badges: one per profile -->
+    <circle cx="358" cy="292" r="72" fill="#2FD9C7"/>
+    <circle cx="512" cy="244" r="72" fill="#FBBF3D"/>
+    <circle cx="666" cy="292" r="72" fill="#F0559C"/>
+
+    <!-- glossy top sheen -->
+    <rect x="100" y="100" width="824" height="420" fill="url(#c1-sheen)"/>
+  </g>
+</svg>

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browser — App Icon Concepts</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --page-bg: #eef0f4;
+    --page-fg: #1a1c22;
+    --card-bg: #ffffff;
+    --card-border: rgba(0,0,0,0.08);
+    --muted: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page-bg: #0e0f13;
+      --page-fg: #eef0f4;
+      --card-bg: #1a1c22;
+      --card-border: rgba(255,255,255,0.08);
+      --muted: #9aa0ac;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 40px 24px 80px;
+    background: var(--page-bg);
+    color: var(--page-fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 650;
+    margin: 0 0 4px;
+  }
+  p.sub {
+    margin: 0 0 40px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .concept {
+    max-width: 1080px;
+    margin: 0 auto 48px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 20px;
+    padding: 28px 32px 32px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .concept-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 4px;
+    flex-wrap: wrap;
+  }
+  .concept-name {
+    font-size: 18px;
+    font-weight: 650;
+  }
+  .concept-desc {
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .bg-row {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+    padding: 18px 0;
+    border-top: 1px solid var(--card-border);
+    margin-top: 18px;
+    flex-wrap: wrap;
+  }
+  .bg-label {
+    width: 78px;
+    flex: 0 0 auto;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .swatches {
+    display: flex;
+    align-items: flex-end;
+    gap: 22px;
+    flex-wrap: wrap;
+  }
+  .swatch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .swatch-surface {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+  }
+  .swatch-surface.light {
+    background: #f4f5f8;
+    border: 1px solid rgba(0,0,0,0.06);
+  }
+  .swatch-surface.dark {
+    background: #16171d;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .swatch-size {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .swatch-surface svg { display: block; }
+</style>
+</head>
+<body>
+
+<h1>Browser — App Icon Concepts</h1>
+<p class="sub">Four directions at 512 / 128 / 64 / 32 / 16&nbsp;px, on light and dark surfaces.</p>
+
+<script>
+  // Each concept's full icon markup (identical to its standalone concept-N.svg),
+  // as a template string. Id/url(#...) references all share the concept's "cN-"
+  // prefix, so instantiate() can namespace every instance by string substitution —
+  // this avoids relying on <symbol>/<use> sprite-sheet reuse, which some engines
+  // render inconsistently when the shared <defs> tree is never itself painted.
+  const CONCEPTS = [
+    {
+      prefix: "c1",
+      name: "Waypoint",
+      desc: "Geometric routing mark — one link branching into three profile destinations.",
+      markup: `
+        <defs>
+          <linearGradient id="c1-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#242A5C"/>
+            <stop offset="1" stop-color="#141733"/>
+          </linearGradient>
+          <linearGradient id="c1-sheen" x1="512" y1="100" x2="512" y2="520" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.16"/>
+            <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+          <clipPath id="c1-clip">
+            <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+          </clipPath>
+        </defs>
+        <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c1-bg)"/>
+        <g clip-path="url(#c1-clip)">
+          <path d="M512 792 L512 548" fill="none" stroke="#F3F5FF" stroke-width="66" stroke-linecap="round"/>
+          <path d="M512 560 Q400 470 358 316" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+          <path d="M512 560 Q512 440 512 268" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+          <path d="M512 560 Q624 470 666 316" fill="none" stroke="#F3F5FF" stroke-width="56" stroke-linecap="round"/>
+          <circle cx="512" cy="560" r="34" fill="#F3F5FF"/>
+          <circle cx="358" cy="292" r="90" fill="#171A3B"/>
+          <circle cx="512" cy="244" r="90" fill="#171A3B"/>
+          <circle cx="666" cy="292" r="90" fill="#171A3B"/>
+          <circle cx="358" cy="292" r="72" fill="#2FD9C7"/>
+          <circle cx="512" cy="244" r="72" fill="#FBBF3D"/>
+          <circle cx="666" cy="292" r="72" fill="#F0559C"/>
+          <rect x="100" y="100" width="824" height="420" fill="url(#c1-sheen)"/>
+        </g>`
+    },
+    {
+      prefix: "c2",
+      name: "Stack",
+      desc: "Fanned, color-banded profile cards, layered like isolated identities.",
+      markup: `
+        <defs>
+          <linearGradient id="c2-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#2A2C38"/>
+            <stop offset="1" stop-color="#17181F"/>
+          </linearGradient>
+          <linearGradient id="c2-teal" x1="0" y1="-280" x2="0" y2="280" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#22D3C6"/>
+            <stop offset="1" stop-color="#0E9C93"/>
+          </linearGradient>
+          <linearGradient id="c2-amber" x1="0" y1="-280" x2="0" y2="280" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFC259"/>
+            <stop offset="1" stop-color="#F0972A"/>
+          </linearGradient>
+          <linearGradient id="c2-violet" x1="0" y1="-280" x2="0" y2="280" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#8B6BF2"/>
+            <stop offset="1" stop-color="#5B3DDB"/>
+          </linearGradient>
+          <linearGradient id="c2-sheen" x1="0" y1="-280" x2="0" y2="280" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.30"/>
+            <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+          <clipPath id="c2-clip">
+            <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+          </clipPath>
+        </defs>
+        <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c2-bg)"/>
+        <g clip-path="url(#c2-clip)">
+          <g transform="translate(422,532) rotate(-15)">
+            <rect x="-198" y="-258" width="396" height="516" rx="84" fill="url(#c2-teal)"/>
+          </g>
+          <g transform="translate(602,540) rotate(15)">
+            <rect x="-198" y="-258" width="396" height="516" rx="84" fill="url(#c2-amber)"/>
+          </g>
+          <g transform="translate(512,500)">
+            <rect x="-206" y="-268" width="412" height="536" rx="88" fill="url(#c2-violet)"/>
+            <rect x="-206" y="-268" width="412" height="536" rx="88" fill="url(#c2-sheen)"/>
+            <circle cx="-108" cy="-140" r="52" fill="#FFFFFF" fill-opacity="0.92"/>
+            <rect x="-108" y="98" width="216" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.55"/>
+            <rect x="-108" y="152" width="150" height="34" rx="17" fill="#FFFFFF" fill-opacity="0.35"/>
+          </g>
+        </g>`
+    },
+    {
+      prefix: "c3",
+      name: "Portal",
+      desc: "Bold minimal aperture — a link routed straight through into another space.",
+      markup: `
+        <defs>
+          <linearGradient id="c3-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#5B21B6"/>
+            <stop offset="0.55" stop-color="#3E2496"/>
+            <stop offset="1" stop-color="#1E3A8A"/>
+          </linearGradient>
+          <radialGradient id="c3-portal" cx="0.38" cy="0.32" r="0.85">
+            <stop offset="0" stop-color="#FDE68A"/>
+            <stop offset="0.45" stop-color="#FB7185"/>
+            <stop offset="1" stop-color="#7C3AED"/>
+          </radialGradient>
+          <linearGradient id="c3-sheen" x1="512" y1="140" x2="512" y2="500" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.20"/>
+            <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+          </linearGradient>
+          <clipPath id="c3-clip">
+            <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+          </clipPath>
+        </defs>
+        <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c3-bg)"/>
+        <g clip-path="url(#c3-clip)">
+          <path d="M512 792 L410 632 L614 632 Z" fill="#F5F3FF"/>
+          <circle cx="512" cy="466" r="256" fill="none" stroke="#F5F3FF" stroke-width="92"/>
+          <circle cx="512" cy="466" r="206" fill="url(#c3-portal)"/>
+          <rect x="100" y="100" width="824" height="400" fill="url(#c3-sheen)"/>
+        </g>`
+    },
+    {
+      prefix: "c4",
+      name: "Prism",
+      desc: "Gradient/glow style — a single beam refracting into colored routes.",
+      markup: `
+        <defs>
+          <linearGradient id="c4-bg" x1="140" y1="120" x2="900" y2="900" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#1C1D28"/>
+            <stop offset="1" stop-color="#08080D"/>
+          </linearGradient>
+          <linearGradient id="c4-glass" x1="512" y1="420" x2="512" y2="640" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.95"/>
+            <stop offset="1" stop-color="#C9CFFF" stop-opacity="0.55"/>
+          </linearGradient>
+          <linearGradient id="c4-beamTeal" x1="560" y1="560" x2="800" y2="300" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#2FE0D0"/>
+            <stop offset="1" stop-color="#2FE0D0" stop-opacity="0.15"/>
+          </linearGradient>
+          <linearGradient id="c4-beamPink" x1="560" y1="580" x2="840" y2="500" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#F0559C"/>
+            <stop offset="1" stop-color="#F0559C" stop-opacity="0.15"/>
+          </linearGradient>
+          <linearGradient id="c4-beamAmber" x1="560" y1="600" x2="800" y2="720" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#FBBF3D"/>
+            <stop offset="1" stop-color="#FBBF3D" stop-opacity="0.15"/>
+          </linearGradient>
+          <filter id="c4-glow" x="-60%" y="-60%" width="220%" height="220%">
+            <feGaussianBlur stdDeviation="14"/>
+          </filter>
+          <clipPath id="c4-clip">
+            <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+          </clipPath>
+        </defs>
+        <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#c4-bg)"/>
+        <g clip-path="url(#c4-clip)">
+          <g filter="url(#c4-glow)" opacity="0.75">
+            <path d="M240 792 L468 566" fill="none" stroke="#F3F5FF" stroke-width="58" stroke-linecap="round"/>
+            <path d="M560 552 L806 296" fill="none" stroke="#2FE0D0" stroke-width="46" stroke-linecap="round"/>
+            <path d="M560 576 L846 500" fill="none" stroke="#F0559C" stroke-width="46" stroke-linecap="round"/>
+            <path d="M560 600 L806 726" fill="none" stroke="#FBBF3D" stroke-width="46" stroke-linecap="round"/>
+          </g>
+          <path d="M240 792 L468 566" fill="none" stroke="#F3F5FF" stroke-width="54" stroke-linecap="round"/>
+          <path d="M512 428 L604 616 L420 616 Z" fill="url(#c4-glass)" stroke="#FFFFFF" stroke-opacity="0.5" stroke-width="6"/>
+          <path d="M560 552 L806 296" fill="none" stroke="url(#c4-beamTeal)" stroke-width="42" stroke-linecap="round"/>
+          <path d="M560 576 L846 500" fill="none" stroke="url(#c4-beamPink)" stroke-width="42" stroke-linecap="round"/>
+          <path d="M560 600 L806 726" fill="none" stroke="url(#c4-beamAmber)" stroke-width="42" stroke-linecap="round"/>
+        </g>`
+    },
+  ];
+  const SIZES = [512, 128, 64, 32, 16];
+
+  const root = document.currentScript.parentNode;
+
+  // Every id and url(#...)/href reference in a concept's markup starts with its
+  // "cN-" prefix, so a global string substitution renames the whole set consistently
+  // and gives each rendered instance its own non-colliding ids.
+  function instantiate(concept, uid) {
+    const scoped = concept.prefix + "-" + uid + "-";
+    return concept.markup.split(concept.prefix + "-").join(scoped);
+  }
+
+  function svgFor(concept, uid, size) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("viewBox", "0 0 1024 1024");
+    svg.innerHTML = instantiate(concept, uid);
+    return svg;
+  }
+
+  let instanceCounter = 0;
+
+  CONCEPTS.forEach(concept => {
+    const section = document.createElement("section");
+    section.className = "concept";
+
+    const header = document.createElement("div");
+    header.className = "concept-header";
+    const name = document.createElement("span");
+    name.className = "concept-name";
+    name.textContent = concept.name;
+    const desc = document.createElement("span");
+    desc.className = "concept-desc";
+    desc.textContent = concept.desc;
+    header.appendChild(name);
+    header.appendChild(desc);
+    section.appendChild(header);
+
+    ["light", "dark"].forEach(theme => {
+      const row = document.createElement("div");
+      row.className = "bg-row";
+
+      const label = document.createElement("div");
+      label.className = "bg-label";
+      label.textContent = theme === "light" ? "Light" : "Dark";
+      row.appendChild(label);
+
+      const swatches = document.createElement("div");
+      swatches.className = "swatches";
+
+      SIZES.forEach(size => {
+        const wrap = document.createElement("div");
+        wrap.className = "swatch";
+
+        const surface = document.createElement("div");
+        surface.className = "swatch-surface " + theme;
+        const pad = size >= 128 ? 24 : size >= 32 ? 12 : 6;
+        surface.style.width = (size + pad * 2) + "px";
+        surface.style.height = (size + pad * 2) + "px";
+        surface.appendChild(svgFor(concept, instanceCounter++, size));
+
+        const label2 = document.createElement("div");
+        label2.className = "swatch-size";
+        label2.textContent = size + "px";
+
+        wrap.appendChild(surface);
+        wrap.appendChild(label2);
+        swatches.appendChild(wrap);
+      });
+
+      row.appendChild(swatches);
+      section.appendChild(row);
+    });
+
+    root.insertBefore(section, document.currentScript);
+  });
+</script>
+
+</body>
+</html>
