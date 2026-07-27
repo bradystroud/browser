@@ -75,8 +75,33 @@ std::string ToStdString(NSString *s) {
 }
 
 - (void)close {
-  if (_handler && _handler->GetBrowser() && !_handler->IsClosed()) {
-    _handler->GetBrowser()->GetHost()->CloseBrowser(true);
+  if (_handler) {
+    _handler->RequestClose();
+  }
+}
+
+- (void)showDevTools {
+  if (_handler && _handler->GetBrowser()) {
+    // Default-constructed CefWindowInfo/CefBrowserSettings and a nullptr
+    // client all mean "let CEF manage this itself" -- ShowDevTools then
+    // pops its own separate native DevTools window, which is CEF's
+    // documented behavior for this call and the simplest thing that works
+    // for a v1 (a version docked into a view we own would need its own
+    // CefClient and SetAsChild plumbing, tracked as a later enhancement if
+    // ever needed). An empty CefPoint() for inspect_element_at means "no
+    // specific element" -- see BRWBrowser.h's -showDevTools for the
+    // right-click "Inspect Element" path, which passes a real point instead
+    // (that wiring lives in BRWClientHandler's context-menu handler once
+    // added; this method alone only covers the menu/shortcut entry point).
+    CefWindowInfo window_info;
+    CefBrowserSettings settings;
+    _handler->GetBrowser()->GetHost()->ShowDevTools(window_info, nullptr, settings, CefPoint());
+  }
+}
+
+- (void)closeDevTools {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->CloseDevTools();
   }
 }
 

@@ -70,6 +70,17 @@ NS_ASSUME_NONNULL_BEGIN
 /// call multiple times.
 - (void)close;
 
+/// Opens Chromium DevTools for this tab. CEF pops its own separate native
+/// window for it (see BRWBrowser.mm's -showDevTools for why that's the
+/// right default here, rather than docking it into a view we own). Safe to
+/// call while already open -- CEF just focuses the existing DevTools window
+/// instead of opening a second one.
+- (void)showDevTools;
+
+/// Closes this tab's associated DevTools window, if one is open. Safe to
+/// call when none is open.
+- (void)closeDevTools;
+
 @end
 
 NS_ASSUME_NONNULL_END
