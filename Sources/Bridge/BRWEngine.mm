@@ -124,9 +124,37 @@ CefRefPtr<CefRequestContext> GetOrCreateProfileContext(const std::string &profil
   return self;
 }
 
+- (void)setDelegate:(id<BRWBrowserDelegate>)delegate {
+  if (_handler) {
+    _handler->SetDelegate(delegate);
+  }
+}
+
+- (id<BRWBrowserDelegate>)delegate {
+  return _handler ? _handler->GetDelegate() : nil;
+}
+
 - (void)loadURL:(NSString *)url {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetMainFrame()->LoadURL(ToStdString(url));
+  }
+}
+
+- (void)goBack {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GoBack();
+  }
+}
+
+- (void)goForward {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GoForward();
+  }
+}
+
+- (void)reload {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->Reload();
   }
 }
 

@@ -2,6 +2,12 @@
 
 #include "include/wrapper/cef_helpers.h"
 
+namespace {
+NSString* ToNSString(const CefString& s) {
+  return [NSString stringWithUTF8String:s.ToString().c_str()];
+}
+}  // namespace
+
 BRWClientHandler::BRWClientHandler(NSView* host_view) : host_view_(host_view) {}
 
 void BRWClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
@@ -23,6 +29,15 @@ void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   browser_ = nullptr;
 }
 
+void BRWClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                                              bool isLoading,
+                                              bool canGoBack,
+                                              bool canGoForward) {
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidChangeLoadingState:canGoBack:canGoForward:)]) {
+    [delegate_ browserDidChangeLoadingState:isLoading canGoBack:canGoBack canGoForward:canGoForward];
+  }
+}
+
 void BRWClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,
                                   int httpStatusCode) {}
@@ -40,4 +55,32 @@ void BRWClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
   }
   NSLog(@"Browser: load failed for %s: %s (code %d)", failedUrl.ToString().c_str(),
         errorText.ToString().c_str(), errorCode);
+}
+
+void BRWClientHandler::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) {
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidChangeTitle:)]) {
+    [delegate_ browserDidChangeTitle:ToNSString(title)];
+  }
+}
+
+void BRWClientHandler::OnAddressChange(CefRefPtr<CefBrowser> browser,
+                                         CefRefPtr<CefFrame> frame,
+                                         const CefString& url) {
+  // Only the main frame's URL is the tab's address; sub-frame navigations
+  // (iframes, etc.) must not clobber the omnibox.
+  if (!frame->IsMain()) {
+    return;
+  }
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidChangeURL:)]) {
+    [delegate_ browserDidChangeURL:ToNSString(url)];
+  }
+}
+
+void BRWClientHandler::OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
+                                            const std::vector<CefString>& icon_urls) {
+  if (!delegate_ || ![delegate_ respondsToSelector:@selector(browserDidChangeFaviconURL:)]) {
+    return;
+  }
+  NSString* favicon = icon_urls.empty() ? nil : ToNSString(icon_urls.front());
+  [delegate_ browserDidChangeFaviconURL:favicon];
 }

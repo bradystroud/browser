@@ -6,6 +6,20 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// Per-tab navigation/state callbacks, all delivered on the main thread (CEF's
+/// UI thread is the main thread in this architecture -- see BRWMessagePump).
+/// One BRWBrowser has at most one delegate; the Swift-side tab model owns
+/// this 1:1 relationship, so events don't need to identify their source.
+@protocol BRWBrowserDelegate <NSObject>
+@optional
+- (void)browserDidChangeTitle:(NSString *)title;
+- (void)browserDidChangeURL:(NSString *)url;
+- (void)browserDidChangeFaviconURL:(nullable NSString *)faviconURL;
+- (void)browserDidChangeLoadingState:(BOOL)isLoading
+                            canGoBack:(BOOL)canGoBack
+                         canGoForward:(BOOL)canGoForward;
+@end
+
 /// Process-wide CEF lifecycle. Call Initialize once from the browser
 /// process's main() before creating any BRWBrowser, and Shutdown once at exit
 /// (after all BRWBrowser instances have been closed).
@@ -36,7 +50,12 @@ NS_ASSUME_NONNULL_BEGIN
                            initialURL:(NSString *)initialURL NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
+@property (nonatomic, weak, nullable) id<BRWBrowserDelegate> delegate;
+
 - (void)loadURL:(NSString *)url;
+- (void)goBack;
+- (void)goForward;
+- (void)reload;
 
 /// Requests that the browser and its underlying CEF resources close. Safe to
 /// call multiple times.
