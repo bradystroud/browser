@@ -42,6 +42,8 @@ set(BROWSER_SWIFT_SRCS
   ShortcutsOverlayPanelFactory.swift
   TabCyclingController.swift
   FaviconLoader.swift
+  Engine/BrowserEngine.swift
+  Engine/CEFEngineAdapter.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
