@@ -68,22 +68,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.openNewWindow(profile: profile)
     }
 
-    @objc func showRoutingRules(_ sender: Any?) {
-        RoutingRulesWindowController.shared.show()
-    }
-
-    /// Only "http" matters for default-browser purposes (see
-    /// docs/research/2026-07-27-link-routing-macos.md); macOS always shows
-    /// its own native confirmation dialog here and it cannot be
-    /// skipped/pre-approved, and only fires correctly for a properly
-    /// installed, Developer-ID-signed app bundle -- invoked from a raw
-    /// build/ directory it may silently no-op or misbehave, which is
-    /// acceptable for local dev (see docs/ai-tasks/m2-routing-notes.md).
-    @objc func makeDefaultBrowser(_ sender: Any?) {
-        NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "http") { error in
-            if let error {
-                NSLog("Browser: setDefaultApplication(toOpenURLsWithScheme: \"http\") failed: %@", error.localizedDescription)
-            }
-        }
+    /// ⌘, -- standard macOS placement. Routing rules, the default-profile
+    /// picker, and "Make Default Browser…" all live in this one window (see
+    /// SettingsWindowController) rather than as separate menu items.
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.show()
     }
 }

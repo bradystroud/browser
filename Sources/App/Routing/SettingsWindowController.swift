@@ -1,23 +1,28 @@
 import AppKit
 
-/// "Routing Rules…" settings window: an ordered table of rules (first match
-/// wins, see RuleMatcher), add/edit/delete, up/down reordering, and a
-/// default-profile picker for links no rule matches. Every mutation saves
-/// immediately via RoutingRulesStore -- there is no separate "Apply" step.
-final class RoutingRulesWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    static let shared = RoutingRulesWindowController()
+/// The app's "Settings…" window (⌘,), standard macOS placement in the app
+/// menu. Routing rules are the main/first section: an ordered table of rules
+/// (first match wins, see RuleMatcher), add/edit/delete, up/down reordering,
+/// and a default-profile picker for links no rule matches. A "Make Default
+/// Browser…" button lives in the same window rather than as a separate menu
+/// item, per Brady's request. Every rule/profile mutation saves immediately
+/// via RoutingRulesStore -- there is no separate "Apply" step; only "Make
+/// Default Browser…" has an explicit action, since that one triggers a
+/// system confirmation dialog rather than just writing local state.
+final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+    static let shared = SettingsWindowController()
 
     private let tableView = NSTableView()
     private let defaultProfilePopup = NSPopUpButton()
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Routing Rules"
+        window.title = "Settings"
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -37,17 +42,87 @@ final class RoutingRulesWindowController: NSWindowController, NSWindowDelegate, 
 
     // MARK: - View setup
 
+    /// Bottom-up layout (AppKit's y-axis): "Make Default Browser…" at the
+    /// very bottom, then the default-profile picker, then the rule
+    /// add/edit/reorder controls, then the rules table filling the rest,
+    /// with a "Routing Rules" section header pinned to the top -- routing
+    /// rules are the main/first section of this window per Brady's request,
+    /// with default-browser as a secondary, less-frequently-touched control
+    /// underneath.
     private func setUpViews() {
         guard let contentView = window?.contentView else { return }
         let margin: CGFloat = 12
-        let buttonRowHeight: CGFloat = 28
+        let rowGap: CGFloat = 10
+        let headerHeight: CGFloat = 22
+        let makeDefaultRowHeight: CGFloat = 28
         let defaultRowHeight: CGFloat = 32
+        let buttonRowHeight: CGFloat = 28
 
+        let makeDefaultBrowserButton = NSButton(
+            title: "Make Default Browser…",
+            target: self,
+            action: #selector(makeDefaultBrowserClicked)
+        )
+        makeDefaultBrowserButton.bezelStyle = .rounded
+        makeDefaultBrowserButton.frame = NSRect(x: margin, y: margin, width: 190, height: makeDefaultRowHeight)
+        makeDefaultBrowserButton.autoresizingMask = [.maxXMargin, .maxYMargin]
+        contentView.addSubview(makeDefaultBrowserButton)
+
+        let defaultRowY = margin + makeDefaultRowHeight + rowGap
+        let defaultLabel = NSTextField(labelWithString: "Default profile for unmatched links:")
+        defaultLabel.frame = NSRect(x: margin, y: defaultRowY + 6, width: 230, height: 20)
+        defaultLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
+        contentView.addSubview(defaultLabel)
+
+        defaultProfilePopup.frame = NSRect(x: margin + 234, y: defaultRowY, width: 200, height: 28)
+        defaultProfilePopup.autoresizingMask = [.minXMargin, .maxYMargin]
+        defaultProfilePopup.target = self
+        defaultProfilePopup.action = #selector(defaultProfileChanged)
+        contentView.addSubview(defaultProfilePopup)
+
+        let buttonRowY = defaultRowY + defaultRowHeight + rowGap
+        let addButton = NSButton(title: "＋", target: self, action: #selector(addRule))
+        addButton.frame = NSRect(x: margin, y: buttonRowY, width: 32, height: buttonRowHeight)
+        addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
+        contentView.addSubview(addButton)
+
+        let removeButton = NSButton(title: "－", target: self, action: #selector(removeSelectedRule))
+        removeButton.frame = NSRect(x: margin + 34, y: buttonRowY, width: 32, height: buttonRowHeight)
+        removeButton.autoresizingMask = [.maxXMargin, .maxYMargin]
+        contentView.addSubview(removeButton)
+
+        let editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedRule))
+        editButton.frame = NSRect(x: margin + 74, y: buttonRowY, width: 60, height: buttonRowHeight)
+        editButton.autoresizingMask = [.maxXMargin, .maxYMargin]
+        contentView.addSubview(editButton)
+
+        let upButton = NSButton(title: "▲", target: self, action: #selector(moveSelectedRuleUp))
+        upButton.frame = NSRect(x: contentView.bounds.width - margin - 68, y: buttonRowY, width: 32, height: buttonRowHeight)
+        upButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        contentView.addSubview(upButton)
+
+        let downButton = NSButton(title: "▼", target: self, action: #selector(moveSelectedRuleDown))
+        downButton.frame = NSRect(x: contentView.bounds.width - margin - 34, y: buttonRowY, width: 32, height: buttonRowHeight)
+        downButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        contentView.addSubview(downButton)
+
+        let headerLabel = NSTextField(labelWithString: "Routing Rules")
+        headerLabel.font = .boldSystemFont(ofSize: 13)
+        headerLabel.frame = NSRect(
+            x: margin,
+            y: contentView.bounds.height - margin - headerHeight,
+            width: contentView.bounds.width - margin * 2,
+            height: headerHeight
+        )
+        headerLabel.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(headerLabel)
+
+        let scrollViewY = buttonRowY + buttonRowHeight
         let scrollView = NSScrollView(frame: NSRect(
             x: margin,
-            y: margin + buttonRowHeight + defaultRowHeight,
+            y: scrollViewY,
             width: contentView.bounds.width - margin * 2,
-            height: contentView.bounds.height - margin * 2 - buttonRowHeight - defaultRowHeight
+            height: contentView.bounds.height - margin - headerHeight - scrollViewY
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
@@ -69,43 +144,21 @@ final class RoutingRulesWindowController: NSWindowController, NSWindowDelegate, 
         tableView.target = self
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
+    }
 
-        let buttonRowY = margin + defaultRowHeight
-        let addButton = NSButton(title: "＋", target: self, action: #selector(addRule))
-        addButton.frame = NSRect(x: margin, y: buttonRowY, width: 32, height: buttonRowHeight)
-        addButton.autoresizingMask = [.maxXMargin]
-        contentView.addSubview(addButton)
-
-        let removeButton = NSButton(title: "－", target: self, action: #selector(removeSelectedRule))
-        removeButton.frame = NSRect(x: margin + 34, y: buttonRowY, width: 32, height: buttonRowHeight)
-        removeButton.autoresizingMask = [.maxXMargin]
-        contentView.addSubview(removeButton)
-
-        let editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedRule))
-        editButton.frame = NSRect(x: margin + 74, y: buttonRowY, width: 60, height: buttonRowHeight)
-        editButton.autoresizingMask = [.maxXMargin]
-        contentView.addSubview(editButton)
-
-        let upButton = NSButton(title: "▲", target: self, action: #selector(moveSelectedRuleUp))
-        upButton.frame = NSRect(x: contentView.bounds.width - margin - 68, y: buttonRowY, width: 32, height: buttonRowHeight)
-        upButton.autoresizingMask = [.minXMargin]
-        contentView.addSubview(upButton)
-
-        let downButton = NSButton(title: "▼", target: self, action: #selector(moveSelectedRuleDown))
-        downButton.frame = NSRect(x: contentView.bounds.width - margin - 34, y: buttonRowY, width: 32, height: buttonRowHeight)
-        downButton.autoresizingMask = [.minXMargin]
-        contentView.addSubview(downButton)
-
-        let defaultLabel = NSTextField(labelWithString: "Default profile for unmatched links:")
-        defaultLabel.frame = NSRect(x: margin, y: margin + 6, width: 230, height: 20)
-        defaultLabel.autoresizingMask = [.maxXMargin]
-        contentView.addSubview(defaultLabel)
-
-        defaultProfilePopup.frame = NSRect(x: margin + 234, y: margin, width: 200, height: 28)
-        defaultProfilePopup.autoresizingMask = [.minXMargin]
-        defaultProfilePopup.target = self
-        defaultProfilePopup.action = #selector(defaultProfileChanged)
-        contentView.addSubview(defaultProfilePopup)
+    /// Only "http" matters for default-browser purposes (see
+    /// docs/research/2026-07-27-link-routing-macos.md); macOS always shows
+    /// its own native confirmation dialog here and it cannot be
+    /// skipped/pre-approved, and only fires correctly for a properly
+    /// installed, Developer-ID-signed app bundle -- invoked from a raw
+    /// build/ directory it may silently no-op or misbehave, which is
+    /// acceptable for local dev (see docs/ai-tasks/m2-routing-notes.md).
+    @objc private func makeDefaultBrowserClicked() {
+        NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "http") { error in
+            if let error {
+                NSLog("Browser: setDefaultApplication(toOpenURLsWithScheme: \"http\") failed: %@", error.localizedDescription)
+            }
+        }
     }
 
     // MARK: - Data

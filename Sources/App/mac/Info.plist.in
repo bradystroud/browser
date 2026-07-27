@@ -49,5 +49,13 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth is used to sign in with passkeys from your phone and security keys.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Websites you visit can request camera access.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Websites you visit can request microphone access.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Websites you visit can request your location.</string>
 </dict>
 </plist>

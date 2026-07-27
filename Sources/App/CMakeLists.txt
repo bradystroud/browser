@@ -41,7 +41,7 @@ set(BROWSER_SWIFT_SRCS
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
-  Routing/RoutingRulesWindowController.swift
+  Routing/SettingsWindowController.swift
   Routing/RoutingRuleEditor.swift
   Routing/RunningApplicationPicker.swift
   )
