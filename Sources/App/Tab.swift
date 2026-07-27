@@ -4,7 +4,7 @@ protocol TabDelegate: AnyObject {
     func tabDidChangeDisplayState(_ tab: Tab)
 
     /// A committed top-level (main-frame) navigation -- see
-    /// BRWEngine.h's -browserDidCommitNavigation: for exactly what this
+    /// EngineTabDelegate.engineTabDidCommitNavigation for exactly what this
     /// does and doesn't cover. This is the history-recording signal.
     func tab(_ tab: Tab, didCommitNavigationTo url: String)
 
@@ -12,9 +12,8 @@ protocol TabDelegate: AnyObject {
     func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate)
 }
 
-/// Mirrors BRWEngine.h's -browserDidBeginDownloadWithId:url:suggestedName:
-/// destinationPath: -- a plain Swift value so TabDelegate doesn't need to
-/// know about the ObjC bridge types.
+/// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
+/// so TabDelegate doesn't need to know about the engine protocol types.
 struct TabDownloadStart {
     let downloadId: Int64
     let url: String
@@ -22,7 +21,7 @@ struct TabDownloadStart {
     let destinationPath: String
 }
 
-/// Mirrors BRWEngine.h's -browserDidUpdateDownloadWithId:....
+/// Mirrors EngineTabDelegate.engineTabDidUpdateDownload.
 struct TabDownloadUpdate {
     let downloadId: Int64
     let receivedBytes: Int64
@@ -32,20 +31,20 @@ struct TabDownloadUpdate {
     let isInterrupted: Bool
 }
 
-/// One browser tab: a persistent host NSView + BRWBrowser, plus the
+/// One browser tab: a persistent host NSView + EngineTab, plus the
 /// navigation/display state the tab strip and omnibox render. The host view
 /// is created once and kept alive for the tab's lifetime, including while
 /// the tab is not the active one in its window -- switching tabs detaches/
 /// reattaches this view from the window's content container rather than
-/// destroying and recreating the underlying BRWBrowser (see AppDelegate/
+/// destroying and recreating the underlying EngineTab (see AppDelegate/
 /// BrowserWindowController), matching the plan's requirement that inactive
-/// tabs keep their CefBrowser alive.
-final class Tab: NSObject, BRWBrowserDelegate {
+/// tabs keep their engine-side browser alive.
+final class Tab: NSObject, EngineTabDelegate {
     let id = UUID()
     let profileName: String
     let hostView = NSView()
 
-    private(set) var browser: BRWBrowser?
+    private(set) var browser: EngineTab?
     private(set) var title: String
     private(set) var urlString: String
     private(set) var faviconURL: String?
@@ -87,7 +86,7 @@ final class Tab: NSObject, BRWBrowserDelegate {
     /// real frame (CEF's SetAsChild needs real bounds at creation time).
     func createBrowserIfNeeded() {
         guard browser == nil else { return }
-        let browser = BRWBrowser(profileName: profileName, hostView: hostView, initialURL: urlString)
+        let browser = ActiveEngine.createTab(profileName: profileName, hostView: hostView, initialURL: urlString)
         browser.delegate = self
         self.browser = browser
     }
@@ -113,32 +112,32 @@ final class Tab: NSObject, BRWBrowserDelegate {
         browser = nil
     }
 
-    // MARK: - BRWBrowserDelegate
+    // MARK: - EngineTabDelegate
 
-    func browserDidChangeTitle(_ title: String) {
+    func engineTabDidChangeTitle(_ title: String) {
         self.title = title.isEmpty ? urlString : title
         delegate?.tabDidChangeDisplayState(self)
     }
 
-    func browserDidChangeURL(_ url: String) {
+    func engineTabDidChangeURL(_ url: String) {
         urlString = url
         delegate?.tabDidChangeDisplayState(self)
     }
 
-    func browserDidChangeFaviconURL(_ faviconURL: String?) {
+    func engineTabDidChangeFaviconURL(_ faviconURL: String?) {
         self.faviconURL = faviconURL
         maybeLoadFavicon()
         delegate?.tabDidChangeDisplayState(self)
     }
 
-    func browserDidChangeLoadingState(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool) {
+    func engineTabDidChangeLoadingState(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool) {
         self.isLoading = isLoading
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
         delegate?.tabDidChangeDisplayState(self)
     }
 
-    func browserDidCommitNavigation(_ url: String) {
+    func engineTabDidCommitNavigation(_ url: String) {
         maybeLoadFavicon()
         delegate?.tab(self, didCommitNavigationTo: url)
     }
@@ -162,12 +161,12 @@ final class Tab: NSObject, BRWBrowserDelegate {
         }
     }
 
-    func browserDidBeginDownload(withId downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
+    func engineTabDidBeginDownload(id downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
         delegate?.tab(self, didBeginDownload: TabDownloadStart(
             downloadId: downloadId, url: url, suggestedName: suggestedName, destinationPath: destinationPath))
     }
 
-    func browserDidUpdateDownload(withId downloadId: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool) {
+    func engineTabDidUpdateDownload(id downloadId: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool) {
         delegate?.tab(self, didUpdateDownload: TabDownloadUpdate(
             downloadId: downloadId, receivedBytes: receivedBytes, totalBytes: totalBytes,
             isComplete: isComplete, isCancelled: isCancelled, isInterrupted: isInterrupted))

@@ -1,8 +1,10 @@
 import AppKit
 
-// BRWApplication must become NSApp before anything else touches
-// NSApplication.shared -- see Sources/Bridge/BRWApplication.h.
-BRWApplication.bootstrap()
+// The active engine's application-integration must become NSApp before
+// anything else touches NSApplication.shared -- see
+// BrowserEngine.bootstrapApplication and, for the CEF specifics,
+// Sources/Bridge/BRWApplication.h.
+ActiveEngine.bootstrapApplication()
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

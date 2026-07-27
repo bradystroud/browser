@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // specifically *before* didFinishLaunching, because a cold launch
         // via a link click delivers its kAEGetURL event in the gap between
         // will- and didFinishLaunching. RoutingCoordinator queues the route
-        // until markReady() below, since BRWEngine/profiles aren't up yet.
+        // until markReady() below, since the engine/profiles aren't up yet.
         URLEventHandler.shared.register()
 
         // Explicit kAEQuitApplication handler -- Dock "Quit", "quit" via
@@ -68,17 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let profilesRootPath = CommandLineArgs.profilesRootPath()
-        guard BRWEngine.initialize(withProfilesRootPath: profilesRootPath) else {
-            NSLog("Browser: CEF failed to initialize (root_cache_path=%@)", profilesRootPath)
+        guard ActiveEngine.initialize(profilesRootPath: profilesRootPath) else {
+            NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)
             NSApp.terminate(nil)
             return
         }
 
         // See -[BRWApplication terminate:] and WindowManager.closeAllWindowsForShutdown:
         // quitting must close every Swift-owned window (and thus its tabs'
-        // BRWBrowsers) through their normal path before CefShutdown runs, not
-        // leave them for AppKit's own at-exit teardown to reach afterward.
-        BRWEngine.setWindowCloseHandler {
+        // engine tabs) through their normal path before the engine's own
+        // shutdown runs, not leave them for AppKit's own at-exit teardown to
+        // reach afterward.
+        ActiveEngine.setWindowCloseHandler {
             WindowManager.shared.closeAllWindowsForShutdown()
         }
 
@@ -98,13 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Normally true (closing the last window quits, standard for this kind
     // of app) -- except while -[BRWApplication terminate:] is already mid-
-    // sequence (BRWApplication.isTerminating), since then it's the one
+    // sequence (ActiveEngine.isTerminating), since then it's the one
     // closing every window as a step in its own close-and-wait-for-CEF
     // sequence, and there's no need for AppKit to also re-enter -terminate:
     // from here (that reentrant call is harmless -- see -terminate:'s guard
     // -- but redundant).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !((NSApp as? BRWApplication)?.isTerminating ?? false)
+        !ActiveEngine.isTerminating
     }
 
     // CEF's required shutdown sequencing (close every browser, wait for
