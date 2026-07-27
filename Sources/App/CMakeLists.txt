@@ -1,0 +1,153 @@
+# Adapted from third_party/cef/*/tests/cefsimple/CMakeLists.txt, replacing
+# cefsimple's C++ sources with our Swift/AppKit UI + Obj-C++ bridge, and
+# generalized to the CEF_HELPER_APP_SUFFIXES list CEF itself defines (five
+# helpers in this CEF version -- see docs/ai-tasks/m0-spike-notes.md).
+
+set(BROWSER_BRIDGE_SRCS
+  ../Bridge/BRWApplication.h
+  ../Bridge/BRWApplication.mm
+  ../Bridge/BRWMessagePump.h
+  ../Bridge/BRWMessagePump.mm
+  ../Bridge/BRWCefApp.h
+  ../Bridge/BRWCefApp.mm
+  ../Bridge/BRWClientHandler.h
+  ../Bridge/BRWClientHandler.mm
+  ../Bridge/BRWEngine.h
+  ../Bridge/BRWEngine.mm
+  )
+source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
+
+set(BROWSER_SWIFT_SRCS
+  main.swift
+  AppDelegate.swift
+  BrowserWindowController.swift
+  CommandLineArgs.swift
+  )
+source_group(App FILES ${BROWSER_SWIFT_SRCS})
+
+set(BROWSER_SRCS
+  ${BROWSER_BRIDGE_SRCS}
+  ${BROWSER_SWIFT_SRCS}
+  )
+
+set(BROWSER_HELPER_SRCS
+  ../Bridge/process_helper_mac.mm
+  )
+source_group(Bridge FILES ${BROWSER_HELPER_SRCS})
+
+set(BROWSER_RESOURCES_MAC_SRCS
+  mac/Info.plist.in
+  )
+source_group(mac FILES ${BROWSER_RESOURCES_MAC_SRCS})
+
+# Target executable names.
+set(CEF_TARGET "Browser")
+set(CEF_HELPER_TARGET "Browser_Helper")
+set(CEF_HELPER_OUTPUT_NAME "Browser Helper")
+
+SET_CEF_TARGET_OUT_DIR()
+
+option(OPTION_USE_ARC "Build with ARC (Automatic Reference Counting) on macOS." ON)
+if(OPTION_USE_ARC)
+  list(APPEND CEF_COMPILER_FLAGS -fobjc-arc)
+endif()
+
+# Output path for the main app bundle.
+set(CEF_APP "${CEF_TARGET_OUT_DIR}/${CEF_TARGET}.app")
+
+# Variables referenced from mac/Info.plist.in.
+set(EXECUTABLE_NAME "${CEF_TARGET}")
+set(PRODUCT_NAME "${CEF_TARGET}")
+
+# Main app bundle target -- Obj-C++ bridge + Swift UI in one CMake/Xcode target.
+add_executable(${CEF_TARGET} MACOSX_BUNDLE ${BROWSER_RESOURCES_MAC_SRCS} ${BROWSER_SRCS})
+SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
+add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
+target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+set_target_properties(${CEF_TARGET} PROPERTIES
+  MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
+  XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/BrowserApp-Bridging-Header.h"
+  XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
+  XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"
+  )
+
+# Copy the CEF framework into the Frameworks directory and create the necessary symlinks.
+COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
+
+# Map each helper's CMake target-name suffix to its entitlements file. Only
+# the GPU and Renderer helpers need JIT / unsigned-executable-memory; every
+# helper needs disable-library-validation because every helper dynamically
+# loads the (ad-hoc-signed, for local dev) CEF framework.
+function(browser_entitlements_for_suffix _target_suffix _out_var)
+  if(_target_suffix STREQUAL "_gpu")
+    set(${_out_var} "${CMAKE_SOURCE_DIR}/entitlements/helper-gpu.entitlements" PARENT_SCOPE)
+  elseif(_target_suffix STREQUAL "_renderer")
+    set(${_out_var} "${CMAKE_SOURCE_DIR}/entitlements/helper-renderer.entitlements" PARENT_SCOPE)
+  elseif(_target_suffix STREQUAL "_plugin")
+    set(${_out_var} "${CMAKE_SOURCE_DIR}/entitlements/helper-plugin.entitlements" PARENT_SCOPE)
+  elseif(_target_suffix STREQUAL "_alerts")
+    set(${_out_var} "${CMAKE_SOURCE_DIR}/entitlements/helper-alerts.entitlements" PARENT_SCOPE)
+  else()
+    set(${_out_var} "${CMAKE_SOURCE_DIR}/entitlements/helper.entitlements" PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Written for scripts/sign.sh to consume: "<kind>|<relative path>|<entitlements
+# path>" lines, one per helper, plus the main app's own entitlements last.
+# CEF_TARGET_OUT_DIR embeds an unevaluated $<CONFIGURATION> generator
+# expression under the Xcode generator, so this has to go through
+# file(GENERATE) rather than file(WRITE) -- the latter runs at configure time
+# and would write the literal string "$<CONFIGURATION>" into the path.
+set(_manifest_content "")
+
+foreach(_suffix_list ${CEF_HELPER_APP_SUFFIXES})
+  # Convert to a list and extract the suffix values.
+  string(REPLACE ":" ";" _suffix_list ${_suffix_list})
+  list(GET _suffix_list 0 _name_suffix)
+  list(GET _suffix_list 1 _target_suffix)
+  list(GET _suffix_list 2 _plist_suffix)
+
+  set(_helper_target "${CEF_HELPER_TARGET}${_target_suffix}")
+  set(_helper_output_name "${CEF_HELPER_OUTPUT_NAME}${_name_suffix}")
+
+  # Create Helper-specific variants of the helper-Info.plist file.
+  set(_helper_info_plist "${CMAKE_CURRENT_BINARY_DIR}/helper-Info${_target_suffix}.plist")
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mac/helper-Info.plist.in" _plist_contents)
+  string(REPLACE "\${EXECUTABLE_NAME}" "${_helper_output_name}" _plist_contents ${_plist_contents})
+  string(REPLACE "\${PRODUCT_NAME}" "${_helper_output_name}" _plist_contents ${_plist_contents})
+  string(REPLACE "\${BUNDLE_ID_SUFFIX}" "${_plist_suffix}" _plist_contents ${_plist_contents})
+  file(WRITE ${_helper_info_plist} ${_plist_contents})
+
+  # Create Helper executable target.
+  add_executable(${_helper_target} MACOSX_BUNDLE ${BROWSER_HELPER_SRCS})
+  SET_EXECUTABLE_TARGET_PROPERTIES(${_helper_target})
+  add_dependencies(${_helper_target} libcef_dll_wrapper)
+  target_link_libraries(${_helper_target} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+  set_target_properties(${_helper_target} PROPERTIES
+    MACOSX_BUNDLE_INFO_PLIST ${_helper_info_plist}
+    OUTPUT_NAME ${_helper_output_name}
+    )
+
+  add_dependencies(${CEF_TARGET} "${_helper_target}")
+
+  # Copy the Helper app bundle into the Frameworks directory.
+  add_custom_command(
+    TARGET ${CEF_TARGET}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CEF_TARGET_OUT_DIR}/${_helper_output_name}.app"
+            "${CEF_APP}/Contents/Frameworks/${_helper_output_name}.app"
+    VERBATIM
+    )
+
+  browser_entitlements_for_suffix("${_target_suffix}" _helper_entitlements)
+  string(APPEND _manifest_content "helper|Contents/Frameworks/${_helper_output_name}.app|${_helper_entitlements}\n")
+endforeach()
+
+string(APPEND _manifest_content "app|.|${CMAKE_SOURCE_DIR}/entitlements/browser.entitlements\n")
+file(GENERATE OUTPUT "${CEF_TARGET_OUT_DIR}/.codesign-manifest" CONTENT "${_manifest_content}")
+
+# Manually process and copy over resource files (handles nested resource
+# directories, which the Xcode generator's RESOURCE property does not).
+set(PREFIXES "mac/")
+COPY_MAC_RESOURCES("${BROWSER_RESOURCES_MAC_SRCS}" "${PREFIXES}" "${CEF_TARGET}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CEF_APP}")
