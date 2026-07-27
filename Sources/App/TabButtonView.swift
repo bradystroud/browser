@@ -22,6 +22,18 @@ final class TabButtonView: NSView {
         return label
     }()
 
+    /// Generic fallback shown until FaviconLoader resolves a real one (or
+    /// permanently, if the site has none or it fails to load) -- see
+    /// setFavicon(_:).
+    private static let genericFavicon = NSImage(systemSymbolName: "globe", accessibilityDescription: "Website")
+
+    private let faviconView: NSImageView = {
+        let imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.image = TabButtonView.genericFavicon
+        return imageView
+    }()
+
     private let closeButton: NSButton = {
         let button = NSButton()
         button.isBordered = false
@@ -41,6 +53,7 @@ final class TabButtonView: NSView {
         layer?.cornerRadius = 6
 
         titleLabel.stringValue = title
+        addSubview(faviconView)
         addSubview(titleLabel)
 
         closeButton.target = self
@@ -56,16 +69,31 @@ final class TabButtonView: NSView {
         titleLabel.stringValue = title
     }
 
+    /// `nil` reverts to the generic globe glyph (e.g. a site with no
+    /// favicon, or one FaviconLoader couldn't fetch).
+    func setFavicon(_ image: NSImage?) {
+        faviconView.image = image ?? Self.genericFavicon
+    }
+
     override func layout() {
         super.layout()
         let closeSize: CGFloat = 14
+        let faviconSize: CGFloat = 14
+        let faviconLeading: CGFloat = 8
         closeButton.frame = NSRect(
             x: bounds.width - closeSize - 6,
             y: (bounds.height - closeSize) / 2,
             width: closeSize,
             height: closeSize
         )
-        titleLabel.frame = NSRect(x: 8, y: 0, width: max(0, bounds.width - closeSize - 16), height: bounds.height)
+        faviconView.frame = NSRect(
+            x: faviconLeading,
+            y: (bounds.height - faviconSize) / 2,
+            width: faviconSize,
+            height: faviconSize
+        )
+        let titleX = faviconLeading + faviconSize + 6
+        titleLabel.frame = NSRect(x: titleX, y: 0, width: max(0, bounds.width - closeSize - titleX - 8), height: bounds.height)
     }
 
     override func updateTrackingAreas() {

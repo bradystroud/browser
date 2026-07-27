@@ -15,6 +15,7 @@ final class TabStripView: NSView {
 
     struct DisplayInfo {
         let title: String
+        let favicon: NSImage?
     }
 
     private var infos: [DisplayInfo] = []
@@ -62,6 +63,13 @@ final class TabStripView: NSView {
         tabButtons[index].setTitle(title)
     }
 
+    /// Cheaper than a full reload -- see updateTitle. `nil` reverts to the
+    /// generic glyph.
+    func updateFavicon(at index: Int, image: NSImage?) {
+        guard tabButtons.indices.contains(index) else { return }
+        tabButtons[index].setFavicon(image)
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for (i, button) in tabButtons.enumerated() {
@@ -75,6 +83,7 @@ final class TabStripView: NSView {
         }
         tabButtons = infos.enumerated().map { index, info in
             let button = TabButtonView(index: index, title: info.title)
+            button.setFavicon(info.favicon)
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in
                 guard let self else { return }

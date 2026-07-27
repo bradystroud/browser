@@ -170,7 +170,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabs.append(tab)
         let newIndex = tabs.count - 1
         tabStripView.reload(
-            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title) },
+            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
             selectedIndex: makeActive ? newIndex : (activeTabIndex ?? newIndex)
         )
         if makeActive {
@@ -251,7 +251,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
 
         tabStripView.reload(
-            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title) },
+            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
             selectedIndex: newActiveIndex
         )
 
@@ -280,6 +280,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func tabDidChangeDisplayState(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
         tabStripView.updateTitle(at: index, title: tab.title)
+        tabStripView.updateFavicon(at: index, image: tab.faviconImage)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)

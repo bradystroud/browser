@@ -67,6 +67,12 @@ final class Tab: NSObject, BRWBrowserDelegate {
     /// the page deliberately).
     var needsInitialOmniboxFocus = true
 
+    /// Nil until FaviconLoader resolves one; the tab strip falls back to a
+    /// generic glyph until then (or forever, if the site has none/it fails
+    /// to load) -- see TabButtonView.
+    private(set) var faviconImage: NSImage?
+    private var faviconFetchKey: String?
+
     weak var delegate: TabDelegate?
 
     init(profileName: String, initialURL: String) {
@@ -118,6 +124,7 @@ final class Tab: NSObject, BRWBrowserDelegate {
 
     func browserDidChangeFaviconURL(_ faviconURL: String?) {
         self.faviconURL = faviconURL
+        maybeLoadFavicon()
         delegate?.tabDidChangeDisplayState(self)
     }
 
@@ -129,7 +136,27 @@ final class Tab: NSObject, BRWBrowserDelegate {
     }
 
     func browserDidCommitNavigation(_ url: String) {
+        maybeLoadFavicon()
         delegate?.tab(self, didCommitNavigationTo: url)
+    }
+
+    /// FaviconLoader.shared.loadFavicon(...), fired on committed navigation
+    /// and again if a more accurate favicon URL hint arrives afterward (see
+    /// FaviconLoader's doc comment on why the hint is preferred over
+    /// guessing /favicon.ico). faviconFetchKey -- host + whatever hint we
+    /// have right now -- avoids redundant fetches for the same combination
+    /// while still re-fetching if a better hint shows up later for the same
+    /// host.
+    private func maybeLoadFavicon() {
+        guard let host = URL(string: urlString)?.host else { return }
+        let key = "\(host)|\(faviconURL ?? "")"
+        guard key != faviconFetchKey else { return }
+        faviconFetchKey = key
+        FaviconLoader.shared.loadFavicon(host: host, hintURL: faviconURL, profileName: profileName) { [weak self] image in
+            guard let self, self.faviconFetchKey == key else { return }
+            self.faviconImage = image
+            self.delegate?.tabDidChangeDisplayState(self)
+        }
     }
 
     func browserDidBeginDownload(withId downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
