@@ -1,0 +1,232 @@
+import Foundation
+
+public struct HistoryEntry: Equatable {
+    public let url: String
+    public let title: String
+    public let visitCount: Int
+    public let lastVisitTime: Date
+
+    public init(url: String, title: String, visitCount: Int, lastVisitTime: Date) {
+        self.url = url
+        self.title = title
+        self.visitCount = visitCount
+        self.lastVisitTime = lastVisitTime
+    }
+}
+
+public struct HistorySuggestion: Equatable {
+    public let url: String
+    public let title: String
+    public let score: Double
+}
+
+/// Per-profile visit history: a rollup row per URL (`history_urls`, used for
+/// autocomplete/ranking) backed by an append-only visit log
+/// (`history_visits`, used for range deletes and recomputing the rollup).
+public final class HistoryStore {
+    private let database: Database
+
+    public init(database: Database) {
+        self.database = database
+    }
+
+    public func recordVisit(url: String, title: String?, at date: Date = Date()) throws {
+        let epochMs = Self.epochMs(date)
+        let resolvedTitle = title ?? ""
+        try database.perform { db in
+            try db.withTransaction {
+                let select = try db.prepare("SELECT id FROM history_urls WHERE url = ?;")
+                try select.bind(url, at: 1)
+                let urlId: Int64
+                if try select.step() {
+                    urlId = select.int64(0)
+                    let update = try db.prepare("""
+                        UPDATE history_urls
+                        SET visit_count = visit_count + 1,
+                            last_visit_time = ?,
+                            title = CASE WHEN ? != '' THEN ? ELSE title END
+                        WHERE id = ?;
+                        """)
+                    try update.bind(epochMs, at: 1)
+                    try update.bind(resolvedTitle, at: 2)
+                    try update.bind(resolvedTitle, at: 3)
+                    try update.bind(urlId, at: 4)
+                    try update.step()
+                } else {
+                    let insert = try db.prepare("""
+                        INSERT INTO history_urls (url, title, visit_count, last_visit_time)
+                        VALUES (?, ?, 1, ?);
+                        """)
+                    try insert.bind(url, at: 1)
+                    try insert.bind(resolvedTitle, at: 2)
+                    try insert.bind(epochMs, at: 3)
+                    try insert.step()
+                    urlId = db.lastInsertRowID
+                }
+                let visitInsert = try db.prepare("INSERT INTO history_visits (url_id, visit_time) VALUES (?, ?);")
+                try visitInsert.bind(urlId, at: 1)
+                try visitInsert.bind(epochMs, at: 2)
+                try visitInsert.step()
+            }
+        }
+    }
+
+    /// Ranked candidates for omnibox autocomplete: substring match against
+    /// URL or title, scored by frecency (visit count weighted by recency)
+    /// with a bonus for matches at the start of the host, highest first.
+    public func autocomplete(query: String, limit: Int = 8, now: Date = Date()) throws -> [HistorySuggestion] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let likePattern = "%\(Self.escapeLike(trimmed))%"
+        let nowMs = Self.epochMs(now)
+
+        let rows: [(url: String, title: String, visitCount: Int, lastVisitTime: Int64)] = try database.perform { db in
+            let stmt = try db.prepare("""
+                SELECT url, title, visit_count, last_visit_time
+                FROM history_urls
+                WHERE url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
+                ORDER BY last_visit_time DESC
+                LIMIT 500;
+                """)
+            try stmt.bind(likePattern, at: 1)
+            try stmt.bind(likePattern, at: 2)
+            var results: [(String, String, Int, Int64)] = []
+            while try stmt.step() {
+                results.append((stmt.text(0), stmt.text(1), stmt.int(2), stmt.int64(3)))
+            }
+            return results
+        }
+
+        let needle = trimmed.lowercased()
+        let scored = rows.map { row -> HistorySuggestion in
+            let host = Self.normalizedHost(row.url).lowercased()
+            let titleLower = row.title.lowercased()
+            let prefixBonus: Double
+            if host.hasPrefix(needle) {
+                prefixBonus = 3.0
+            } else if titleLower.hasPrefix(needle) {
+                prefixBonus = 2.0
+            } else {
+                prefixBonus = 1.0
+            }
+            let ageMs = max(0, nowMs - row.lastVisitTime)
+            let score = Double(row.visitCount) * Self.recencyMultiplier(ageMs: ageMs) * prefixBonus
+            return HistorySuggestion(url: row.url, title: row.title, score: score)
+        }
+
+        return scored.sorted { $0.score > $1.score }.prefix(limit).map { $0 }
+    }
+
+    /// Rollup entries (one per URL) for the "Show All History" window,
+    /// newest-first, optionally filtered by a substring in URL or title.
+    public func entries(matching text: String? = nil, limit: Int = 500) throws -> [HistoryEntry] {
+        try database.perform { db in
+            let stmt: Statement
+            if let text, !text.isEmpty {
+                stmt = try db.prepare("""
+                    SELECT url, title, visit_count, last_visit_time
+                    FROM history_urls
+                    WHERE url LIKE ? ESCAPE '\\' OR title LIKE ? ESCAPE '\\'
+                    ORDER BY last_visit_time DESC
+                    LIMIT ?;
+                    """)
+                let pattern = "%\(Self.escapeLike(text))%"
+                try stmt.bind(pattern, at: 1)
+                try stmt.bind(pattern, at: 2)
+                try stmt.bind(Int64(limit), at: 3)
+            } else {
+                stmt = try db.prepare("""
+                    SELECT url, title, visit_count, last_visit_time
+                    FROM history_urls
+                    ORDER BY last_visit_time DESC
+                    LIMIT ?;
+                    """)
+                try stmt.bind(Int64(limit), at: 1)
+            }
+            var results: [HistoryEntry] = []
+            while try stmt.step() {
+                results.append(HistoryEntry(
+                    url: stmt.text(0),
+                    title: stmt.text(1),
+                    visitCount: stmt.int(2),
+                    lastVisitTime: Date(timeIntervalSince1970: Double(stmt.int64(3)) / 1000)
+                ))
+            }
+            return results
+        }
+    }
+
+    public func deleteItem(url: String) throws {
+        try database.perform { db in
+            let stmt = try db.prepare("DELETE FROM history_urls WHERE url = ?;")
+            try stmt.bind(url, at: 1)
+            try stmt.step()
+        }
+    }
+
+    /// Deletes every visit in `[from, to]` and recomputes affected rollups,
+    /// dropping any URL left with zero remaining visits.
+    public func deleteRange(from: Date, to: Date) throws {
+        let fromMs = Self.epochMs(from)
+        let toMs = Self.epochMs(to)
+        try database.perform { db in
+            try db.withTransaction {
+                let delete = try db.prepare("DELETE FROM history_visits WHERE visit_time BETWEEN ? AND ?;")
+                try delete.bind(fromMs, at: 1)
+                try delete.bind(toMs, at: 2)
+                try delete.step()
+
+                try db.execute("""
+                    UPDATE history_urls
+                    SET visit_count = (SELECT COUNT(*) FROM history_visits WHERE url_id = history_urls.id),
+                        last_visit_time = COALESCE(
+                            (SELECT MAX(visit_time) FROM history_visits WHERE url_id = history_urls.id), 0)
+                    """)
+                try db.execute("DELETE FROM history_urls WHERE visit_count = 0;")
+            }
+        }
+    }
+
+    public func deleteAll() throws {
+        try database.perform { db in
+            try db.execute("DELETE FROM history_urls;")
+        }
+    }
+
+    private static func epochMs(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    private static func escapeLike(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+    }
+
+    private static func normalizedHost(_ url: String) -> String {
+        var result = url
+        for prefix in ["https://", "http://"] {
+            if result.hasPrefix(prefix) {
+                result.removeFirst(prefix.count)
+                break
+            }
+        }
+        if result.hasPrefix("www.") {
+            result.removeFirst(4)
+        }
+        return result
+    }
+
+    /// Firefox-style frecency buckets: recent visits are worth far more than
+    /// old ones, but old-and-frequent still beats new-and-rare.
+    private static func recencyMultiplier(ageMs: Int64) -> Double {
+        let hour: Int64 = 3_600_000
+        switch ageMs {
+        case ..<(4 * hour): return 100
+        case ..<(24 * hour): return 70
+        case ..<(7 * 24 * hour): return 50
+        case ..<(30 * 24 * hour): return 30
+        default: return 10
+        }
+    }
+}
