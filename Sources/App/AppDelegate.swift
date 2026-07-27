@@ -19,6 +19,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Both install a global NSEvent monitor in their own init(), which
+        // must exist before the user's first relevant keypress -- touching
+        // .shared here (rather than only implicitly, e.g. the first time a
+        // menu action references ShortcutsOverlayController.shared) forces
+        // that to happen at launch instead of lazily on first use, which
+        // would otherwise silently miss a bare "?" or Ctrl+Tab pressed
+        // before anything else happened to touch either singleton.
+        _ = ShortcutsOverlayController.shared
+        _ = TabCyclingController.shared
+
         let profilesRootPath = CommandLineArgs.profilesRootPath()
         guard BRWEngine.initialize(withProfilesRootPath: profilesRootPath) else {
             NSLog("Browser: CEF failed to initialize (root_cache_path=%@)", profilesRootPath)
@@ -44,9 +54,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        BRWEngine.shutdown()
-    }
+    // CEF's required shutdown sequencing (close every browser, wait for
+    // OnBeforeClose, only then CefShutdown) happens in -[BRWApplication
+    // terminate:], not here -- see that override for why
+    // applicationShouldTerminate:/applicationWillTerminate can't do this job
+    // for a CEF-backed app.
 
     /// ⌘N -- new window in the same profile as the key window (falls back to
     /// the default profile if no window is open), per

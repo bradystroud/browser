@@ -3,6 +3,7 @@
 
 #import <AppKit/AppKit.h>
 
+#include <set>
 #include <string>
 
 #include "include/cef_client.h"
@@ -66,10 +67,26 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   bool IsClosed() const { return closed_; }
 
+  // Force-closes every handler with a live browser (i.e. constructed but not
+  // yet OnBeforeClose'd). CEF requires every CefBrowser to be closed -- and
+  // OnBeforeClose delivered for it -- before CefShutdown runs; this is the
+  // "close all browsers" half of that sequence, driven by +[BRWEngine
+  // requestShutdownWithCompletion:]. Safe to call with zero live handlers.
+  static void CloseAll();
+
+  // Number of handlers still awaiting OnBeforeClose. +[BRWEngine
+  // requestShutdownWithCompletion:] polls this down to zero before calling
+  // CefShutdown.
+  static size_t LiveCount();
+
  private:
   NSView* host_view_;
   CefRefPtr<CefBrowser> browser_;
   bool closed_ = false;
+  // Set by CloseAll() when it runs before OnAfterCreated has fired for this
+  // handler (CreateBrowser is asynchronous) -- there's no CefBrowser yet to
+  // close, so OnAfterCreated closes it immediately instead of loading.
+  bool pending_close_ = false;
   __weak id<BRWBrowserDelegate> delegate_;
   std::string pending_url_;
 

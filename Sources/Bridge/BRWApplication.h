@@ -11,6 +11,13 @@ NS_ASSUME_NONNULL_BEGIN
 /// Forces NSApp to become a BRWApplication instance. Must be called before
 /// any other NSApplication.shared access (i.e. first thing in main.swift).
 + (void)bootstrap;
+
+/// Also overrides -terminate: (the single entry point behind Cmd+Q, the Quit
+/// menu item, Dock menu Quit, and logout/restart/shutdown) to sequence CEF's
+/// required shutdown -- close every browser, wait for CEF to confirm, only
+/// then exit -- instead of letting AppKit's default -terminate: tear the
+/// process down immediately. See the .mm file for why this can't be done via
+/// NSApplicationDelegate's -applicationShouldTerminate:.
 @end
 
 NS_ASSUME_NONNULL_END

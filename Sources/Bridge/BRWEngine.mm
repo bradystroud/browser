@@ -43,6 +43,25 @@ std::string &ProfilesRootPath() {
   return root;
 }
 
+// Non-nil while +requestShutdownWithCompletion: is waiting for every open
+// browser's OnBeforeClose. Checked after each +doMessageLoopWork tick (the
+// only place those callbacks are delivered, given external_message_pump) and
+// fired -- exactly once -- as soon as BRWClientHandler::LiveCount() reaches 0.
+using ShutdownCompletionBlock = void (^)(void);
+ShutdownCompletionBlock __strong &PendingShutdownCompletion() {
+  static ShutdownCompletionBlock completion = nil;
+  return completion;
+}
+
+void CheckShutdownCompletion() {
+  if (!PendingShutdownCompletion() || BRWClientHandler::LiveCount() > 0) {
+    return;
+  }
+  ShutdownCompletionBlock completion = PendingShutdownCompletion();
+  PendingShutdownCompletion() = nil;
+  completion();
+}
+
 CefRefPtr<CefRequestContext> GetOrCreateProfileContext(const std::string &profile_name) {
   auto &contexts = ProfileContexts();
   auto it = contexts.find(profile_name);
@@ -89,11 +108,30 @@ CefRefPtr<CefRequestContext> GetOrCreateProfileContext(const std::string &profil
 
 + (void)doMessageLoopWork {
   CefDoMessageLoopWork();
+  CheckShutdownCompletion();
 }
 
 + (void)shutdown {
   ProfileContexts().clear();
   CefShutdown();
+}
+
++ (void)requestShutdownWithCompletion:(void (^)(void))completion {
+  if (PendingShutdownCompletion()) {
+    return;  // Already shutting down (e.g. a second Cmd+Q while quitting).
+  }
+  PendingShutdownCompletion() = [^{
+    [BRWEngine shutdown];
+    if (completion) {
+      completion();
+    }
+  } copy];
+  BRWClientHandler::CloseAll();
+  // CloseAll() may not have needed to touch CEF at all (no open browsers),
+  // in which case doMessageLoopWork's next tick could be arbitrarily far
+  // off (or never come, if the caller relies on this to signal quitting) --
+  // check right away rather than waiting on that pump.
+  CheckShutdownCompletion();
 }
 
 @end

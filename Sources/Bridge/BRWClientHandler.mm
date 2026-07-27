@@ -1,18 +1,35 @@
 #import "BRWClientHandler.h"
 
+#include <vector>
+
 #include "include/wrapper/cef_helpers.h"
 
 namespace {
 NSString* ToNSString(const CefString& s) {
   return [NSString stringWithUTF8String:s.ToString().c_str()];
 }
+
+// Every handler constructed but not yet OnBeforeClose'd. Only ever touched on
+// the CEF UI thread (== main thread, given this app's single-threaded,
+// external-message-pump CefSettings), so no locking is needed.
+std::set<BRWClientHandler*>& Registry() {
+  static std::set<BRWClientHandler*> registry;
+  return registry;
+}
 }  // namespace
 
-BRWClientHandler::BRWClientHandler(NSView* host_view) : host_view_(host_view) {}
+BRWClientHandler::BRWClientHandler(NSView* host_view) : host_view_(host_view) {
+  Registry().insert(this);
+}
 
 void BRWClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   browser_ = browser;
+
+  if (pending_close_) {
+    browser_->GetHost()->CloseBrowser(/*force_close=*/true);
+    return;
+  }
 
   // The CEF-created native view doesn't track our host view's size on its
   // own; give it standard AppKit autoresizing so window/pane resizes just work.
@@ -43,6 +60,33 @@ void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   closed_ = true;
   browser_ = nullptr;
+  Registry().erase(this);
+}
+
+// static
+void BRWClientHandler::CloseAll() {
+  CEF_REQUIRE_UI_THREAD();
+  // Snapshot first -- CloseBrowser can synchronously reenter OnBeforeClose
+  // for a browser that's already mid-teardown, which would mutate Registry()
+  // out from under a live iterator.
+  std::vector<BRWClientHandler*> handlers(Registry().begin(), Registry().end());
+  for (BRWClientHandler* handler : handlers) {
+    if (handler->closed_) {
+      continue;
+    }
+    if (handler->browser_) {
+      handler->browser_->GetHost()->CloseBrowser(/*force_close=*/true);
+    } else {
+      // OnAfterCreated hasn't fired yet -- flag it so it closes immediately
+      // once CEF finishes creating the browser instead of loading a page.
+      handler->pending_close_ = true;
+    }
+  }
+}
+
+// static
+size_t BRWClientHandler::LiveCount() {
+  return Registry().size();
 }
 
 void BRWClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
