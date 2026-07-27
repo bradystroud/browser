@@ -1,0 +1,5 @@
+third_party/cef/
+build/
+DerivedData/
+.DS_Store
+xcuserdata/
