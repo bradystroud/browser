@@ -18,6 +18,7 @@ final class MainMenuBuilder {
         main.addItem(topLevelItem(title: "History", submenu: historyMenu()))
         main.addItem(topLevelItem(title: "Profiles", submenu: profilesMenu))
         main.addItem(topLevelItem(title: "Window", submenu: windowMenu))
+        main.addItem(topLevelItem(title: "Help", submenu: helpMenu()))
 
         buildWindowMenuStaticItems()
         rebuildProfilesMenu()
@@ -48,6 +49,9 @@ final class MainMenuBuilder {
     private func appMenu() -> NSMenu {
         let menu = NSMenu(title: "Browser")
         menu.addItem(withTitle: "About Browser", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Routing Rules…", action: #selector(AppDelegate.showRoutingRules(_:)), keyEquivalent: ",")
+        menu.addItem(withTitle: "Make Default Browser…", action: #selector(AppDelegate.makeDefaultBrowser(_:)), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Browser", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -96,6 +100,17 @@ final class MainMenuBuilder {
         let menu = NSMenu(title: "History")
         menu.addItem(withTitle: "Back", action: #selector(BrowserWindowController.goBackAction(_:)), keyEquivalent: "\u{F702}")
         menu.addItem(withTitle: "Forward", action: #selector(BrowserWindowController.goForwardAction(_:)), keyEquivalent: "\u{F703}")
+        return menu
+    }
+
+    private func helpMenu() -> NSMenu {
+        let menu = NSMenu(title: "Help")
+        // Default keyEquivalentModifierMask for a plain key is .command, so
+        // this is Cmd+/ -- bare "?" is handled separately by
+        // ShortcutsOverlayController, which also gates it to native-chrome
+        // focus (Cmd-modified keys never type as characters, so this one
+        // needs no such gating).
+        menu.addItem(withTitle: "Keyboard Shortcuts", action: #selector(BrowserWindowController.showKeyboardShortcuts(_:)), keyEquivalent: "/")
         return menu
     }
 

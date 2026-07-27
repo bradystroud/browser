@@ -8,6 +8,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // MainMenu.xib in this project, see MainMenuBuilder.
         NSApp.mainMenu = mainMenuBuilder.build()
         NSApp.windowsMenu = mainMenuBuilder.windowMenu
+
+        // Registered here, not application(_:open:), per Finicky's approach
+        // (docs/research/2026-07-27-link-routing-macos.md section 2) -- and
+        // specifically *before* didFinishLaunching, because a cold launch
+        // via a link click delivers its kAEGetURL event in the gap between
+        // will- and didFinishLaunching. RoutingCoordinator queues the route
+        // until markReady() below, since BRWEngine/profiles aren't up yet.
+        URLEventHandler.shared.register()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,8 +26,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let profile = ProfileManager.shared.profileOrCreate(named: CommandLineArgs.profileName())
-        WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
+        // A route already queued here means this was a cold launch via a
+        // routed link (see applicationWillFinishLaunching above) -- in that
+        // case markReady() below opens the right profile's window for that
+        // link, and opening the usual --profile/--url default window on top
+        // of it would just be a spurious extra window.
+        let coldLaunchWasRouted = RoutingCoordinator.shared.hasPendingRoutes
+        RoutingCoordinator.shared.markReady()
+
+        if !coldLaunchWasRouted {
+            let profile = ProfileManager.shared.profileOrCreate(named: CommandLineArgs.profileName())
+            WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -48,5 +66,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openProfileWindow(_ sender: NSMenuItem) {
         guard let profile = sender.representedObject as? Profile else { return }
         WindowManager.shared.openNewWindow(profile: profile)
+    }
+
+    @objc func showRoutingRules(_ sender: Any?) {
+        RoutingRulesWindowController.shared.show()
+    }
+
+    /// Only "http" matters for default-browser purposes (see
+    /// docs/research/2026-07-27-link-routing-macos.md); macOS always shows
+    /// its own native confirmation dialog here and it cannot be
+    /// skipped/pre-approved, and only fires correctly for a properly
+    /// installed, Developer-ID-signed app bundle -- invoked from a raw
+    /// build/ directory it may silently no-op or misbehave, which is
+    /// acceptable for local dev (see docs/ai-tasks/m2-routing-notes.md).
+    @objc func makeDefaultBrowser(_ sender: Any?) {
+        NSWorkspace.shared.setDefaultApplication(at: Bundle.main.bundleURL, toOpenURLsWithScheme: "http") { error in
+            if let error {
+                NSLog("Browser: setDefaultApplication(toOpenURLsWithScheme: \"http\") failed: %@", error.localizedDescription)
+            }
+        }
     }
 }
