@@ -3,6 +3,8 @@
 
 #import <AppKit/AppKit.h>
 
+#include <string>
+
 #include "include/cef_client.h"
 #include "include/cef_display_handler.h"
 
@@ -23,6 +25,13 @@ class BRWClientHandler : public CefClient,
 
   void SetDelegate(id<BRWBrowserDelegate> delegate) { delegate_ = delegate; }
   id<BRWBrowserDelegate> GetDelegate() { return delegate_; }
+
+  // CefBrowserHost::CreateBrowser is asynchronous -- OnAfterCreated (and thus
+  // a non-null GetBrowser()) can lag noticeably behind BRWBrowser's Swift-side
+  // construction, especially under CPU contention. A LoadURL request that
+  // arrives in that window must not be silently dropped: it's queued here and
+  // flushed as soon as OnAfterCreated fires.
+  void LoadURLWhenReady(const std::string& url);
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -62,6 +71,7 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefBrowser> browser_;
   bool closed_ = false;
   __weak id<BRWBrowserDelegate> delegate_;
+  std::string pending_url_;
 
   IMPLEMENT_REFCOUNTING(BRWClientHandler);
 };

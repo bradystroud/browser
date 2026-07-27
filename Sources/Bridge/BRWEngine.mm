@@ -135,8 +135,8 @@ CefRefPtr<CefRequestContext> GetOrCreateProfileContext(const std::string &profil
 }
 
 - (void)loadURL:(NSString *)url {
-  if (_handler && _handler->GetBrowser()) {
-    _handler->GetBrowser()->GetMainFrame()->LoadURL(ToStdString(url));
+  if (_handler) {
+    _handler->LoadURLWhenReady(ToStdString(url));
   }
 }
 

@@ -21,6 +21,22 @@ void BRWClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     cef_view.frame = host_view_.bounds;
     cef_view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
   }
+
+  if (!pending_url_.empty()) {
+    browser_->GetMainFrame()->LoadURL(pending_url_);
+    pending_url_.clear();
+  }
+}
+
+void BRWClientHandler::LoadURLWhenReady(const std::string& url) {
+  if (browser_) {
+    browser_->GetMainFrame()->LoadURL(url);
+  } else {
+    // CreateBrowser is asynchronous -- OnAfterCreated hasn't fired yet.
+    // Remember the most recent request and flush it once it does, rather
+    // than silently dropping a navigation requested in that window.
+    pending_url_ = url;
+  }
 }
 
 void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
