@@ -57,6 +57,14 @@ while IFS='|' read -r kind rel_path entitlements; do
   sign_with_entitlements "${target}" "${entitlements}"
 done < "${MANIFEST}"
 
+# No --deep here, deliberately: every nested bundle (framework + helpers) was
+# already explicitly signed above in the correct inside-out order, so re-
+# verifying is a strict check on the outer app bundle only. --deep re-walks
+# nested bundles itself and chokes on the framework's Versions/Current
+# symlink ("No such file or directory") even though the signature is valid --
+# same class of problem as the "never codesign --deep for CEF bundles" rule
+# in AGENTS.md hard constraint #4, just hit during verification instead of
+# signing.
 echo "Verifying signature..."
-codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+codesign --verify --strict --verbose=2 "${APP_PATH}"
 echo "OK: ${APP_PATH} signed."
