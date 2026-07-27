@@ -52,20 +52,40 @@ BRWMessagePump::~BRWMessagePump() {
   [owner.timer invalidate];
 }
 
+// CEF's own Mac reference implementation
+// (tests/shared/browser/main_message_loop_external_pump_mac.mm) marshals
+// EVERY call here through
+// `[event_handler_ performSelector:@selector(scheduleWork:) onThread:...
+// waitUntilDone:NO]` -- unconditionally, even when already called from the
+// owner thread. That unconditional hop to a fresh run-loop turn is
+// load-bearing, not a thread-hop convenience: OnScheduleMessagePumpWork can
+// be invoked by CEF synchronously from other CEF entry points that are still
+// executing on the calling thread's own stack and haven't returned yet --
+// CefFrame::LoadURL is a confirmed example (see docs/ai-tasks/
+// m1-shell-notes.md): calling it from an omnibox action triggers this
+// callback before LoadURL itself returns. This port's first version
+// special-cased "already on the main thread" to call HandleScheduleWork
+// (and thus potentially CefDoMessageLoopWork()) inline -- skipping exactly
+// the deferral the reference always performs -- which reenters CEF's
+// internals from a call stack CEF isn't expecting to be reentered from, and
+// deadlocks: confirmed via `sample`, the main thread blocks forever on a
+// pthread mutex held by another thread that is itself waiting on the main
+// thread to finish LoadURL and return to the run loop.
 void BRWMessagePump::OnScheduleMessagePumpWork(int64_t delay_ms) {
-  if ([NSThread isMainThread]) {
-    HandleScheduleWork(delay_ms);
-    return;
-  }
   dispatch_async(dispatch_get_main_queue(), ^{
     HandleScheduleWork(delay_ms);
   });
 }
 
-// Ported from MainMessageLoopExternalPump::OnScheduleWork(): a plain
-// "if no timer pending, set one" implementation is not safe here because
-// CefDoMessageLoopWork() can call back into this method synchronously
-// (reentrantly) before returning -- see PerformMessageLoopWork().
+// Ported from MainMessageLoopExternalPump::OnScheduleWork(). Safe to call
+// DoWork() synchronously/inline for delay_ms<=0 here, matching the
+// reference exactly: by the time this runs, OnScheduleMessagePumpWork above
+// has already unconditionally hopped to a fresh run-loop turn, so this
+// never executes nested inside whatever CEF call originally triggered the
+// schedule request. PerformMessageLoopWork()'s is_active_ guard remains for
+// the separate, narrower case this method's own reentrancy comment
+// describes (CefDoMessageLoopWork() calling back into this method before
+// returning).
 void BRWMessagePump::HandleScheduleWork(int64_t delay_ms) {
   BRWMessagePumpTimerOwner* owner = (__bridge BRWMessagePumpTimerOwner*)timer_owner_;
 

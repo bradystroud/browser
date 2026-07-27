@@ -349,12 +349,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         omniboxField.stringValue = resolved
         // Deferred a run-loop turn because Return's key-event dispatch runs
         // this method synchronously from deep inside AppKit's Text Services
-        // Manager machinery, and calling into CEF from that exact stack risks
-        // a second, independent reentrancy hazard beyond the one below this
-        // sidesteps -- see docs/ai-tasks/m1-shell-notes.md's "known issue" on
-        // BRWClientHandler::LoadURLWhenReady for the deeper, still-open bug
-        // this does NOT fix: CefFrame::LoadURL re-navigating an existing
-        // frame hangs regardless of which call stack invokes it.
+        // Manager machinery -- calling into CEF from that exact stack is its
+        // own reentrancy hazard, on top of (and independent from) the one
+        // BRWMessagePump.mm's OnScheduleMessagePumpWork now guards against
+        // for every CEF-originated call, not just this one. Belt and braces.
         DispatchQueue.main.async {
             tab.load(url: resolved)
         }
