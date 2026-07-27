@@ -1,6 +1,7 @@
 third_party/cef/
 third_party/.downloads/
 build/
+build-release/
 dist/
 DerivedData/
 .DS_Store

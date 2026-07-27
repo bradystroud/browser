@@ -10,10 +10,16 @@
 # See docs/ai-tasks/release-signing-runbook.md for the one-time setup Brady
 # needs to do (Developer ID cert + notarytool keychain profile) before this
 # can run for real.
+#
+# Builds into build-release/, never the shared build/ that scripts/build.sh
+# and dev agents use (beads browser-rkn: a concurrent `scripts/build.sh` run
+# re-signed the shared build/ tree ad-hoc mid-pipeline, corrupting a release
+# in progress and shipping an ad-hoc-signed submission to Apple's notary
+# service). Isolated directories mean a dev rebuild can never race a release.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${ROOT_DIR}/build"
+BUILD_DIR="${ROOT_DIR}/build-release"
 
 CONFIG="Release"
 IDENTITY="${CODESIGN_IDENTITY:--}"
@@ -40,7 +46,9 @@ Options:
                             (default: browser-notary). See the runbook for
                             `notarytool store-credentials` setup.
   --output-dir <dir>       Where to write the distributable (default: dist/).
-  --skip-build             Reuse the existing build/ output; don't rebuild.
+  --skip-build             Reuse the existing build-release/ output; don't
+                            rebuild. (This is a dedicated build dir, separate
+                            from scripts/build.sh's build/ -- see below.)
   --skip-sign              Don't (re-)codesign; assume the app is already
                             signed the way you want it.
   --skip-package           Don't produce a zip/dmg.
@@ -84,6 +92,51 @@ APP_PATH="${BUILD_DIR}/Sources/App/${CONFIG}/Browser.app"
 MANIFEST="${BUILD_DIR}/Sources/App/${CONFIG}/.codesign-manifest"
 
 log() { echo; echo "== $* =="; }
+
+# Every Mach-O in the bundle, found by content not extension -- same
+# reasoning as scripts/sign.sh. A plain (non -L) `find` from the real
+# APP_PATH root reaches the CEF framework's nested Libraries/*.dylib via
+# their real Versions/A/... path without following any of the framework's
+# internal Versions/Current or top-level Libraries symlinks, so nothing
+# inside it is double-visited or silently skipped.
+all_macho_files() {
+  local candidate
+  while IFS= read -r -d '' candidate; do
+    file -b "${candidate}" | grep -q "Mach-O" && printf '%s\0' "${candidate}"
+  done < <(find "${APP_PATH}" -type f -perm -111 -print0)
+}
+
+# Gate: every Mach-O must carry the release identity's Developer ID
+# authority chain and a secure timestamp before we package/submit anything.
+# This is what would have caught the framework's nested-dylib bug (beads
+# browser-rkn) before it reached Apple's notary service instead of after.
+verify_signing_gate() {
+  if [[ "${IDENTITY}" == "-" ]]; then
+    echo "Ad-hoc identity -- skipping Developer ID/timestamp gate (expected to fail; this is a dev/test run)."
+    return 0
+  fi
+
+  log "Verifying every Mach-O carries a Developer ID signature + secure timestamp"
+  local offenders=()
+  local total=0
+  local target info
+  while IFS= read -r -d '' target; do
+    total=$((total + 1))
+    info="$(codesign -dvvv "${target}" 2>&1)"
+    if ! grep -q "Authority=Developer ID" <<<"${info}"; then
+      offenders+=("${target}: no Developer ID authority")
+    elif ! grep -q "^Timestamp=" <<<"${info}"; then
+      offenders+=("${target}: no secure timestamp")
+    fi
+  done < <(all_macho_files)
+
+  if [[ ${#offenders[@]} -gt 0 ]]; then
+    echo "error: ${#offenders[@]} of ${total} binaries are not release-ready:" >&2
+    printf '  %s\n' "${offenders[@]}" >&2
+    exit 1
+  fi
+  echo "OK: all ${total} Mach-O binaries carry a Developer ID signature + secure timestamp."
+}
 
 # ---------------------------------------------------------------------------
 # Phase: build
@@ -145,6 +198,8 @@ else
   log "Skipping sign (--skip-sign)"
 fi
 
+verify_signing_gate
+
 # ---------------------------------------------------------------------------
 # Phase: package (pre-notarization submission artifact)
 # ---------------------------------------------------------------------------
@@ -186,7 +241,30 @@ if [[ "${DO_NOTARIZE}" -eq 1 ]]; then
     exit 1
   fi
 
-  xcrun notarytool submit "${SUBMIT_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait
+  # `notarytool submit --wait` exits 0 even when Apple rejects the
+  # submission (status Invalid) -- it only reports the outcome in its
+  # output, it doesn't fail the process. Trusting the exit code here is
+  # exactly what let two Invalid submissions sail on to stapling and die
+  # with "Record not found" while the overall script still reported success
+  # (beads browser-rkn). Parse the actual status and fail hard on anything
+  # but Accepted, dumping the notary log so the rejection reason is visible
+  # without a second manual `notarytool log` round-trip.
+  NOTARIZE_LOG="$(mktemp)"
+  xcrun notarytool submit "${SUBMIT_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait | tee "${NOTARIZE_LOG}"
+  SUBMISSION_ID="$(grep -m1 '^\s*id:' "${NOTARIZE_LOG}" | awk '{print $2}')"
+  NOTARIZE_STATUS="$(grep '^\s*status:' "${NOTARIZE_LOG}" | tail -1 | awk '{print $2}')"
+  rm -f "${NOTARIZE_LOG}"
+
+  echo "Submission ID: ${SUBMISSION_ID:-<unknown>}"
+  echo "Status: ${NOTARIZE_STATUS:-<unknown>}"
+
+  if [[ "${NOTARIZE_STATUS}" != "Accepted" ]]; then
+    echo "error: notarization did not succeed (status: ${NOTARIZE_STATUS:-<unknown>}). Full log:" >&2
+    if [[ -n "${SUBMISSION_ID:-}" ]]; then
+      xcrun notarytool log "${SUBMISSION_ID}" --keychain-profile "${NOTARY_PROFILE}" >&2 || true
+    fi
+    exit 1
+  fi
 else
   log "Skipping notarize (--skip-notarize)"
 fi

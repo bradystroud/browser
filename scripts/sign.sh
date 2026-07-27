@@ -40,14 +40,31 @@ if [[ ! -d "${FRAMEWORK_DIR}" ]]; then
   exit 1
 fi
 
-# 1. Innermost first: support dylibs inside the framework (ANGLE/SwANGLE etc).
-#    Hardened runtime here too -- notarization requires it on every piece of
-#    executable code in the bundle, not just the app/helpers.
-if [[ -d "${FRAMEWORK_DIR}/Libraries" ]]; then
-  while IFS= read -r -d '' lib; do
-    echo "Signing (lib): ${lib}"
-    codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${lib}"
-  done < <(find "${FRAMEWORK_DIR}/Libraries" -type f \( -name "*.dylib" -o -name "*.so" \) -print0)
+# 1. Innermost first: any Mach-O executable nested inside the framework's
+#    Libraries dir (ANGLE/SwANGLE, the CEF sandbox helper, etc). Identified
+#    by content (file(1)), not by extension -- CEF has shipped both .dylib
+#    and extension-less variants across versions, and guessing wrong means
+#    silently skipping one.
+#
+#    ${FRAMEWORK_DIR}/Libraries is a symlink (-> Versions/Current/Libraries,
+#    itself -> Versions/A/Libraries); `find` on a symlink *path* given as
+#    the search root does not descend into it without -L. That bug shipped
+#    two ad-hoc-signed notarization submissions (rejected: "not signed with
+#    a valid Developer ID certificate" on every file under Libraries) before
+#    being caught by extracting the submitted zip and inspecting it by hand.
+#    Resolving to the real, non-symlink version directory up front avoids
+#    both that bug and needing -L (which would also walk right back through
+#    a stray self-referential "Libraries" symlink that CMake's framework
+#    copy leaves inside Versions/A/Libraries itself).
+REAL_VERSION_DIR="$(cd "${FRAMEWORK_DIR}/Versions/Current" && pwd -P)"
+LIBRARIES_DIR="${REAL_VERSION_DIR}/Libraries"
+if [[ -d "${LIBRARIES_DIR}" ]]; then
+  while IFS= read -r -d '' candidate; do
+    if file -b "${candidate}" | grep -q "Mach-O"; then
+      echo "Signing (lib): ${candidate}"
+      codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${candidate}"
+    fi
+  done < <(find "${LIBRARIES_DIR}" -type f -perm -111 -print0)
 fi
 
 # 2. The framework bundle itself.
