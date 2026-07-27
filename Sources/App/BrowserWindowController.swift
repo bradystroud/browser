@@ -25,6 +25,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let omniboxField = NSTextField()
     private let profileDotView: ProfileDotView
     private let contentContainerView = NSView()
+    private let autocomplete = OmniboxAutocompleteController()
 
     var activeTab: Tab? {
         guard let index = activeTabIndex, tabs.indices.contains(index) else { return nil }
@@ -47,6 +48,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         super.init(window: window)
         window.delegate = self
         setUpViews()
+        autocomplete.onCommit = { [weak self] suggestion in
+            self?.commitOmniboxNavigation(to: suggestion.url)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -200,6 +204,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     private func activateTab(at index: Int, updateStrip: Bool = true) {
         guard tabs.indices.contains(index) else { return }
+        autocomplete.dismiss()
 
         if let currentIndex = activeTabIndex, tabs.indices.contains(currentIndex) {
             tabs[currentIndex].hostView.removeFromSuperview()
@@ -400,8 +405,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     @objc private func omniboxSubmitted() {
         let text = omniboxField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, let tab = activeTab else { return }
-        let resolved = Self.resolveOmniboxSubmission(text)
+        guard !text.isEmpty else { return }
+        commitOmniboxNavigation(to: Self.resolveOmniboxSubmission(text))
+    }
+
+    /// Shared by omniboxSubmitted (raw typed text, already resolved) and
+    /// both autocomplete confirmation paths (Enter on a highlighted
+    /// suggestion, or clicking one directly) -- a suggestion's URL is already
+    /// absolute, so resolveOmniboxSubmission is only ever applied once, here
+    /// or by the caller, never both.
+    private func commitOmniboxNavigation(to resolved: String) {
+        guard let tab = activeTab else { return }
+        autocomplete.dismiss()
         // End editing (and only then set the resolved text) before touching
         // CEF: ending the field's edit session re-syncs stringValue from the
         // (stale, pre-resolution) field editor buffer, which would otherwise
@@ -435,17 +450,107 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
-        if let tab = activeTab {
-            omniboxField.stringValue = tab.urlString
+        switch commandSelector {
+        case #selector(NSResponder.moveDown(_:)):
+            return previewAutocompleteSelection(delta: 1)
+        case #selector(NSResponder.moveUp(_:)):
+            return previewAutocompleteSelection(delta: -1)
+        case #selector(NSResponder.insertNewline(_:)):
+            return commitHighlightedAutocompleteSuggestion()
+        case #selector(NSResponder.cancelOperation(_:)):
+            // Standard browser Escape behavior: the first press just closes
+            // an open suggestions dropdown; only a second press (dropdown
+            // already closed) reverts the omnibox text and blurs it.
+            if autocomplete.isVisible {
+                autocomplete.dismiss()
+                return true
+            }
+            if let tab = activeTab {
+                omniboxField.stringValue = tab.urlString
+            }
+            window?.makeFirstResponder(nil)
+            return true
+        default:
+            return false
         }
-        window?.makeFirstResponder(nil)
+    }
+
+    /// Arrow-key-through-suggestions: highlights the next/previous row and
+    /// previews its URL in the omnibox text without navigating -- matches
+    /// standard browser omnibox behavior. Returns false (letting AppKit's
+    /// default handling run) when the dropdown isn't showing, so arrow keys
+    /// behave normally the rest of the time.
+    private func previewAutocompleteSelection(delta: Int) -> Bool {
+        guard autocomplete.isVisible, let suggestion = autocomplete.moveSelection(by: delta) else { return false }
+        omniboxField.stringValue = suggestion.url
         return true
+    }
+
+    private func commitHighlightedAutocompleteSuggestion() -> Bool {
+        guard autocomplete.isVisible, let suggestion = autocomplete.highlightedSuggestion else { return false }
+        commitOmniboxNavigation(to: suggestion.url)
+        return true
+    }
+
+    /// NSTextFieldDelegate -- queries HistoryStore on every keystroke and
+    /// shows/updates/hides the autocomplete dropdown. This is the omnibox
+    /// autocomplete feature's live-as-you-type entry point.
+    func controlTextDidChange(_ obj: Notification) {
+        guard let window else { return }
+        let history = ProfileDataStoreManager.shared.stores(for: profile).history
+        autocomplete.update(query: omniboxField.stringValue, history: history, below: omniboxField, in: window)
+    }
+
+    // MARK: - Furniture: history / bookmarks / downloads
+
+    /// ⌘D -- bookmarks the active tab's current page at the top level. No
+    /// folder-picker popover (see docs/ai-tasks/m3-furniture-notes.md for
+    /// that scope cut) -- use the Bookmarks manager window to file it into a
+    /// folder afterward.
+    @objc func addBookmark(_ sender: Any?) {
+        guard let tab = activeTab else { return }
+        let bookmarks = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
+        try? bookmarks.addBookmark(title: tab.title, url: tab.urlString, parentId: nil)
+    }
+
+    /// ⌘Y -- "Show All History…"
+    @objc func showHistory(_ sender: Any?) {
+        HistoryWindowManager.shared.show(for: profile)
+    }
+
+    @objc func showBookmarksManager(_ sender: Any?) {
+        BookmarksWindowManager.shared.show(for: profile)
+    }
+
+    /// ⌘⇧J -- matches Chrome's downloads shortcut.
+    @objc func showDownloads(_ sender: Any?) {
+        DownloadsWindowManager.shared.show(for: profile)
+    }
+
+    // MARK: - TabDelegate (furniture)
+
+    func tab(_ tab: Tab, didCommitNavigationTo url: String) {
+        // No incognito-style contexts exist yet (see AGENTS.md/plan) -- once
+        // one is added, this is where a "don't record" check belongs.
+        let history = ProfileDataStoreManager.shared.stores(for: profile).history
+        try? history.recordVisit(url: url, title: tab.title)
+        if let appDelegate = NSApp.delegate as? AppDelegate, tab === activeTab {
+            appDelegate.mainMenuBuilder.rebuildRecentHistory(for: profile)
+        }
+    }
+
+    func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart) {
+        DownloadCoordinator.shared.beginDownload(profile: profile, info: info)
+    }
+
+    func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate) {
+        DownloadCoordinator.shared.updateDownload(profile: profile, info: info)
     }
 
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        autocomplete.dismiss()
         for tab in tabs {
             tab.close()
         }

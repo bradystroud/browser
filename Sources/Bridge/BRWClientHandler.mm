@@ -100,7 +100,19 @@ void BRWClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
 
 void BRWClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,
-                                  int httpStatusCode) {}
+                                  int httpStatusCode) {
+  // Only the main frame's completed load is a "visit" worth recording --
+  // iframe/subresource loads finish here too but aren't navigations the
+  // history UI should ever show. OnLoadError (with ERR_ABORTED filtered out
+  // below) is the failure counterpart; a load that ends up here genuinely
+  // committed.
+  if (!frame->IsMain()) {
+    return;
+  }
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidCommitNavigation:)]) {
+    [delegate_ browserDidCommitNavigation:ToNSString(frame->GetURL())];
+  }
+}
 
 void BRWClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
                                      CefRefPtr<CefFrame> frame,
@@ -143,4 +155,71 @@ void BRWClientHandler::OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
   }
   NSString* favicon = icon_urls.empty() ? nil : ToNSString(icon_urls.front());
   [delegate_ browserDidChangeFaviconURL:favicon];
+}
+
+namespace {
+// Finder/Safari-style de-duplication: "name.ext", then "name (1).ext",
+// "name (2).ext", ... -- so a second download of the same filename to
+// ~/Downloads never silently overwrites the first.
+NSString* UniqueDownloadPath(NSString* directory, NSString* suggested_name) {
+  NSFileManager* fm = [NSFileManager defaultManager];
+  NSString* candidate = [directory stringByAppendingPathComponent:suggested_name];
+  if (![fm fileExistsAtPath:candidate]) {
+    return candidate;
+  }
+
+  NSString* extension = [suggested_name pathExtension];
+  NSString* base = [suggested_name stringByDeletingPathExtension];
+  for (int i = 1; i < 10000; ++i) {
+    NSString* attempt = extension.length > 0
+        ? [NSString stringWithFormat:@"%@ (%d).%@", base, i, extension]
+        : [NSString stringWithFormat:@"%@ (%d)", base, i];
+    candidate = [directory stringByAppendingPathComponent:attempt];
+    if (![fm fileExistsAtPath:candidate]) {
+      return candidate;
+    }
+  }
+  return candidate;  // Effectively unreachable; last attempt wins over an infinite loop.
+}
+}  // namespace
+
+bool BRWClientHandler::OnBeforeDownload(CefRefPtr<CefBrowser> browser,
+                                         CefRefPtr<CefDownloadItem> download_item,
+                                         const CefString& suggested_name,
+                                         CefRefPtr<CefBeforeDownloadCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  NSString* downloads_dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+  [[NSFileManager defaultManager] createDirectoryAtPath:downloads_dir
+                             withIntermediateDirectories:YES
+                                              attributes:nil
+                                                   error:nil];
+  NSString* suggested = ToNSString(suggested_name);
+  NSString* path = UniqueDownloadPath(downloads_dir, suggested);
+
+  // false = no save dialog, per the plan's M3 scope ("default to ~/Downloads,
+  // no save-dialog for now").
+  callback->Continue([path UTF8String], false);
+
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidBeginDownloadWithId:url:suggestedName:destinationPath:)]) {
+    [delegate_ browserDidBeginDownloadWithId:download_item->GetId()
+                                          url:ToNSString(download_item->GetURL())
+                                suggestedName:suggested
+                              destinationPath:path];
+  }
+  return true;  // Proceed with the download (return false would cancel it).
+}
+
+void BRWClientHandler::OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                                          CefRefPtr<CefDownloadItem> download_item,
+                                          CefRefPtr<CefDownloadItemCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!delegate_ || ![delegate_ respondsToSelector:@selector(browserDidUpdateDownloadWithId:receivedBytes:totalBytes:isComplete:isCancelled:isInterrupted:)]) {
+    return;
+  }
+  [delegate_ browserDidUpdateDownloadWithId:download_item->GetId()
+                               receivedBytes:download_item->GetReceivedBytes()
+                                  totalBytes:download_item->GetTotalBytes()
+                                  isComplete:download_item->IsComplete()
+                                 isCancelled:download_item->IsCanceled()
+                               isInterrupted:download_item->IsInterrupted()];
 }

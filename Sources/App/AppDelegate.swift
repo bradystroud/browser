@@ -1,7 +1,11 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let mainMenuBuilder = MainMenuBuilder()
+    // Not private: BrowserWindowController reaches this via `NSApp.delegate
+    // as? AppDelegate` to refresh the History/Bookmarks menus' per-profile
+    // dynamic sections after a visit/bookmark change -- see
+    // rebuildRecentHistory(for:)/rebuildBookmarksMenu(for:).
+    let mainMenuBuilder = MainMenuBuilder()
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Build the menu bar before any window opens -- there's no
@@ -28,6 +32,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before anything else happened to touch either singleton.
         _ = ShortcutsOverlayController.shared
         _ = TabCyclingController.shared
+
+        // History/Bookmarks menus are single global NSMenus (the menu bar
+        // isn't per-window) but their dynamic sections are per-profile --
+        // refresh them to match whichever window just became key. Registered
+        // before any window opens below so the very first window's
+        // makeKeyAndOrderFront also triggers the initial population.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self, let controller = (notification.object as? NSWindow)?.windowController as? BrowserWindowController else { return }
+            self.mainMenuBuilder.rebuildRecentHistory(for: controller.profile)
+            self.mainMenuBuilder.rebuildBookmarksMenu(for: controller.profile)
+        }
 
         let profilesRootPath = CommandLineArgs.profilesRootPath()
         guard BRWEngine.initialize(withProfilesRootPath: profilesRootPath) else {
@@ -78,6 +95,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openProfileWindow(_ sender: NSMenuItem) {
         guard let profile = sender.representedObject as? Profile else { return }
         WindowManager.shared.openNewWindow(profile: profile)
+    }
+
+    /// Shared click handler for the History menu's recent-items section and
+    /// the Bookmarks menu's items (see MainMenuBuilder) -- both just carry a
+    /// URL string as `representedObject` and want "open in the key window's
+    /// active tab as a new tab, or a new window if none is open."
+    @objc func openMenuURL(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? String else { return }
+        if let controller = WindowManager.shared.keyBrowserWindowController {
+            controller.addTab(url: url, makeActive: true)
+        } else {
+            let profile = ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
+            WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
+        }
     }
 
     /// ⌘, -- standard macOS placement. Routing rules, the default-profile

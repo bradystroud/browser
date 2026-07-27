@@ -1,11 +1,14 @@
 import Foundation
 
-public enum BookmarkKind: String {
+public enum BookmarkKind: String, Hashable {
     case folder
     case bookmark
 }
 
-public struct BookmarkItem: Equatable {
+/// Hashable (not just Equatable) so a value can be used directly as an
+/// NSOutlineView item -- the Bookmarks manager window's expand/collapse
+/// state tracking needs stable hashing, not just equality.
+public struct BookmarkItem: Hashable {
     public let id: Int64
     public let parentId: Int64?
     public let kind: BookmarkKind

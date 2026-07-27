@@ -2,6 +2,34 @@ import AppKit
 
 protocol TabDelegate: AnyObject {
     func tabDidChangeDisplayState(_ tab: Tab)
+
+    /// A committed top-level (main-frame) navigation -- see
+    /// BRWEngine.h's -browserDidCommitNavigation: for exactly what this
+    /// does and doesn't cover. This is the history-recording signal.
+    func tab(_ tab: Tab, didCommitNavigationTo url: String)
+
+    func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart)
+    func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate)
+}
+
+/// Mirrors BRWEngine.h's -browserDidBeginDownloadWithId:url:suggestedName:
+/// destinationPath: -- a plain Swift value so TabDelegate doesn't need to
+/// know about the ObjC bridge types.
+struct TabDownloadStart {
+    let downloadId: Int64
+    let url: String
+    let suggestedName: String
+    let destinationPath: String
+}
+
+/// Mirrors BRWEngine.h's -browserDidUpdateDownloadWithId:....
+struct TabDownloadUpdate {
+    let downloadId: Int64
+    let receivedBytes: Int64
+    let totalBytes: Int64
+    let isComplete: Bool
+    let isCancelled: Bool
+    let isInterrupted: Bool
 }
 
 /// One browser tab: a persistent host NSView + BRWBrowser, plus the
@@ -98,5 +126,20 @@ final class Tab: NSObject, BRWBrowserDelegate {
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
         delegate?.tabDidChangeDisplayState(self)
+    }
+
+    func browserDidCommitNavigation(_ url: String) {
+        delegate?.tab(self, didCommitNavigationTo: url)
+    }
+
+    func browserDidBeginDownload(withId downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
+        delegate?.tab(self, didBeginDownload: TabDownloadStart(
+            downloadId: downloadId, url: url, suggestedName: suggestedName, destinationPath: destinationPath))
+    }
+
+    func browserDidUpdateDownload(withId downloadId: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool) {
+        delegate?.tab(self, didUpdateDownload: TabDownloadUpdate(
+            downloadId: downloadId, receivedBytes: receivedBytes, totalBytes: totalBytes,
+            isComplete: isComplete, isCancelled: isCancelled, isInterrupted: isInterrupted))
     }
 }

@@ -12,6 +12,7 @@ enum ShortcutCategory: Int, CaseIterable {
     case navigation
     case windowsAndProfiles
     case links
+    case historyAndBookmarks
     case general
 
     var title: String {
@@ -20,6 +21,7 @@ enum ShortcutCategory: Int, CaseIterable {
         case .navigation: return "Navigation"
         case .windowsAndProfiles: return "Windows & Profiles"
         case .links: return "Links"
+        case .historyAndBookmarks: return "History & Bookmarks"
         case .general: return "General"
         }
     }
@@ -45,6 +47,9 @@ enum ShortcutsHelp {
         #selector(AppDelegate.newWindow(_:)): .windowsAndProfiles,
         #selector(NSWindow.performClose(_:)): .windowsAndProfiles,
         #selector(BrowserWindowController.copyCurrentURL(_:)): .links,
+        #selector(BrowserWindowController.addBookmark(_:)): .historyAndBookmarks,
+        #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
+        #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showKeyboardShortcuts(_:)): .general,
         #selector(NSApplication.terminate(_:)): .general,
     ]

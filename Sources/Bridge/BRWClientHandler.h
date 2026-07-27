@@ -8,6 +8,8 @@
 
 #include "include/cef_client.h"
 #include "include/cef_display_handler.h"
+#include "include/cef_download_handler.h"
+#include "include/cef_download_item.h"
 
 #import "BRWEngine.h"  // for the BRWBrowserDelegate protocol only.
 
@@ -15,12 +17,14 @@
 // NSView the browser is parented into so it can make the CEF-created native
 // view track that host view's size via ordinary AppKit autoresizing, instead
 // of hand-rolling resize-notification plumbing. Also forwards title/URL/
-// favicon/loading-state changes to the BRWBrowserDelegate the Swift side
-// installs, so a tab model can stay in sync without polling CEF.
+// favicon/loading-state/navigation-commit/download changes to the
+// BRWBrowserDelegate the Swift side installs, so a tab model can stay in sync
+// without polling CEF.
 class BRWClientHandler : public CefClient,
                          public CefLifeSpanHandler,
                          public CefLoadHandler,
-                         public CefDisplayHandler {
+                         public CefDisplayHandler,
+                         public CefDownloadHandler {
  public:
   explicit BRWClientHandler(NSView* host_view);
 
@@ -37,6 +41,7 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
 
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -63,6 +68,15 @@ class BRWClientHandler : public CefClient,
                         const CefString& url) override;
   void OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
                            const std::vector<CefString>& icon_urls) override;
+
+  // CefDownloadHandler methods:
+  bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefDownloadItem> download_item,
+                         const CefString& suggested_name,
+                         CefRefPtr<CefBeforeDownloadCallback> callback) override;
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefDownloadItem> download_item,
+                          CefRefPtr<CefDownloadItemCallback> callback) override;
 
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   bool IsClosed() const { return closed_; }

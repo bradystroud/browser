@@ -43,8 +43,16 @@ set(BROWSER_SWIFT_SRCS
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
   Routing/SettingsWindowController.swift
+  Routing/RoutingRulesPaneController.swift
   Routing/RoutingRuleEditor.swift
   Routing/RunningApplicationPicker.swift
+  ProfilesPaneController.swift
+  Furniture/ProfileDataStores.swift
+  Furniture/OmniboxAutocompleteController.swift
+  Furniture/HistoryWindowController.swift
+  Furniture/BookmarksWindowController.swift
+  Furniture/DownloadCoordinator.swift
+  Furniture/DownloadsWindowController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -62,10 +70,32 @@ set(BROWSER_ROUTING_CORE_SRCS
   )
 source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 
+# BrowserCore's SQLite-backed history/bookmarks/downloads stores
+# (../../Packages/BrowserCore/Sources/BrowserCore) are pure Swift/Foundation
+# (plus the SDK's built-in SQLite3 module) with no AppKit dependency, so
+# they're also packaged standalone as Packages/BrowserCore/ at the repo root
+# for a fast, isolated `swift test` (see docs/ai-tasks/m3-furniture-notes.md).
+# Same reasoning as BROWSER_ROUTING_CORE_SRCS just above: rather than linking
+# that package from this Xcode-generator CMake target, these same source
+# files are compiled directly into the Browser executable here too -- one
+# copy of the logic, two ways to build it.
+set(BROWSER_BROWSER_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Database.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Migrations.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteError.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/Statement.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteConnection.swift
+  )
+source_group(BrowserCore FILES ${BROWSER_BROWSER_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
   ${BROWSER_ROUTING_CORE_SRCS}
+  ${BROWSER_BROWSER_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
@@ -101,7 +131,9 @@ set(PRODUCT_NAME "${CEF_TARGET}")
 add_executable(${CEF_TARGET} MACOSX_BUNDLE ${BROWSER_RESOURCES_MAC_SRCS} ${BROWSER_SRCS})
 SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
 add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
-target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS})
+# sqlite3 -- BrowserCore's stores link against the system library (via
+# Swift's built-in SQLite3 module import, no header search path needed).
+target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3)
 set_target_properties(${CEF_TARGET} PROPERTIES
   MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
   XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/BrowserApp-Bridging-Header.h"

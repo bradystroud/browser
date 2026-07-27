@@ -18,6 +18,34 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserDidChangeLoadingState:(BOOL)isLoading
                             canGoBack:(BOOL)canGoBack
                          canGoForward:(BOOL)canGoForward;
+
+/// Fired once per successfully-completed top-level (main-frame) navigation --
+/// i.e. a real page load, not an iframe/subresource load and not an aborted
+/// or failed one (see BRWClientHandler::OnLoadEnd / OnLoadError, which
+/// filters ERR_ABORTED). `url` is the frame's final settled URL, so a
+/// redirect chain reports only its last hop, not each intermediate one. This
+/// is the history-recording signal -- see Tab.swift / BrowserWindowController.
+- (void)browserDidCommitNavigation:(NSString *)url;
+
+/// A new download started. `destinationPath` is where CEF was told to save
+/// it (see BRWClientHandler::OnBeforeDownload -- always ~/Downloads today,
+/// no save dialog). `downloadId` is CEF's own globally-unique download
+/// identifier, used to correlate subsequent
+/// -browserDidUpdateDownloadWithId:... calls with this one.
+- (void)browserDidBeginDownloadWithId:(int64_t)downloadId
+                                   url:(NSString *)url
+                         suggestedName:(NSString *)suggestedName
+                       destinationPath:(NSString *)destinationPath;
+
+/// Progress/state update for a download already reported via
+/// -browserDidBeginDownloadWithId:.... Delivered repeatedly as bytes arrive,
+/// and once more on completion/cancellation/interruption.
+- (void)browserDidUpdateDownloadWithId:(int64_t)downloadId
+                          receivedBytes:(int64_t)receivedBytes
+                             totalBytes:(int64_t)totalBytes
+                             isComplete:(BOOL)isComplete
+                            isCancelled:(BOOL)isCancelled
+                            isInterrupted:(BOOL)isInterrupted;
 @end
 
 /// Process-wide CEF lifecycle. Call Initialize once from the browser
