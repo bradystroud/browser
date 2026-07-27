@@ -20,8 +20,20 @@ source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
 set(BROWSER_SWIFT_SRCS
   main.swift
   AppDelegate.swift
+  BrowserWindow.swift
   BrowserWindowController.swift
+  ColorSwatchPicker.swift
   CommandLineArgs.swift
+  MainMenuBuilder.swift
+  NewProfilePrompt.swift
+  NSColor+Hex.swift
+  Profile.swift
+  ProfileDotView.swift
+  ProfileManager.swift
+  Tab.swift
+  TabButtonView.swift
+  TabStripView.swift
+  WindowManager.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -73,6 +85,21 @@ set_target_properties(${CEF_TARGET} PROPERTIES
 
 # Copy the CEF framework into the Frameworks directory and create the necessary symlinks.
 COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
+
+# App icon: Info.plist.in's CFBundleIconFile references "AppIcon" (no
+# extension, per Apple convention), so the .icns just needs to land in
+# Contents/Resources under that name. Not routed through COPY_MAC_RESOURCES --
+# that macro's prefix-stripping is tuned for paths under mac/, not an
+# arbitrary absolute path outside Sources/App.
+add_custom_command(
+  TARGET ${CEF_TARGET}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CEF_APP}/Contents/Resources"
+  COMMAND ${CMAKE_COMMAND} -E copy
+          "${CMAKE_SOURCE_DIR}/assets/branding/AppIcon.icns"
+          "${CEF_APP}/Contents/Resources/AppIcon.icns"
+  VERBATIM
+  )
 
 # Map each helper's CMake target-name suffix to its entitlements file. Only
 # the GPU and Renderer helpers need JIT / unsigned-executable-memory; every
