@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The main app process dynamically loads Chromium Embedded Framework.framework
+	     (never linked directly, per CEF's macOS requirements). Under the hardened
+	     runtime, library validation requires loaded code to share the app's
+	     signing team; ad-hoc-signed local builds have no team ID at all, so this
+	     exception is required for the framework to load even outside sandboxing. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
