@@ -14,4 +14,13 @@ A macOS browser: Chromium (via CEF) rendering inside a native Swift/AppKit shell
 ## Conventions
 
 - Plans live in `docs/plans/`, filenames `YYYY-MM-DD-TOPIC.md`. Research reports in `docs/research/`.
-- CEF binary distributions are large; they live under `third_party/cef/` and are gitignored — `scripts/fetch-cef.sh` (once it exists) downloads the pinned version.
+- CEF binary distributions are large; they live under `third_party/cef/` and are gitignored — `scripts/fetch-cef.sh` downloads the pinned version (currently 150.0.14, macOS arm64 Standard distribution).
+
+## Build & run
+
+```
+./scripts/build.sh            # fetch-cef.sh (if needed) -> cmake -G Xcode -> build -> sign inside-out
+open build/Sources/App/Release/Browser.app --args --profile default
+```
+
+`scripts/build.sh` always builds the Release configuration; pass `Debug` as `$1` to build that instead. Signing is ad-hoc (`CODESIGN_IDENTITY=-`) by default, which is fine for local dev — override `CODESIGN_IDENTITY` for a real Developer ID build. See `docs/ai-tasks/m0-spike-notes.md` for what's verified, what's not, and known rough edges (a per-profile Keychain "Chromium Safe Storage" prompt is worked around via `--use-mock-keychain` for ad-hoc-signed builds; that switch should come out once this ships with a real Developer ID signature).
