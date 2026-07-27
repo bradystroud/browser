@@ -12,6 +12,16 @@ A macOS browser: Chromium (via CEF) rendering inside a native Swift/AppKit shell
 - **Distribution:** Developer ID + notarization only. **Never App Sandbox** — sandboxing breaks default-browser registration. No Mac App Store.
 - **Passkeys:** QR/hybrid + security keys work via Chromium's stack; Touch ID / iCloud Keychain requires Apple's restricted `com.apple.developer.web-browser.public-key-credential` entitlement (application pending — see plan).
 
+## UI verification protocol (Brady tests, agents don't drive his machine)
+
+Do NOT drive the app's UI with osascript/System Events/keystroke automation — it's flaky here, interferes with Brady's own use of the app, and he prefers testing UI himself. Agents verify what's verifiable non-interactively (build green, unit tests, code review of the key path, log output), then END their report with a manual test hand-off in exactly this shape:
+
+**Test:** (numbered steps — what to do)
+**Expect:** (what should happen at each step)
+**Report:** (what to tell us, especially the failure signals to look for)
+
+Launching the app to confirm it starts, and reading logs/crash reports, is fine. Screenshot-only passive capture is fine. Sending synthetic clicks/keystrokes is not.
+
 ## Conventions
 
 - Plans live in `docs/plans/`, filenames `YYYY-MM-DD-TOPIC.md`. Research reports in `docs/research/`.
