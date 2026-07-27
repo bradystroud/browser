@@ -324,6 +324,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         pasteboard.setString(tab.urlString, forType: .string)
     }
 
+    /// ⌘/ (always) or bare "?" (when native chrome has focus, see
+    /// isNativeChromeFocused) -- shows/hides the keyboard shortcuts overlay.
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
+        ShortcutsOverlayController.shared.toggle(relativeTo: window)
+    }
+
+    /// Whether the key window's first responder is native chrome -- not the
+    /// omnibox mid-edit, and not inside the active tab's CEF content view.
+    /// Gates the bare "?" shortcuts-overlay trigger in
+    /// ShortcutsOverlayController: typing "?" into the omnibox or a focused
+    /// element on the web page must just type the character. CEF's content
+    /// view doesn't expose page-level focus state at this layer, so "isn't
+    /// inside the tab's hostView" is the closest dependable proxy for "isn't
+    /// typing into the page."
+    var isNativeChromeFocused: Bool {
+        guard let firstResponder = window?.firstResponder else { return true }
+        if let editor = omniboxField.currentEditor(), firstResponder === editor {
+            return false
+        }
+        if let tab = activeTab, let responderView = firstResponder as? NSView,
+           responderView.isDescendant(of: tab.hostView) {
+            return false
+        }
+        return true
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(goBackAction(_:)):
