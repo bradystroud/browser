@@ -12,7 +12,14 @@ LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 
 # Never leave two instances sharing the same root_cache_path.
 osascript -e 'tell application "Browser" to quit' 2>/dev/null || true
-sleep 2
+# Wait for the process to actually exit before copying — a ditto racing a
+# still-quitting instance can corrupt the installed bundle's signature.
+for _ in $(seq 1 20); do
+  pgrep -f "Browser.app/Contents/MacOS/Browser" >/dev/null || break
+  sleep 0.5
+done
+pkill -f "Browser.app/Contents/MacOS/Browser" 2>/dev/null || true
+sleep 1
 
 rm -rf "$APP_DST"
 ditto "$APP_SRC" "$APP_DST"
