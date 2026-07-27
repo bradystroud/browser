@@ -1,4 +1,5 @@
 third_party/cef/
+third_party/.downloads/
 build/
 DerivedData/
 .DS_Store
