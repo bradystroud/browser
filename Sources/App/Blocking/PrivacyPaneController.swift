@@ -13,6 +13,12 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     private let profilePopup = NSPopUpButton()
     private let enabledCheckbox = NSButton(checkboxWithTitle: "Block ads & trackers in this profile", target: nil, action: nil)
+    /// browser-12m.6: independent of `enabledCheckbox` above -- a separate
+    /// list category with separate treatment (a warning interstitial the
+    /// user can click through, vs. ads' silent cancel), so it gets its own
+    /// toggle and its own persisted ThreatWarningSettings rather than
+    /// piggybacking on BlockingSettings.
+    private let threatWarningCheckbox = NSButton(checkboxWithTitle: "Warn about dangerous sites (phishing/malware)", target: nil, action: nil)
     private let allowlistTableView = NSTableView()
 
     private var selectedProfile: Profile?
@@ -99,7 +105,14 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         enabledCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(enabledCheckbox)
 
-        let profileRowY = enabledCheckboxY + checkboxRowHeight + rowGap
+        let threatWarningCheckboxY = enabledCheckboxY + checkboxRowHeight + 4
+        threatWarningCheckbox.target = self
+        threatWarningCheckbox.action = #selector(threatWarningToggled)
+        threatWarningCheckbox.frame = NSRect(x: margin, y: threatWarningCheckboxY, width: 280, height: checkboxRowHeight)
+        threatWarningCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
+        view.addSubview(threatWarningCheckbox)
+
+        let profileRowY = threatWarningCheckboxY + checkboxRowHeight + rowGap
         let profileLabel = NSTextField(labelWithString: "Profile:")
         profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
         profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
@@ -143,21 +156,31 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     private func loadSettingsForSelectedProfile() {
         guard let profile = selectedProfile else {
             enabledCheckbox.isEnabled = false
+            threatWarningCheckbox.isEnabled = false
             allowlistedHosts = []
             allowlistTableView.reloadData()
             return
         }
         enabledCheckbox.isEnabled = true
+        threatWarningCheckbox.isEnabled = true
         let settings = ContentBlockerCoordinator.shared.settings(forProfileName: profile.name)
         enabledCheckbox.state = settings.isEnabled ? .on : .off
         allowlistedHosts = settings.allowlistedHosts
         allowlistTableView.reloadData()
+        let threatSettings = ThreatListCoordinator.shared.settings(forProfileName: profile.name)
+        threatWarningCheckbox.state = threatSettings.isEnabled ? .on : .off
     }
 
     private func saveCurrentSettings() {
         guard let profile = selectedProfile else { return }
         let settings = BlockingSettings(isEnabled: enabledCheckbox.state == .on, allowlistedHosts: allowlistedHosts)
         ContentBlockerCoordinator.shared.updateSettings(settings, forProfileName: profile.name)
+    }
+
+    private func saveThreatWarningSettings() {
+        guard let profile = selectedProfile else { return }
+        let settings = ThreatWarningSettings(isEnabled: threatWarningCheckbox.state == .on)
+        ThreatListCoordinator.shared.updateSettings(settings, forProfileName: profile.name)
     }
 
     // MARK: - Actions
@@ -169,6 +192,10 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     @objc private func enabledToggled() {
         saveCurrentSettings()
+    }
+
+    @objc private func threatWarningToggled() {
+        saveThreatWarningSettings()
     }
 
     @objc private func addAllowlistHost() {

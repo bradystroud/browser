@@ -22,6 +22,9 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWContentBlocker.h
   ../Bridge/BRWContentBlocker.mm
   ../Bridge/BRWContentBlockerInternal.h
+  ../Bridge/BRWThreatList.h
+  ../Bridge/BRWThreatList.mm
+  ../Bridge/BRWThreatListInternal.h
   )
 source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
 
@@ -85,6 +88,8 @@ set(BROWSER_SWIFT_SRCS
   Reader/ReaderModeController.swift
   Blocking/BlockingSettingsStore.swift
   Blocking/ContentBlockerCoordinator.swift
+  Blocking/ThreatWarningSettingsStore.swift
+  Blocking/ThreatListCoordinator.swift
   Blocking/PrivacyPaneController.swift
   StartPage/StartPageSettings.swift
   StartPage/StartPageRenderer.swift
@@ -152,6 +157,10 @@ set(BROWSER_BLOCKLIST_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/BlockingSettings.swift
   ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/StarterList.swift
   ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/RemoteListSource.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/ThreatWarningSettings.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/StarterThreatList.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/ThreatWarningLink.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/ThreatWarningPageRenderer.swift
   )
 source_group(BlockListCore FILES ${BROWSER_BLOCKLIST_CORE_SRCS})
 

@@ -23,6 +23,9 @@ enum CEFEngine: BrowserEngine {
             // already published before its first request -- see
             // ContentBlockerCoordinator's doc comment (browser-12m.5.1).
             ContentBlockerCoordinator.shared.start()
+            // Same requirement, independent feature (browser-12m.6) -- see
+            // ThreatListCoordinator's doc comment.
+            ThreatListCoordinator.shared.start()
         }
         return ok
     }

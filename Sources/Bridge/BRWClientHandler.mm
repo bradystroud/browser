@@ -1,16 +1,37 @@
 #import "BRWClientHandler.h"
 #import "BRWContentBlockerInternal.h"
 #import "BRWPageMessageRouter.h"
+#import "BRWThreatListInternal.h"
 
 #include <vector>
 
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "include/wrapper/cef_helpers.h"
 
 namespace {
 NSString* ToNSString(const CefString& s) {
   return [NSString stringWithUTF8String:s.ToString().c_str()];
 }
+
+// Wraps an Obj-C block as a CefTask -- CefPostTask needs a CefRefPtr<CefTask>,
+// not a lambda/block directly. Same wrap-a-block pattern as BRWBrowser.mm's
+// StringVisitorBlock/PdfPrintCallback, just for CefTask instead of those
+// classes' own CEF interfaces.
+class BRWBlockTask : public CefTask {
+ public:
+  explicit BRWBlockTask(void (^block)(void)) : block_([block copy]) {}
+
+  void Execute() override {
+    if (block_) {
+      block_();
+    }
+  }
+
+ private:
+  void (^block_)(void);
+  IMPLEMENT_REFCOUNTING(BRWBlockTask);
+};
 
 // Every handler constructed but not yet OnBeforeClose'd. Only ever touched on
 // the CEF UI thread (== main thread, given this app's single-threaded,
@@ -400,8 +421,44 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
   // CEF_REQUIRE_UI_THREAD() here, unlike most of this file's other
   // overrides. profile_name_ is set once at construction and never
   // mutated, so reading it from any thread is safe without synchronization;
-  // BRWContentBlockerShouldBlock itself is documented lock-free-on-the-
-  // hot-path (see BRWContentBlockerInternal.h).
+  // BRWContentBlockerShouldBlock/BRWThreatListShouldWarn are themselves
+  // documented lock-free/lock-only-when-necessary on this hot path (see
+  // BRWContentBlockerInternal.h / BRWThreatListInternal.h).
+  const std::string raw_url = request->GetURL().ToString();
+
+  // The "Continue anyway (unsafe)" link on our own warning interstitial
+  // (browser-12m.6) -- recognized before any real URL parsing, since it's
+  // never a real destination: intercepting it, recording the bypass, and
+  // re-issuing the original navigation (which will now pass
+  // BRWThreatListShouldWarn) all happen right here, reusing this same
+  // interception point rather than needing any new JS/message-channel
+  // plumbing to get "the user clicked continue" back to native code.
+  std::string original_url;
+  if (BRWThreatListParseContinueMarker(raw_url, &original_url)) {
+    CefURLParts original_parts;
+    std::string original_host;
+    if (CefParseURL(original_url, original_parts)) {
+      original_host = CefString(&original_parts.host).ToString();
+    }
+    BRWThreatListAddSessionBypass(profile_name_, original_host);
+    // LoadURL is documented callable from any thread in the browser process
+    // (see CefFrame's class comment), but this still hops to the UI thread
+    // rather than calling it inline here -- consistency with the
+    // interstitial-loading path just below, which *does* need the UI
+    // thread (it calls into Swift), and this codebase's established
+    // caution around calling back into CEF's own navigation machinery from
+    // inside a resource-load callback (see BRWMessagePump.mm's
+    // OnScheduleMessagePumpWork notes).
+    CefRefPtr<CefFrame> target_frame = frame;
+    const std::string url_to_load = original_url;
+    CefPostTask(TID_UI, new BRWBlockTask(^{
+      if (target_frame && target_frame->IsValid()) {
+        target_frame->LoadURL(url_to_load);
+      }
+    }));
+    return RV_CANCEL;
+  }
+
   CefURLParts parts;
   if (!CefParseURL(request->GetURL(), parts)) {
     return RV_CONTINUE;  // Unparseable URL -- fail open, don't block.
@@ -410,6 +467,33 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
   if (BRWContentBlockerShouldBlock(profile_name_, host)) {
     return RV_CANCEL;
   }
+
+  // Threat-list check (browser-12m.6) -- deliberately separate from the
+  // ad/tracker check above: a top-level (main-frame) hit gets a warning
+  // interstitial the user can click through, matching real browsers'
+  // Safe-Browsing-style warnings; a subresource hit (an <img>/<script>/etc.
+  // pulled in from a flagged host) is silently cancelled instead, exactly
+  // like an ad -- there's no page to interrupt the user with a warning
+  // about (see browser-12m.3's finding for why this app isn't wired to
+  // Google's own Safe Browsing and builds this local list instead).
+  if (BRWThreatListShouldWarn(profile_name_, host)) {
+    if (request->GetResourceType() == RT_MAIN_FRAME) {
+      CefRefPtr<CefFrame> target_frame = frame;
+      const std::string target_host = host;
+      const std::string blocked_url = raw_url;
+      CefPostTask(TID_UI, new BRWBlockTask(^{
+        if (!target_frame || !target_frame->IsValid()) {
+          return;
+        }
+        const std::string interstitial_url = BRWThreatListBuildInterstitialURL(target_host, blocked_url);
+        if (!interstitial_url.empty()) {
+          target_frame->LoadURL(interstitial_url);
+        }
+      }));
+    }
+    return RV_CANCEL;
+  }
+
   return RV_CONTINUE;
 }
 

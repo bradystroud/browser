@@ -182,8 +182,12 @@ class BRWClientHandler : public CefClient,
   // Cancels (RV_CANCEL) any request whose host the content blocker says to
   // block for this browser's profile -- see BRWContentBlockerShouldBlock
   // (BRWContentBlockerInternal.h) for the actual (lock-free) lookup this
-  // defers to. Never touches Swift or AppKit from this method: it must stay
-  // safe to call from the IO thread.
+  // defers to. Also handles the threat-list check (browser-12m.6, see
+  // BRWThreatListInternal.h) -- a subresource hit is cancelled the same
+  // silent way as an ad, but a main-frame hit instead hops to the UI thread
+  // to load a warning interstitial in place of the cancelled navigation;
+  // this method itself never touches Swift or AppKit directly, and must
+  // stay safe to call from the IO thread.
   ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
                                     CefRefPtr<CefFrame> frame,
                                     CefRefPtr<CefRequest> request,
