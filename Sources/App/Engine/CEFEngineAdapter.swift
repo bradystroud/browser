@@ -26,6 +26,9 @@ enum CEFEngine: BrowserEngine {
             // Same requirement, independent feature (browser-12m.6) -- see
             // ThreatListCoordinator's doc comment.
             ThreatListCoordinator.shared.start()
+            // browser-7jz.3 -- registers with PageMessageDispatcher and
+            // UNUserNotificationCenter before any tab can navigate.
+            WebPushCoordinator.shared.activate()
         }
         return ok
     }

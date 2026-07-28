@@ -113,6 +113,8 @@ set(BROWSER_SWIFT_SRCS
   TabOverview/TabOverviewController.swift
   DevTools/ResponsiveDesignMode.swift
   PictureInPicture/PictureInPictureScript.swift
+  Notifications/NotificationOverrideScript.swift
+  Notifications/WebPushCoordinator.swift
   Audio/AudioStateScript.swift
   Audio/TabAudioCoordinator.swift
   )

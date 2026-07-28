@@ -406,6 +406,13 @@ final class Tab: NSObject, EngineTabDelegate {
         // dedicated channel of its own -- see TabAudioCoordinator's doc
         // comment for why.
         executeJavaScript(AudioStateScript.source)
+        // Separate script again (browser-7jz.3) -- overrides
+        // window.Notification; reports through the same cefQuery channel
+        // as the two scripts above (see NotificationOverrideScript's own
+        // doc comment for why this is safe now that PageMessageDispatcher
+        // arbitrates registrations by message type, unlike earlier this
+        // session).
+        executeJavaScript(NotificationOverrideScript.source)
     }
 
     func engineTabDidCommitNavigation(_ url: String) {
