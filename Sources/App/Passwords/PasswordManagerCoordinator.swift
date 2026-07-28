@@ -8,6 +8,10 @@ private struct PasswordFormSubmitPayload: Decodable {
     let password: String
 }
 
+private struct PasswordFieldsPresentPayload: Decodable {
+    let present: Bool
+}
+
 /// App-wide singleton that wires every tab's generic page-message channel
 /// (Tab.onPageMessage) to the password manager, and owns the one
 /// save-password popover shown at a time across the whole app.
@@ -32,7 +36,7 @@ private struct PasswordFormSubmitPayload: Decodable {
 /// prompt for a message from a currently-inactive tab is a separate
 /// decision, made in handleFormSubmit(_:tab:) below -- v1 skips prompting
 /// in that case rather than queuing (see that method's own doc comment).
-final class PasswordManagerCoordinator {
+final class PasswordManagerCoordinator: NSObject {
     static let shared = PasswordManagerCoordinator()
 
     private var pollTimer: Timer?
@@ -40,13 +44,41 @@ final class PasswordManagerCoordinator {
     private let savePrompt = SavePasswordPromptController()
     private var anchorViews = NSMapTable<NSView, NSView>.weakToWeakObjects()
 
+    /// Latest "does this tab's current page have a password field" signal
+    /// from PasswordDetectionScript's MutationObserver (the
+    /// "passwordFieldsPresent" cefQuery message) -- keyed by Tab identity
+    /// rather than origin string, so a stale signal from a page the tab has
+    /// since navigated away from can't accidentally apply to the new page
+    /// (a fresh document-start injection always re-reports its own
+    /// presence state before anything else happens). Read by
+    /// updateKeyButton(for:) to decide whether the autofill key icon should
+    /// show at all -- a saved credential existing isn't by itself enough;
+    /// the current page needs to actually have somewhere to fill it into.
+    private var passwordFieldPresence = NSMapTable<Tab, NSNumber>.weakToStrongObjects()
+
+    /// One floating "key" button per window content view -- shown when the
+    /// window's active tab both has a detected password field and a saved
+    /// credential for its origin. Same per-window floating-button pattern
+    /// as ReaderModeController's Reader button (see that class's own doc
+    /// comment for why this lives here rather than in
+    /// BrowserWindowController's toolbar).
+    private var keyButtons = NSMapTable<NSView, NSButton>.weakToWeakObjects()
+    /// Reverse lookup from a key button back to its owning window, since
+    /// the button's own @objc action only receives the button (the AppKit
+    /// sender) -- re-deriving the *current* active tab from the window at
+    /// click time (rather than capturing a tab reference when the button
+    /// was created) means a tab switch between the icon appearing and the
+    /// user clicking it can't fill the wrong page.
+    private var windowForKeyButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
+
     /// Matches FindBarController/ReaderModeController's hardcoded
     /// tab-strip (32) + toolbar (36) height constant -- see
     /// FindBarController.contentTopInset's doc comment for why this is
     /// duplicated rather than shared across files.
     private static let contentTopInset: CGFloat = 32 + 36
+    private static let keyButtonSize: CGFloat = 26
 
-    private init() {}
+    private override init() {}
 
     /// Idempotent -- called from BrowserWindow.swift's init (see that
     /// file's own doc comments for why new per-feature wiring lives there
@@ -69,6 +101,7 @@ final class PasswordManagerCoordinator {
                     self.handlePageMessage(request, requestId: requestId, tab: tab)
                 }
             }
+            updateKeyButton(for: controller)
         }
     }
 
@@ -91,9 +124,8 @@ final class PasswordManagerCoordinator {
             guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data) else { return }
             handleFormSubmit(payload, tab: tab)
         case "passwordFieldsPresent":
-            // Chunk 4 (the omnibox key icon) is this message's consumer --
-            // nothing to do with it yet.
-            break
+            guard let payload = try? JSONDecoder().decode(PasswordFieldsPresentPayload.self, from: data) else { return }
+            passwordFieldPresence.setObject(NSNumber(value: payload.present), forKey: tab)
         default:
             break
         }
@@ -172,5 +204,76 @@ final class PasswordManagerCoordinator {
             width: 300,
             height: 1
         )
+    }
+
+    // MARK: - Autofill key icon
+
+    /// Shows/hides this window's key icon based on its *current* active
+    /// tab -- re-evaluated every poll tick (0.5s), so switching tabs or
+    /// navigating to a different page updates the icon within one tick,
+    /// same latency ReaderModeController accepts for its own Reader button
+    /// (see that class's doc comment on why polling is the right call here
+    /// with BrowserWindowController off-limits).
+    private func updateKeyButton(for controller: BrowserWindowController) {
+        guard let window = controller.window, let contentView = window.contentView else { return }
+        guard let tab = controller.activeTab,
+              passwordFieldPresence.object(forKey: tab)?.boolValue == true,
+              let host = URL(string: tab.urlString)?.host,
+              PasswordStore.credential(profileName: tab.profileName, origin: host) != nil
+        else {
+            setKeyButtonVisible(false, in: contentView, window: window)
+            return
+        }
+        setKeyButtonVisible(true, in: contentView, window: window)
+    }
+
+    private func setKeyButtonVisible(_ visible: Bool, in contentView: NSView, window: NSWindow) {
+        let button: NSButton
+        if let existing = keyButtons.object(forKey: contentView) {
+            button = existing
+        } else {
+            guard visible else { return }
+            let size = Self.keyButtonSize
+            button = NSButton(
+                image: NSImage(systemSymbolName: "key.fill", accessibilityDescription: "Autofill Password")!,
+                target: self, action: #selector(keyIconTapped(_:))
+            )
+            button.isBordered = false
+            button.contentTintColor = .secondaryLabelColor
+            // Offset further from the edge than ReaderModeController's own
+            // floating button (which sits at width - size - 12) so the two
+            // don't overlap on a page that happens to be both readerable
+            // and have a saved login (rare, but not impossible -- an
+            // article site with a comments login form, say).
+            button.frame = NSRect(
+                x: contentView.bounds.width - size * 2 - 24,
+                y: contentView.bounds.height - Self.contentTopInset + (36 - size) / 2,
+                width: size,
+                height: size
+            )
+            button.autoresizingMask = [.minXMargin, .minYMargin]
+            contentView.addSubview(button)
+            keyButtons.setObject(button, forKey: contentView)
+        }
+        windowForKeyButton.setObject(window, forKey: button)
+        button.isHidden = !visible
+    }
+
+    /// The only place a saved credential is ever filled into a page --
+    /// exclusively in direct response to this explicit click, never
+    /// automatically (see AutofillScript's own doc comment for why).
+    /// Re-derives the active tab from the button's owning window at click
+    /// time rather than using a captured reference, so a tab switch between
+    /// the icon appearing and this click can't fill the wrong page.
+    @objc private func keyIconTapped(_ sender: NSButton) {
+        guard let window = windowForKeyButton.object(forKey: sender),
+              let controller = window.windowController as? BrowserWindowController,
+              let tab = controller.activeTab,
+              let host = URL(string: tab.urlString)?.host,
+              let credential = PasswordStore.credential(profileName: tab.profileName, origin: host)
+        else {
+            return
+        }
+        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password))
     }
 }

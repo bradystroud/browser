@@ -18,12 +18,30 @@ struct SavedCredential: Equatable {
 ///     jars already treat a site, and avoids prompting twice through an
 ///     HTTP -> HTTPS upgrade redirect).
 ///   - kSecAttrAccount = username.
-///   - kSecAttrService = "dev.stroud.browser.password.<profileName>" -- this
-///     app's own service namespace, one per profile, so two profiles never
-///     see each other's saved credentials (matches history/bookmarks/
-///     downloads/cookies' existing per-profile isolation).
+///   - kSecAttrSecurityDomain = "dev.stroud.browser.password.<profileName>" --
+///     this app's own namespace, one per profile, so two profiles never see
+///     each other's saved credentials (matches history/bookmarks/downloads/
+///     cookies' existing per-profile isolation). NOT kSecAttrService: that
+///     attribute belongs to kSecClassGenericPassword's schema, not
+///     kSecClassInternetPassword's -- setting it on an InternetPassword item
+///     is silently accepted by SecItemAdd but never actually persisted/
+///     matched as a real distinguishing attribute, so a query that includes
+///     it doesn't filter by it at all. Confirmed the hard way during this
+///     feature's own testing: an early version of this file used
+///     kSecAttrService for profile scoping, and allCredentials(profileName:)
+///     came back with *every* kSecClassInternetPassword item in the user's
+///     real login keychain -- GitHub, Parallels, an unrelated local-dev
+///     entry, none of them this app's -- because the service constraint was
+///     silently ignored by SecItemCopyMatching. kSecAttrSecurityDomain *is*
+///     part of InternetPassword's real primary-key attribute set (alongside
+///     server/account/protocol/authenticationType/port/path), so repurposing
+///     it as an opaque profile-scoping string actually participates in
+///     matching. It has no bearing on this app's own HTTP-auth handling
+///     (there is none) so repurposing it is safe.
 ///   - kSecAttrLabel = "<profileName>: <origin host>" -- human-readable,
-///     shown by Keychain Access.app, not used programmatically.
+///     shown by Keychain Access.app; not used in any query below, so
+///     changing its format later (e.g. for the Settings pane) can't break
+///     lookups.
 ///
 /// ACL: no explicit kSecAttrAccessible override, so items get Keychain's own
 /// default (accessible after first unlock, this app only via its code
@@ -31,7 +49,7 @@ struct SavedCredential: Equatable {
 /// section for why that default is the right call here rather than a
 /// stricter/looser one.
 enum PasswordStore {
-    private static func service(profileName: String) -> String {
+    private static func securityDomain(profileName: String) -> String {
         "dev.stroud.browser.password.\(profileName)"
     }
 
@@ -56,7 +74,7 @@ enum PasswordStore {
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: server,
             kSecAttrAccount as String: username,
-            kSecAttrService as String: service(profileName: profileName),
+            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
         ]
         // Delete-then-add rather than SecItemUpdate: this is a single
         // overwrite-the-whole-item operation (password value + label), not
@@ -81,7 +99,7 @@ enum PasswordStore {
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: host(fromOrigin: origin),
-            kSecAttrService as String: service(profileName: profileName),
+            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -105,7 +123,7 @@ enum PasswordStore {
     static func allCredentials(profileName: String) -> [SavedCredential] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
-            kSecAttrService as String: service(profileName: profileName),
+            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
@@ -143,7 +161,7 @@ enum PasswordStore {
             kSecClass as String: kSecClassInternetPassword,
             kSecAttrServer as String: host(fromOrigin: origin),
             kSecAttrAccount as String: username,
-            kSecAttrService as String: service(profileName: profileName),
+            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
         ]
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
