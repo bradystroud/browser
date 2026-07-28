@@ -71,6 +71,11 @@ set(BROWSER_SWIFT_SRCS
   Furniture/DownloadsWindowController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
+  Passwords/PasswordDetectionScript.swift
+  Passwords/PasswordStore.swift
+  Passwords/PasswordNeverStore.swift
+  Passwords/SavePasswordPromptController.swift
+  Passwords/PasswordManagerCoordinator.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift
