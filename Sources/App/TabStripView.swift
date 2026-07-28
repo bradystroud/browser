@@ -359,7 +359,7 @@ final class TabStripView: NSView {
         let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
         let flexibleWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenFlexibleWidth))
 
-        var x = Self.sidePadding
+        var x = leadingInset + Self.sidePadding
         for item in stripItems {
             let width: CGFloat
             let view: NSView
