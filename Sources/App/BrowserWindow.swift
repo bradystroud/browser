@@ -12,6 +12,22 @@ final class BrowserWindow: NSWindow {
     /// rather than on BrowserWindowController.
     private let findBar = FindBarController()
 
+    /// One Reader mode controller per window -- see ReaderModeController's
+    /// own doc comment for why it lives here too, and attach(to:) for why
+    /// it needs to be told about this window explicitly (it isn't created
+    /// lazily the way findBar is, since it needs to start polling for
+    /// readerable pages immediately, not only once the user first acts).
+    private let readerMode = ReaderModeController()
+
+    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
+        readerMode.attach(to: self)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
            let characters = event.charactersIgnoringModifiers,
@@ -88,4 +104,14 @@ final class BrowserWindow: NSWindow {
     @objc func toggleFindBar(_ sender: Any?) {
         findBar.show(in: self)
     }
+
+    /// ⇧⌘R -- Reader mode toggle, same responder-chain placement reasoning
+    /// as -toggleFindBar:/-printPage: above (browser-5kq.1).
+    @objc func toggleReaderMode(_ sender: Any?) {
+        readerMode.toggle()
+    }
+
+    @objc func setReaderFontSizeSmall(_ sender: Any?) { readerMode.setFontSize(.small) }
+    @objc func setReaderFontSizeMedium(_ sender: Any?) { readerMode.setFontSize(.medium) }
+    @objc func setReaderFontSizeLarge(_ sender: Any?) { readerMode.setFontSize(.large) }
 }

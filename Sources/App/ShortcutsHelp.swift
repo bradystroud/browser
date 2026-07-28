@@ -50,6 +50,7 @@ enum ShortcutsHelp {
         #selector(NSWindow.performClose(_:)): .windowsAndProfiles,
         #selector(BrowserWindowController.copyCurrentURL(_:)): .links,
         #selector(BrowserWindow.toggleFindBar(_:)): .navigation,
+        #selector(BrowserWindow.toggleReaderMode(_:)): .navigation,
         #selector(BrowserWindowController.addBookmark(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,

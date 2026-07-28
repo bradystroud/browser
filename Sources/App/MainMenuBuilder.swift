@@ -136,6 +136,23 @@ final class MainMenuBuilder {
         let menu = NSMenu(title: "View")
         menu.addItem(withTitle: "Reload Page", action: #selector(BrowserWindowController.reloadPage(_:)), keyEquivalent: "r")
         menu.addItem(withTitle: "Show Address Bar", action: #selector(BrowserWindowController.focusOmnibox(_:)), keyEquivalent: "l")
+        menu.addItem(.separator())
+        // Targets BrowserWindow (the NSWindow itself), not
+        // BrowserWindowController -- see BrowserWindow.toggleReaderMode:'s
+        // own doc comment for why (browser-5kq.1).
+        menu.addItem(withTitle: "Show Reader", action: #selector(BrowserWindow.toggleReaderMode(_:)), keyEquivalent: "r")
+            .keyEquivalentModifierMask = [.command, .shift]
+        let fontSizeItem = NSMenuItem(title: "Reader Text Size", action: nil, keyEquivalent: "")
+        fontSizeItem.submenu = readerFontSizeMenu()
+        menu.addItem(fontSizeItem)
+        return menu
+    }
+
+    private func readerFontSizeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Reader Text Size")
+        menu.addItem(withTitle: ReaderFontSize.small.title, action: #selector(BrowserWindow.setReaderFontSizeSmall(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: ReaderFontSize.medium.title, action: #selector(BrowserWindow.setReaderFontSizeMedium(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: ReaderFontSize.large.title, action: #selector(BrowserWindow.setReaderFontSizeLarge(_:)), keyEquivalent: "")
         return menu
     }
 

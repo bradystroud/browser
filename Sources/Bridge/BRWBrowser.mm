@@ -4,6 +4,7 @@
 
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
+#include "include/cef_string_visitor.h"
 
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
@@ -12,6 +13,33 @@ namespace {
 std::string ToStdString(NSString *s) {
   return s ? std::string([s UTF8String]) : std::string();
 }
+
+// CefStringVisitor is source=client (we implement it, not CEF) -- wraps the
+// Swift-facing completion block for -getPageSourceWithCompletion:, same
+// pattern as PdfPrintCallback below for -printToPDFWithPath:completion:.
+// Always hops to the main thread before calling the block: CEF's own docs
+// don't state which thread Visit() runs on, and every other completion in
+// this bridge is documented as main-thread-only.
+class StringVisitorBlock : public CefStringVisitor {
+ public:
+  explicit StringVisitorBlock(void (^completion)(NSString *_Nullable source))
+      : completion_([completion copy]) {}
+
+  void Visit(const CefString& string) override {
+    if (!completion_) {
+      return;
+    }
+    NSString* result = [NSString stringWithUTF8String:string.ToString().c_str()];
+    void (^completion)(NSString *) = completion_;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(result);
+    });
+  }
+
+ private:
+  void (^completion_)(NSString *_Nullable source);
+  IMPLEMENT_REFCOUNTING(StringVisitorBlock);
+};
 
 // CefPdfPrintCallback is source=client (we implement it, not CEF) -- wraps
 // the Swift-facing completion block so -printToPDFWithPath:completion: never
@@ -156,6 +184,23 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->StopFinding(clearSelection);
   }
+}
+
+- (void)executeJavaScript:(NSString *)code {
+  if (_handler && _handler->GetBrowser() && _handler->GetBrowser()->GetMainFrame()) {
+    _handler->GetBrowser()->GetMainFrame()->ExecuteJavaScript(ToStdString(code), "", 0);
+  }
+}
+
+- (void)getPageSourceWithCompletion:(void (^)(NSString *_Nullable source))completion {
+  if (!_handler || !_handler->GetBrowser() || !_handler->GetBrowser()->GetMainFrame()) {
+    if (completion) {
+      completion(nil);
+    }
+    return;
+  }
+  CefRefPtr<StringVisitorBlock> visitor = new StringVisitorBlock(completion);
+  _handler->GetBrowser()->GetMainFrame()->GetSource(visitor);
 }
 
 @end

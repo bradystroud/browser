@@ -86,6 +86,17 @@ protocol EngineTab: AnyObject {
 
     /// Cancels any in-progress search -- see BRWBrowser.h's -stopFinding:.
     func stopFinding(clearSelection: Bool)
+
+    /// Executes `code` as JavaScript, fire-and-forget -- see BRWBrowser.h's
+    /// -executeJavaScript: for why this genuinely has no result path at all
+    /// (browser-5kq.1).
+    func executeJavaScript(_ code: String)
+
+    /// Retrieves the current page's serialized HTML source -- see
+    /// BRWBrowser.h's -getPageSourceWithCompletion: for the real, native CEF
+    /// API this wraps and why it exists alongside the fire-and-forget
+    /// executeJavaScript(_:) above.
+    func getPageSource(completion: @escaping (String?) -> Void)
 }
 
 /// Process-wide engine lifecycle + tab creation. A protocol with static

@@ -69,9 +69,17 @@ set(BROWSER_SWIFT_SRCS
   Furniture/DownloadsWindowController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
+  Reader/ReaderScripts.swift
+  Reader/ReaderPreferences.swift
+  Reader/ReaderTemplate.swift
+  Reader/ReaderModeController.swift
   Blocking/BlockingSettingsStore.swift
   Blocking/ContentBlockerCoordinator.swift
   Blocking/PrivacyPaneController.swift
+  StartPage/StartPageSettings.swift
+  StartPage/StartPageRenderer.swift
+  StartPage/FavoritesFolder.swift
+  StartPage/StartPageSettingsPaneController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -195,6 +203,23 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy
           "${CMAKE_SOURCE_DIR}/assets/branding/AppIcon.icns"
           "${CEF_APP}/Contents/Resources/AppIcon.icns"
+  VERBATIM
+  )
+
+# Reader mode's vendored Readability.js/Readability-readerable.js
+# (browser-5kq.1) -- loaded at runtime via Bundle.main.url(forResource:
+# withExtension:subdirectory:) (see ReaderScripts.swift), same
+# not-routed-through-COPY_MAC_RESOURCES reasoning as the app icon above.
+add_custom_command(
+  TARGET ${CEF_TARGET}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CEF_APP}/Contents/Resources/Reader"
+  COMMAND ${CMAKE_COMMAND} -E copy
+          "${CMAKE_SOURCE_DIR}/Sources/App/Reader/Readability.js"
+          "${CEF_APP}/Contents/Resources/Reader/Readability.js"
+  COMMAND ${CMAKE_COMMAND} -E copy
+          "${CMAKE_SOURCE_DIR}/Sources/App/Reader/Readability-readerable.js"
+          "${CEF_APP}/Contents/Resources/Reader/Readability-readerable.js"
   VERBATIM
   )
 

@@ -154,6 +154,25 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// find bar; NO would leave the last match highlighted).
 - (void)stopFinding:(BOOL)clearSelection;
 
+/// Executes `code` as JavaScript in this tab's main frame, fire-and-forget.
+/// CEF's public API (CefFrame::ExecuteJavaScript) has no result/completion
+/// path at all -- this is genuinely one-way. Reader mode (browser-5kq.1) is
+/// the current user: it injects Mozilla's Readability.js and lets the
+/// injected script perform the entire extraction-and-render transformation
+/// itself via `document.write`, specifically so nothing ever needs a result
+/// back from this call. See docs/ai-tasks/reader-mode-notes.md.
+- (void)executeJavaScript:(NSString *)code;
+
+/// Retrieves the current page's serialized HTML source asynchronously via
+/// CefFrame::GetSource (a real, native, one-shot async CEF API -- distinct
+/// from -executeJavaScript:, which has no result path at all). `completion`
+/// is called exactly once, on the main thread, with the source (or nil if
+/// there's no ready browser/frame). Used by Reader mode to read back a
+/// marker attribute injected JS sets on `<html>`, as a lightweight
+/// alternative to a full CefMessageRouter round-trip for a single boolean
+/// signal -- see docs/ai-tasks/reader-mode-notes.md.
+- (void)getPageSourceWithCompletion:(void (^)(NSString *_Nullable source))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

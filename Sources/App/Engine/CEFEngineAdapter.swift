@@ -71,6 +71,12 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func stopFinding(clearSelection: Bool) {
         browser.stopFinding(clearSelection)
     }
+    func executeJavaScript(_ code: String) {
+        browser.executeJavaScript(code)
+    }
+    func getPageSource(completion: @escaping (String?) -> Void) {
+        browser.getPageSource(completion: completion)
+    }
 
     // MARK: - BRWBrowserDelegate -> EngineTabDelegate
 
