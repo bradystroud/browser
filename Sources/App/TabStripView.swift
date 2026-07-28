@@ -11,6 +11,10 @@ protocol TabStripViewDelegate: AnyObject {
     /// Tab strip's context menu -- "Close Other Tabs".
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int)
 
+    /// Speaker icon click, or context menu's "Mute Tab"/"Unmute Tab"
+    /// (browser-rhi.4, see TabButtonView).
+    func tabStripView(_ tabStripView: TabStripView, didRequestMuteToggleAt index: Int)
+
     /// Tab context menu -- "Move to Group > <existing group>".
     func tabStripView(_ tabStripView: TabStripView, didRequestMoveToGroupAt index: Int, groupId: UUID)
 
@@ -61,6 +65,11 @@ final class TabStripView: NSView {
         /// button regardless so switching selection doesn't need a fresh
         /// reload just to pick up the newly-active tab's color.
         let themeColorHex: String?
+        /// Mirrors Tab.isMuted/isAudible (browser-rhi.4) -- see
+        /// TabButtonView.updateAudioIndicator() for how these combine into
+        /// the speaker glyph shown in place of the favicon.
+        let isMuted: Bool
+        let isAudible: Bool
     }
 
     struct GroupDisplayInfo {
@@ -193,6 +202,16 @@ final class TabStripView: NSView {
         tabButton(forTabIndex: index)?.themeColorHex = hex
     }
 
+    /// Cheaper than a full reload -- see updateTitle. Called whenever
+    /// Tab.isMuted/isAudible change (browser-rhi.4), both of which can
+    /// happen far more often than a full tab-strip reload is warranted for
+    /// (isAudible in particular, on TabAudioCoordinator's poll interval).
+    func updateAudioState(at index: Int, isMuted: Bool, isAudible: Bool) {
+        guard let button = tabButton(forTabIndex: index) else { return }
+        button.isMuted = isMuted
+        button.isAudible = isAudible
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for item in stripItems {
@@ -240,6 +259,8 @@ final class TabStripView: NSView {
             button.isPinned = info.isPinned
             button.groupId = info.groupId
             button.themeColorHex = info.themeColorHex
+            button.isMuted = info.isMuted
+            button.isAudible = info.isAudible
             button.availableGroups = availableGroups
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in
@@ -257,6 +278,10 @@ final class TabStripView: NSView {
             button.onCloseOthers = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestCloseOthersAt: index)
+            }
+            button.onMuteToggle = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestMuteToggleAt: index)
             }
             button.onMoveToGroup = { [weak self] groupId in
                 guard let self else { return }

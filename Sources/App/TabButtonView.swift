@@ -19,6 +19,11 @@ final class TabButtonView: NSView {
     var onMoveToNewGroup: (() -> Void)?
     /// Context menu's "Remove from Group" (only shown when groupId != nil).
     var onRemoveFromGroup: (() -> Void)?
+    /// Speaker icon click, or context menu's "Mute Tab"/"Unmute Tab"
+    /// (browser-rhi.4) -- same "just report toggle requested" shape as
+    /// onPinToggle above; BrowserWindowController owns the actual
+    /// Tab.toggleMuted() call.
+    var onMuteToggle: (() -> Void)?
 
     /// Which group (if any) this tab currently belongs to -- gates whether
     /// "Remove from Group" appears in the context menu. Set by
@@ -45,6 +50,24 @@ final class TabButtonView: NSView {
             guard oldValue != isSelected else { return }
             needsDisplay = true
             updateGlassAppearance()
+        }
+    }
+
+    /// Mirrors Tab.isMuted (browser-rhi.4) -- see updateAudioIndicator() for
+    /// how this and isAudible below combine into the speaker glyph shown in
+    /// place of the favicon.
+    var isMuted = false {
+        didSet {
+            guard oldValue != isMuted else { return }
+            updateAudioIndicator()
+        }
+    }
+
+    /// Mirrors Tab.isAudible (browser-rhi.4).
+    var isAudible = false {
+        didSet {
+            guard oldValue != isAudible else { return }
+            updateAudioIndicator()
         }
     }
 
@@ -98,6 +121,19 @@ final class TabButtonView: NSView {
         return button
     }()
 
+    /// Speaker glyph shown in place of the favicon whenever isAudible ||
+    /// isMuted (browser-rhi.4), matching Safari's own tab-icon convention --
+    /// clicking it toggles mute, same as clicking Safari's tab speaker icon.
+    /// Hidden the rest of the time, in which case faviconView is what shows.
+    private let audioButton: NSButton = {
+        let button = NSButton()
+        button.isBordered = false
+        button.title = ""
+        button.imageScaling = .scaleProportionallyDown
+        button.isHidden = true
+        return button
+    }()
+
     private var trackingArea: NSTrackingArea?
 
     /// `NSGlassEffectView` on macOS 26+ -- see GlassBackgroundView's own doc
@@ -127,6 +163,10 @@ final class TabButtonView: NSView {
         titleLabel.stringValue = title
         addSubview(faviconView)
         addSubview(titleLabel)
+
+        audioButton.target = self
+        audioButton.action = #selector(muteToggleTapped)
+        addSubview(audioButton)
 
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
@@ -165,13 +205,16 @@ final class TabButtonView: NSView {
         let faviconSize: CGFloat = 14
 
         guard !isPinned else {
-            // Compact: favicon centered, no title, no close button.
-            faviconView.frame = NSRect(
+            // Compact: favicon (or the audio glyph, when relevant) centered,
+            // no title, no close button.
+            let iconFrame = NSRect(
                 x: (bounds.width - faviconSize) / 2,
                 y: (bounds.height - faviconSize) / 2,
                 width: faviconSize,
                 height: faviconSize
             )
+            faviconView.frame = iconFrame
+            audioButton.frame = iconFrame
             closeButton.frame = .zero
             titleLabel.frame = .zero
             return
@@ -184,12 +227,14 @@ final class TabButtonView: NSView {
             width: closeSize,
             height: closeSize
         )
-        faviconView.frame = NSRect(
+        let iconFrame = NSRect(
             x: faviconLeading,
             y: (bounds.height - faviconSize) / 2,
             width: faviconSize,
             height: faviconSize
         )
+        faviconView.frame = iconFrame
+        audioButton.frame = iconFrame
         let titleX = faviconLeading + faviconSize + 6
         titleLabel.frame = NSRect(x: titleX, y: 0, width: max(0, bounds.width - closeSize - titleX - 8), height: bounds.height)
     }
@@ -233,6 +278,7 @@ final class TabButtonView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(pinToggleTapped), keyEquivalent: "").target = self
+        menu.addItem(withTitle: isMuted ? "Unmute Tab" : "Mute Tab", action: #selector(muteToggleTapped), keyEquivalent: "").target = self
 
         let moveToGroupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -257,6 +303,29 @@ final class TabButtonView: NSView {
         menu.addItem(withTitle: "Close Tab", action: #selector(closeTapped), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close Other Tabs", action: #selector(closeOthersTapped), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    /// Shows audioButton (in faviconView's place) whenever muted or audible,
+    /// picking the glyph that matches -- muted takes precedence visually
+    /// (a tab you muted stays showing the slash even if it's also currently
+    /// trying to play, matching Safari's own tab-icon convention). Hides
+    /// back to the plain favicon otherwise.
+    private func updateAudioIndicator() {
+        guard isMuted || isAudible else {
+            audioButton.isHidden = true
+            faviconView.isHidden = false
+            return
+        }
+        audioButton.image = NSImage(
+            systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+            accessibilityDescription: isMuted ? "Muted -- click to unmute" : "Playing audio -- click to mute"
+        )
+        audioButton.isHidden = false
+        faviconView.isHidden = true
+    }
+
+    @objc private func muteToggleTapped() {
+        onMuteToggle?()
     }
 
     @objc private func closeTapped() {

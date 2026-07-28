@@ -93,6 +93,15 @@ protocol EngineTab: AnyObject {
     /// call even if none is currently active.
     func clearResponsiveDesignMode()
 
+    /// Mutes/unmutes this tab's audio output (browser-rhi.4) -- see
+    /// BRWBrowser.h's -setAudioMuted: for why this is a real, direct CEF
+    /// call rather than a JS workaround.
+    func setAudioMuted(_ muted: Bool)
+
+    /// Mirrors the engine's own current mute state -- see BRWBrowser.h's
+    /// -isAudioMuted.
+    func isAudioMuted() -> Bool
+
     /// Opens the engine's native print dialog for this tab's current page --
     /// see BRWBrowser.h's -print for what "native" actually means in this
     /// Alloy-style app (browser-5kq.6).

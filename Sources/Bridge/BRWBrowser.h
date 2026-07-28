@@ -183,6 +183,21 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// safe to call even if none is currently active.
 - (void)clearResponsiveDesignMode;
 
+/// Mutes/unmutes this tab's audio output (browser-rhi.4) -- wraps CEF's own
+/// CefBrowserHost::SetAudioMuted, a real one-call mute confirmed present in
+/// this project's pinned CEF 150.0.14 headers (cef_browser.h), contrary to
+/// this task's own initial assumption that CEF's public API lacked one. No
+/// JS-injection workaround needed for muting itself -- only the separate
+/// "is this tab currently playing audio" indicator needs one (see
+/// AudioStateScript.swift), since CEF exposes no audible-state callback.
+- (void)setAudioMuted:(BOOL)muted NS_SWIFT_NAME(setAudioMuted(_:));
+
+/// Mirrors CefBrowserHost::IsAudioMuted -- CEF's own doc comment says this
+/// can only be called on the UI thread, which is always the main thread in
+/// this app's architecture (see BRWMessagePump), so no special dispatch is
+/// needed here.
+- (BOOL)isAudioMuted;
+
 /// Opens CEF's native print dialog for this tab's current page (see
 /// BRWBrowser.mm's -print for what "native" actually means in this Alloy-
 /// style app -- verified empirically, not assumed, per browser-5kq.6).

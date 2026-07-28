@@ -206,6 +206,19 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   _handler->GetBrowser()->GetHost()->ExecuteDevToolsMethod(0, "Emulation.clearDeviceMetricsOverride", nullptr);
 }
 
+- (void)setAudioMuted:(BOOL)muted {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->SetAudioMuted(muted);
+  }
+}
+
+- (BOOL)isAudioMuted {
+  if (!_handler || !_handler->GetBrowser()) {
+    return NO;
+  }
+  return _handler->GetBrowser()->GetHost()->IsAudioMuted();
+}
+
 - (void)print {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->Print();

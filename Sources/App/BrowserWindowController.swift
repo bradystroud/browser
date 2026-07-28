@@ -213,7 +213,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabs.map {
             TabStripView.DisplayInfo(
                 title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned,
-                groupId: $0.groupId, themeColorHex: $0.themeColorHex)
+                groupId: $0.groupId, themeColorHex: $0.themeColorHex,
+                isMuted: $0.isMuted, isAudible: $0.isAudible)
         }
     }
 
@@ -856,6 +857,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabStripView.updateTitle(at: index, title: tab.title)
         tabStripView.updateFavicon(at: index, image: tab.faviconImage)
         tabStripView.updateThemeColor(at: index, hex: tab.themeColorHex)
+        tabStripView.updateAudioState(at: index, isMuted: tab.isMuted, isAudible: tab.isAudible)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
@@ -897,6 +899,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         } else {
             pinTab(at: index)
         }
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestMuteToggleAt index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        tabs[index].toggleMuted()
     }
 
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int) {
