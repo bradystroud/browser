@@ -102,7 +102,6 @@ final class TabButtonView: NSView {
         self.index = index
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 6
 
         titleLabel.stringValue = title
         addSubview(faviconView)
@@ -129,6 +128,9 @@ final class TabButtonView: NSView {
 
     override func layout() {
         super.layout()
+        // Full pill shape (browser-qpy): fully rounded ends at any height,
+        // not a fixed radius -- matches the compact pinned width too.
+        layer?.cornerRadius = bounds.height / 2
         let closeSize: CGFloat = 14
         let faviconSize: CGFloat = 14
 
@@ -263,16 +265,26 @@ final class TabButtonView: NSView {
         layer?.add(animation, forKey: "shake")
     }
 
-    /// Only the *selected* tab's button ever shows the theme-color tint
-    /// (browser-rhi.5's brief: "a subtle tint to the active tab's button" --
-    /// singular): an unselected tab keeps its plain background regardless of
-    /// its own stored themeColorHex, matching how the toolbar tint also only
+    /// Liquid-glass pill (browser-qpy): an inactive tab is translucent --
+    /// just a faint label-color wash, letting the vibrant chrome material
+    /// behind the strip show through -- while the active tab is a brighter,
+    /// more opaque pill so it reads clearly as "the current one" against
+    /// its translucent neighbors. Only the *selected* tab's button ever
+    /// shows the theme-color tint (browser-rhi.5's brief: "a subtle tint to
+    /// the active tab's button" -- singular): an unselected tab ignores its
+    /// own stored themeColorHex, matching how the toolbar tint also only
     /// ever reflects whichever tab is currently active (see
     /// BrowserWindowController.refreshToolbar(for:)).
+    private static let inactiveWashAlpha: CGFloat = 0.10
+
     override func draw(_ dirtyRect: NSRect) {
-        let base = isSelected ? NSColor.controlBackgroundColor : NSColor.windowBackgroundColor
-        let fill = isSelected ? (base.tinted(withThemeColorHex: themeColorHex) ?? base) : base
-        fill.setFill()
-        dirtyRect.fill()
+        let path = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        if isSelected {
+            let base = NSColor.controlBackgroundColor
+            (base.tinted(withThemeColorHex: themeColorHex) ?? base).setFill()
+        } else {
+            NSColor.labelColor.withAlphaComponent(Self.inactiveWashAlpha).setFill()
+        }
+        path.fill()
     }
 }

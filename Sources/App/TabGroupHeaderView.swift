@@ -50,7 +50,6 @@ final class TabGroupHeaderView: NSView {
         self.groupId = groupId
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = 6
 
         colorDotView.wantsLayer = true
         colorDotView.layer?.cornerRadius = 4
@@ -93,6 +92,8 @@ final class TabGroupHeaderView: NSView {
 
     override func layout() {
         super.layout()
+        // Full pill shape (browser-qpy), matching TabButtonView.
+        layer?.cornerRadius = bounds.height / 2
         let dotSize: CGFloat = 8
         let margin: CGFloat = 8
         let chevronSize: CGFloat = 10
