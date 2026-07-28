@@ -53,6 +53,7 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDevTools(_:)): .developer,
+        #selector(BrowserWindow.printPage(_:)): .general,
         #selector(BrowserWindowController.showKeyboardShortcuts(_:)): .general,
         #selector(NSApplication.terminate(_:)): .general,
     ]

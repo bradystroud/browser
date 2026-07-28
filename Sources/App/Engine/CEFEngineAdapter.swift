@@ -51,6 +51,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func close() { browser.close() }
     func showDevTools() { browser.showDevTools() }
     func closeDevTools() { browser.closeDevTools() }
+    func print() { browser.print() }
+    func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
+        browser.printToPDF(withPath: path, completion: completion)
+    }
 
     // MARK: - BRWBrowserDelegate -> EngineTabDelegate
 

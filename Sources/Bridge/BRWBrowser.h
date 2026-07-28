@@ -116,6 +116,19 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// call when none is open.
 - (void)closeDevTools;
 
+/// Opens CEF's native print dialog for this tab's current page (see
+/// BRWBrowser.mm's -print for what "native" actually means in this Alloy-
+/// style app -- verified empirically, not assumed, per browser-5kq.6).
+- (void)print;
+
+/// Exports the current page to a PDF at `path` with default print settings
+/// (letter paper, default ~1cm margins, 100% scale -- see BRWBrowser.mm's
+/// -printToPDFWithPath:completion: for exactly which CefPdfPrintSettings
+/// this leaves at their defaults; no UI exposes these yet). `completion` is
+/// called exactly once, on the main thread, with whether it succeeded and
+/// the same `path` back.
+- (void)printToPDFWithPath:(NSString *)path completion:(void (^)(BOOL success, NSString *path))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

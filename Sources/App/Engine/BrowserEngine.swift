@@ -62,6 +62,17 @@ protocol EngineTab: AnyObject {
     func close()
     func showDevTools()
     func closeDevTools()
+
+    /// Opens the engine's native print dialog for this tab's current page --
+    /// see BRWBrowser.h's -print for what "native" actually means in this
+    /// Alloy-style app (browser-5kq.6).
+    func print()
+
+    /// Exports the current page to a PDF at `path` with the engine's default
+    /// print settings -- see BRWBrowser.h's -printToPDFWithPath:completion:
+    /// for exactly what's left at defaults. `completion` runs exactly once,
+    /// on the main thread, with whether it succeeded and the same `path` back.
+    func printToPDF(path: String, completion: @escaping (Bool, String) -> Void)
 }
 
 /// Process-wide engine lifecycle + tab creation. A protocol with static

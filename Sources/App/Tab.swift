@@ -122,6 +122,21 @@ final class Tab: NSObject, EngineTabDelegate {
     func showDevTools() { browser?.showDevTools() }
     func closeDevTools() { browser?.closeDevTools() }
 
+    func print() { browser?.print() }
+
+    /// Exports the current page to a PDF at `path` -- see
+    /// EngineTab.printToPDF(path:completion:) for the default print settings
+    /// this leaves untouched. No-ops (reporting failure) if this tab has no
+    /// engine-side browser yet, same guard every other browser?.-prefixed
+    /// call above already relies on implicitly.
+    func exportAsPDF(to path: String, completion: @escaping (Bool, String) -> Void) {
+        guard let browser else {
+            completion(false, path)
+            return
+        }
+        browser.printToPDF(path: path, completion: completion)
+    }
+
     /// Seeds a restored tab's display title immediately at launch, before
     /// its page has even started (re)loading, so the tab strip shows a real
     /// title right away instead of the raw URL -- the real page's own title

@@ -104,6 +104,13 @@ final class MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Downloads…", action: #selector(BrowserWindowController.showDownloads(_:)), keyEquivalent: "j")
             .keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        // Targets BrowserWindow (the NSWindow itself, ahead of its
+        // NSWindowController in the responder chain), not
+        // BrowserWindowController -- see that file's own doc comment on
+        // -printPage:/-exportAsPDF: for why (browser-5kq.6).
+        menu.addItem(withTitle: "Export as PDF…", action: #selector(BrowserWindow.exportAsPDF(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Print…", action: #selector(BrowserWindow.printPage(_:)), keyEquivalent: "p")
         return menu
     }
 

@@ -12,6 +12,25 @@ namespace {
 std::string ToStdString(NSString *s) {
   return s ? std::string([s UTF8String]) : std::string();
 }
+
+// CefPdfPrintCallback is source=client (we implement it, not CEF) -- wraps
+// the Swift-facing completion block so -printToPDFWithPath:completion: never
+// exposes a CEF type across the bridge boundary.
+class PdfPrintCallback : public CefPdfPrintCallback {
+ public:
+  explicit PdfPrintCallback(void (^completion)(BOOL success, NSString *path))
+      : completion_([completion copy]) {}
+
+  void OnPdfPrintFinished(const CefString& path, bool ok) override {
+    if (completion_) {
+      completion_(ok, [NSString stringWithUTF8String:path.ToString().c_str()]);
+    }
+  }
+
+ private:
+  void (^completion_)(BOOL success, NSString *path);
+  IMPLEMENT_REFCOUNTING(PdfPrintCallback);
+};
 }  // namespace
 
 @implementation BRWBrowser {
@@ -103,6 +122,28 @@ std::string ToStdString(NSString *s) {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->CloseDevTools();
   }
+}
+
+- (void)print {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->Print();
+  }
+}
+
+- (void)printToPDFWithPath:(NSString *)path completion:(void (^)(BOOL success, NSString *path))completion {
+  if (!_handler || !_handler->GetBrowser()) {
+    if (completion) {
+      completion(NO, path);
+    }
+    return;
+  }
+  // Default-constructed CefPdfPrintSettings: PDF_PRINT_MARGIN_DEFAULT (~1cm
+  // margins), scale <= 0 treated as 1.0 (100%), paper_width/height <= 0
+  // treated as letter (8.5x11in) -- CEF's own documented defaults for every
+  // field this leaves untouched. No UI exposes any of these yet.
+  CefPdfPrintSettings settings;
+  CefRefPtr<PdfPrintCallback> callback = new PdfPrintCallback(completion);
+  _handler->GetBrowser()->GetHost()->PrintToPDF(ToStdString(path), settings, callback);
 }
 
 @end
