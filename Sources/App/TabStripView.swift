@@ -55,6 +55,12 @@ final class TabStripView: NSView {
         let favicon: NSImage?
         let isPinned: Bool
         let groupId: UUID?
+        /// The page's `<meta name="theme-color">` value, if any (browser-
+        /// rhi.5) -- only ever rendered as a tint when this button is also
+        /// the selected one (see TabButtonView.draw(_:)); carried on every
+        /// button regardless so switching selection doesn't need a fresh
+        /// reload just to pick up the newly-active tab's color.
+        let themeColorHex: String?
     }
 
     struct GroupDisplayInfo {
@@ -134,6 +140,13 @@ final class TabStripView: NSView {
         tabButton(forTabIndex: index)?.setFavicon(image)
     }
 
+    /// Cheaper than a full reload -- see updateTitle. `nil` clears the tint
+    /// (see TabButtonView.draw(_:) -- only ever visible when this button is
+    /// also selected, but harmless to set unconditionally).
+    func updateThemeColor(at index: Int, hex: String?) {
+        tabButton(forTabIndex: index)?.themeColorHex = hex
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for item in stripItems {
@@ -180,6 +193,7 @@ final class TabStripView: NSView {
             button.setFavicon(info.favicon)
             button.isPinned = info.isPinned
             button.groupId = info.groupId
+            button.themeColorHex = info.themeColorHex
             button.availableGroups = availableGroups
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in

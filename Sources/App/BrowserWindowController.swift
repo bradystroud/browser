@@ -142,7 +142,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     private var currentDisplayInfos: [TabStripView.DisplayInfo] {
-        tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned, groupId: $0.groupId) }
+        tabs.map {
+            TabStripView.DisplayInfo(
+                title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned,
+                groupId: $0.groupId, themeColorHex: $0.themeColorHex)
+        }
     }
 
     private var currentGroupDisplayInfos: [TabStripView.GroupDisplayInfo] {
@@ -173,6 +177,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             height: toolbarHeight
         )
         toolbarView.autoresizingMask = [.width, .minYMargin]
+        // Layer-backed so refreshToolbar(for:) can tint its background with
+        // the active tab's site theme color (browser-rhi.5) -- a nil
+        // layer.backgroundColor (the untinted case) just renders as
+        // transparent, showing the window's own background beneath.
+        toolbarView.wantsLayer = true
         contentView.addSubview(toolbarView)
         setUpToolbarContents()
 
@@ -585,6 +594,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if omniboxField.currentEditor() == nil {
             omniboxField.stringValue = tab.urlString
         }
+        // Site-theme-color tint (browser-rhi.5) -- always re-evaluated
+        // against whichever tab is *currently* active, so it updates both
+        // when that tab's own color changes (navigation) and when a
+        // different tab becomes active (tab switch); nil themeColorHex (or
+        // one that fails the contrast check -- see NSColor.tinted(
+        // withThemeColorHex:)) clears back to a plain, untinted toolbar.
+        toolbarView.layer?.backgroundColor = NSColor.windowBackgroundColor.tinted(withThemeColorHex: tab.themeColorHex)?.cgColor
     }
 
     private func updateWindowTitle(for tab: Tab) {
@@ -597,6 +613,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
         tabStripView.updateTitle(at: index, title: tab.title)
         tabStripView.updateFavicon(at: index, image: tab.faviconImage)
+        tabStripView.updateThemeColor(at: index, hex: tab.themeColorHex)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)

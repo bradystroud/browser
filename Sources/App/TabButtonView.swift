@@ -29,6 +29,16 @@ final class TabButtonView: NSView {
     /// -- set by TabStripView.rebuildButtons alongside groupId.
     var availableGroups: [(id: UUID, name: String)] = []
 
+    /// The page's `<meta name="theme-color">` value, if any (browser-rhi.5)
+    /// -- see draw(_:) for why this only ever visibly tints while isSelected
+    /// is also true.
+    var themeColorHex: String? {
+        didSet {
+            guard oldValue != themeColorHex else { return }
+            needsDisplay = true
+        }
+    }
+
     var isSelected = false {
         didSet {
             guard oldValue != isSelected else { return }
@@ -253,8 +263,16 @@ final class TabButtonView: NSView {
         layer?.add(animation, forKey: "shake")
     }
 
+    /// Only the *selected* tab's button ever shows the theme-color tint
+    /// (browser-rhi.5's brief: "a subtle tint to the active tab's button" --
+    /// singular): an unselected tab keeps its plain background regardless of
+    /// its own stored themeColorHex, matching how the toolbar tint also only
+    /// ever reflects whichever tab is currently active (see
+    /// BrowserWindowController.refreshToolbar(for:)).
     override func draw(_ dirtyRect: NSRect) {
-        (isSelected ? NSColor.controlBackgroundColor : NSColor.windowBackgroundColor).setFill()
+        let base = isSelected ? NSColor.controlBackgroundColor : NSColor.windowBackgroundColor
+        let fill = isSelected ? (base.tinted(withThemeColorHex: themeColorHex) ?? base) : base
+        fill.setFill()
         dirtyRect.fill()
     }
 }

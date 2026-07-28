@@ -318,7 +318,6 @@ final class Tab: NSObject, EngineTabDelegate {
             delegate?.tabDidChangeDisplayState(self)
         }
         browser?.getPageSource { [weak self] source in
-            NSLog("THEME_VERIFY sourceLen=%d extracted=%@", source?.count ?? -1, Self.extractThemeColorHex(fromHTML: source ?? "") ?? "nil")
             guard let self, self.themeColorFetchGeneration == generation, let source,
                   let hex = Self.extractThemeColorHex(fromHTML: source), NSColor(hex: hex) != nil else { return }
             self.themeColorHex = hex
