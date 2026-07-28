@@ -95,6 +95,34 @@ final class TabStripView: NSView {
         button.contentTintColor = .secondaryLabelColor
         return button
     }()
+    /// macOS 26+ only: hosts every tab/group-header's own NSGlassEffectView
+    /// so they batch-render and merge together when close, matching how
+    /// Safari's own adjacent tab pills blend into each other rather than
+    /// reading as separate frosted rectangles (see
+    /// NSGlassEffectContainerView's own header doc comment, and browser-qpy-
+    /// notes.md for the spacing value's rationale). `nil` pre-26.
+    private var glassContainer: NSView?
+    /// Where rebuildButtons() actually adds each tab/group-header subview --
+    /// the glass container's contentView on macOS 26+, `self` otherwise (the
+    /// exact pre-rework behavior). Set once, read (never reassigned after)
+    /// by rebuildButtons on every reload.
+    private lazy var glassContentHost: NSView = {
+        guard #available(macOS 26.0, *) else { return self }
+        let container = NSGlassEffectContainerView(frame: bounds)
+        container.autoresizingMask = [.width, .height]
+        // Nonzero so adjacent pills within this distance visually merge
+        // (the default, zero, only batches rendering -- see the class's own
+        // doc comment) -- a starting guess, not verified against a real
+        // render; see browser-qpy-notes.md's Deviations for why this is
+        // flagged for Brady to tune once he can actually see it.
+        container.spacing = 4
+        let content = NSView(frame: bounds)
+        content.autoresizingMask = [.width, .height]
+        container.contentView = content
+        addSubview(container, positioned: .below, relativeTo: nil)
+        glassContainer = container
+        return content
+    }()
 
     private static let minTabWidth: CGFloat = 80
     private static let maxTabWidth: CGFloat = 200
@@ -126,6 +154,9 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        // Force the glass container to be created (and added) now, before
+        // newTabButton below, so the button always renders above it.
+        _ = glassContentHost
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
         addSubview(newTabButton)
@@ -245,7 +276,7 @@ final class TabStripView: NSView {
         // Pinned tabs first.
         for (index, info) in indexed where info.isPinned {
             let button = makeButton(index, info)
-            addSubview(button)
+            glassContentHost.addSubview(button)
             stripItems.append(.tab(button))
         }
 
@@ -276,13 +307,13 @@ final class TabStripView: NSView {
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestCloseGroup: group.id)
             }
-            addSubview(header)
+            glassContentHost.addSubview(header)
             stripItems.append(.groupHeader(header))
 
             guard !group.isCollapsed else { continue }
             for (index, info) in members {
                 let button = makeButton(index, info)
-                addSubview(button)
+                glassContentHost.addSubview(button)
                 stripItems.append(.tab(button))
             }
         }
@@ -290,7 +321,7 @@ final class TabStripView: NSView {
         // Then loose (unpinned, ungrouped) tabs.
         for (index, info) in indexed where !info.isPinned && info.groupId == nil {
             let button = makeButton(index, info)
-            addSubview(button)
+            glassContentHost.addSubview(button)
             stripItems.append(.tab(button))
         }
     }

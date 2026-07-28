@@ -36,6 +36,7 @@ final class TabButtonView: NSView {
         didSet {
             guard oldValue != themeColorHex else { return }
             needsDisplay = true
+            updateGlassAppearance()
         }
     }
 
@@ -43,6 +44,7 @@ final class TabButtonView: NSView {
         didSet {
             guard oldValue != isSelected else { return }
             needsDisplay = true
+            updateGlassAppearance()
         }
     }
 
@@ -98,10 +100,29 @@ final class TabButtonView: NSView {
 
     private var trackingArea: NSTrackingArea?
 
+    /// `NSGlassEffectView` on macOS 26+ -- see GlassBackgroundView's own doc
+    /// comment on why this is stored untyped. `nil` pre-26, in which case
+    /// draw(_:) falls back to its original bezier-fill rendering unchanged.
+    private var glassBackground: NSView?
+
     init(index: Int, title: String) {
         self.index = index
         super.init(frame: .zero)
         wantsLayer = true
+
+        // Real Liquid Glass material for the pill itself (browser-qpy
+        // rework) -- added as the bottommost subview so favicon/title/close
+        // button (added below) all sit visibly on top of it, same
+        // add-behind pattern GlassBackgroundView uses for its own material
+        // view. draw(_:) skips its bezier fill entirely whenever this
+        // exists (see draw(_:)); pre-26 this stays nil and draw(_:) is the
+        // only rendering path, unchanged from before this rework.
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass, positioned: .below, relativeTo: nil)
+            glassBackground = glass
+        }
 
         titleLabel.stringValue = title
         addSubview(faviconView)
@@ -110,6 +131,8 @@ final class TabButtonView: NSView {
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
         addSubview(closeButton)
+
+        updateGlassAppearance()
     }
 
     required init?(coder: NSCoder) {
@@ -129,8 +152,15 @@ final class TabButtonView: NSView {
     override func layout() {
         super.layout()
         // Full pill shape (browser-qpy): fully rounded ends at any height,
-        // not a fixed radius -- matches the compact pinned width too.
-        layer?.cornerRadius = bounds.height / 2
+        // not a fixed radius -- matches the compact pinned width too. On
+        // macOS 26+ the real glass view masks its own corners; masking
+        // this view's own layer too would double up (and clip nothing
+        // extra, since the glass view already fills these bounds).
+        if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
+            glass.cornerRadius = bounds.height / 2
+        } else {
+            layer?.cornerRadius = bounds.height / 2
+        }
         let closeSize: CGFloat = 14
         let faviconSize: CGFloat = 14
 
@@ -278,6 +308,10 @@ final class TabButtonView: NSView {
     private static let inactiveWashAlpha: CGFloat = 0.10
 
     override func draw(_ dirtyRect: NSRect) {
+        // macOS 26+: the real glass view (added behind everything in init)
+        // is the pill's entire material -- see updateGlassAppearance() for
+        // how it reflects isSelected/themeColorHex instead of this fill.
+        guard glassBackground == nil else { return }
         let path = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
         if isSelected {
             let base = NSColor.controlBackgroundColor
@@ -286,5 +320,23 @@ final class TabButtonView: NSView {
             NSColor.labelColor.withAlphaComponent(Self.inactiveWashAlpha).setFill()
         }
         path.fill()
+    }
+
+    /// Mirrors draw(_:)'s selected/unselected look onto the real glass
+    /// view's own style/tint properties (macOS 26+ only) -- `.clear` style
+    /// with no tint for an inactive, barely-there pill (glass's own
+    /// analogue of the bezier path's faint label-color wash); `.regular`
+    /// style tinted toward the theme color for the active tab (glass's own
+    /// analogue of the opaque-ish controlBackgroundColor fill). No-op
+    /// pre-26 (glassBackground is nil, draw(_:) handles it instead).
+    private func updateGlassAppearance() {
+        guard #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView else { return }
+        if isSelected {
+            glass.style = .regular
+            glass.tintColor = NSColor.controlBackgroundColor.tinted(withThemeColorHex: themeColorHex)
+        } else {
+            glass.style = .clear
+            glass.tintColor = nil
+        }
     }
 }

@@ -43,18 +43,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         material: .underWindowBackground, blendingMode: .behindWindow,
         solidFallbackColor: .windowBackgroundColor
     )
-    /// Blends the profile accent (always, subtle) and the active tab's site
-    /// theme color (when present, more prominent) into chromeBackground --
-    /// browser-qpy points 5/6 ("profile color accent integrates as a subtle
-    /// tint of the glass" / "theme-color tinting blends into the glass
-    /// material"). Updated by updateChromeTint(), called from
-    /// refreshToolbar(for:) (already the single call site for "the active
-    /// tab's state changed," whether via navigation or a tab switch).
-    private let chromeTintView: NSView = {
-        let view = NSView()
-        view.wantsLayer = true
-        return view
-    }()
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let reloadButton = NSButton()
@@ -263,10 +251,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         )
         chromeBackground.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(chromeBackground)
-
-        chromeTintView.frame = chromeBackground.bounds
-        chromeTintView.autoresizingMask = [.width, .height]
-        chromeBackground.addSubview(chromeTintView)
 
         tabStripView.leadingInset = Self.trafficLightReservedWidth
         tabStripView.frame = NSRect(
@@ -854,11 +838,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let themeColor = tab.themeColorHex.flatMap { NSColor(hex: $0) }
         let profileColor = isPrivate ? nil : (NSColor(hex: profile.colorHex) ?? .controlAccentColor)
         guard let tintColor = themeColor ?? profileColor else {
-            chromeTintView.layer?.backgroundColor = nil
+            chromeBackground.tintColor = nil
             return
         }
         let alpha: CGFloat = themeColor != nil ? 0.16 : 0.05
-        chromeTintView.layer?.backgroundColor = tintColor.withAlphaComponent(alpha).cgColor
+        chromeBackground.tintColor = tintColor.withAlphaComponent(alpha)
     }
 
     private func updateWindowTitle(for tab: Tab) {

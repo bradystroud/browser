@@ -28,6 +28,12 @@ final class TabGroupHeaderView: NSView {
         }
     }
 
+    /// `NSGlassEffectView` on macOS 26+ -- see GlassBackgroundView's own doc
+    /// comment on why this is stored untyped. `nil` pre-26, in which case
+    /// setColorHex(_:) falls back to its original layer.backgroundColor
+    /// tint, unchanged from before this rework.
+    private var glassBackground: NSView?
+
     private let colorDotView = NSView()
     private let nameLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
@@ -50,6 +56,18 @@ final class TabGroupHeaderView: NSView {
         self.groupId = groupId
         super.init(frame: .zero)
         wantsLayer = true
+
+        // Real Liquid Glass material for the header pill (browser-qpy
+        // rework) -- same add-behind pattern as TabButtonView's own glass
+        // background; setColorHex(_:) below rides its tintColor property
+        // instead of the plain layer.backgroundColor tint pre-26 uses.
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.autoresizingMask = [.width, .height]
+            glass.style = .regular
+            addSubview(glass, positioned: .below, relativeTo: nil)
+            glassBackground = glass
+        }
 
         colorDotView.wantsLayer = true
         colorDotView.layer?.cornerRadius = 4
@@ -77,7 +95,11 @@ final class TabGroupHeaderView: NSView {
 
     func setColorHex(_ colorHex: String) {
         let color = NSColor(hex: colorHex) ?? .controlAccentColor
-        layer?.backgroundColor = color.withAlphaComponent(0.18).cgColor
+        if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
+            glass.tintColor = color
+        } else {
+            layer?.backgroundColor = color.withAlphaComponent(0.18).cgColor
+        }
         colorDotView.layer?.backgroundColor = color.cgColor
     }
 
@@ -92,8 +114,14 @@ final class TabGroupHeaderView: NSView {
 
     override func layout() {
         super.layout()
-        // Full pill shape (browser-qpy), matching TabButtonView.
-        layer?.cornerRadius = bounds.height / 2
+        // Full pill shape (browser-qpy), matching TabButtonView -- see that
+        // view's own layout() for why the real glass view masks its own
+        // corners on macOS 26+ instead of this view's layer.
+        if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
+            glass.cornerRadius = bounds.height / 2
+        } else {
+            layer?.cornerRadius = bounds.height / 2
+        }
         let dotSize: CGFloat = 8
         let margin: CGFloat = 8
         let chevronSize: CGFloat = 10
