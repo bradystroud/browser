@@ -4,14 +4,19 @@ import AppKit
 /// which hosts this alongside RoutingRulesPaneController in an NSTabView).
 /// Lists every profile (color swatch + name), with New/Edit/Delete buttons.
 /// "Edit…" reuses NewProfilePrompt's create dialog in edit mode (rename +
-/// recolor via the same palette picker). "Delete" confirms first (warning
-/// that the profile's browsing data is removed), refuses to delete the last
-/// remaining profile, closes any of that profile's open windows, then
-/// deletes both the persisted entry and its on-disk cache directory.
+/// recolor via the same palette picker). The table supports normal macOS
+/// multiple selection (Shift-click for a range, Command-click to toggle).
+/// "Delete" confirms the whole selection first (warning that the profiles'
+/// browsing data is removed), refuses to delete every remaining profile,
+/// closes any of those profiles' open windows, then bulk-deletes both their
+/// persisted entries and on-disk cache directories.
 final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let tableView = NSTableView()
+    private let editButton = NSButton(title: "Edit…", target: nil, action: nil)
+    private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
+    private var selectedProfileIDs: Set<String> = []
     private var profileChangeObserver: NSObjectProtocol?
 
     override init() {
@@ -27,6 +32,11 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
 
     func reload() {
         tableView.reloadData()
+        let profiles = ProfileManager.shared.profiles
+        let selectedIndexes = IndexSet(profiles.indices.filter { selectedProfileIDs.contains(profiles[$0].id) })
+        tableView.selectRowIndexes(selectedIndexes, byExtendingSelection: false)
+        selectedProfileIDs = Set(selectedIndexes.map { profiles[$0].id })
+        updateActionButtons()
     }
 
     // MARK: - View setup
@@ -53,13 +63,15 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(addButton)
 
-        let editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedProfile))
+        editButton.target = self
+        editButton.action = #selector(editSelectedProfile)
         editButton.frame = NSRect(x: margin + 120, y: margin, width: 70, height: buttonRowHeight)
         editButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(editButton)
 
-        let deleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteSelectedProfile))
-        deleteButton.frame = NSRect(x: margin + 194, y: margin, width: 70, height: buttonRowHeight)
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteSelectedProfiles)
+        deleteButton.frame = NSRect(x: margin + 194, y: margin, width: 150, height: buttonRowHeight)
         deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(deleteButton)
 
@@ -88,6 +100,7 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         tableView.addTableColumn(nameColumn)
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.allowsMultipleSelection = true
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(editSelectedProfile)
         tableView.target = self
@@ -104,43 +117,74 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
     }
 
     @objc private func editSelectedProfile() {
-        let index = tableView.selectedRow
+        guard tableView.selectedRowIndexes.count == 1, let index = tableView.selectedRowIndexes.first else { return }
         guard ProfileManager.shared.profiles.indices.contains(index) else { return }
         _ = NewProfilePrompt.run(existingProfile: ProfileManager.shared.profiles[index])
     }
 
-    @objc private func deleteSelectedProfile() {
-        let index = tableView.selectedRow
-        guard ProfileManager.shared.profiles.indices.contains(index) else { return }
-        let profile = ProfileManager.shared.profiles[index]
+    @objc private func deleteSelectedProfiles() {
+        let profiles = ProfileManager.shared.profiles
+        let selectedProfiles = tableView.selectedRowIndexes.compactMap { index in
+            profiles.indices.contains(index) ? profiles[index] : nil
+        }
+        guard !selectedProfiles.isEmpty else { return }
 
-        guard ProfileManager.shared.profiles.count > 1 else {
+        guard selectedProfiles.count < profiles.count else {
             let alert = NSAlert()
-            alert.messageText = "Can't delete the last profile"
-            alert.informativeText = "Browser always needs at least one profile."
+            alert.messageText = profiles.count == 1
+                ? "Can't delete the last profile"
+                : "Can't delete every profile"
+            alert.informativeText = "Browser always needs at least one profile. Deselect one profile and try again."
             alert.runModal()
             return
         }
 
-        let openWindowCount = WindowManager.shared.windowControllers.filter { $0.profile.id == profile.id }.count
+        let selectedIDs = Set(selectedProfiles.map(\.id))
+        let openWindowCount = WindowManager.shared.windowControllers.filter { selectedIDs.contains($0.profile.id) }.count
+        let count = selectedProfiles.count
         let confirm = NSAlert()
-        confirm.messageText = "Delete profile \"\(profile.name)\"?"
-        confirm.informativeText = openWindowCount > 0
-            ? "This permanently deletes this profile's browsing data (cookies, history, cache) and closes its \(openWindowCount) open window\(openWindowCount == 1 ? "" : "s"). This can't be undone."
-            : "This permanently deletes this profile's browsing data (cookies, history, cache). This can't be undone."
-        confirm.addButton(withTitle: "Delete")
+        confirm.messageText = count == 1
+            ? "Delete profile \"\(selectedProfiles[0].name)\"?"
+            : "Delete \(count) profiles?"
+        let dataOwner = count == 1 ? "this profile's" : "these profiles'"
+        let windowOwner = count == 1 ? "its" : "their"
+        let windowClause = openWindowCount > 0
+            ? " and closes \(windowOwner) \(openWindowCount) open window\(openWindowCount == 1 ? "" : "s")"
+            : ""
+        let selectedNames = count > 1
+            ? selectedProfiles.map { "\"\($0.name)\"" }.joined(separator: ", ") + "\n\n"
+            : ""
+        confirm.informativeText = "\(selectedNames)This permanently deletes \(dataOwner) browsing data (cookies, history, cache)\(windowClause). This can't be undone."
+        confirm.addButton(withTitle: count == 1 ? "Delete" : "Delete Profiles")
         confirm.addButton(withTitle: "Cancel")
         confirm.buttons.first?.hasDestructiveAction = true
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
-        WindowManager.shared.closeAllWindows(forProfileId: profile.id)
-        ProfileManager.shared.deleteProfile(id: profile.id)
+        for profile in selectedProfiles {
+            WindowManager.shared.closeAllWindows(forProfileId: profile.id)
+        }
+        ProfileManager.shared.deleteProfiles(ids: selectedIDs)
     }
 
     // MARK: - NSTableViewDataSource / Delegate
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         ProfileManager.shared.profiles.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let profiles = ProfileManager.shared.profiles
+        selectedProfileIDs = Set(tableView.selectedRowIndexes.compactMap { index in
+            profiles.indices.contains(index) ? profiles[index].id : nil
+        })
+        updateActionButtons()
+    }
+
+    private func updateActionButtons() {
+        let selectedCount = tableView.selectedRowIndexes.count
+        editButton.isEnabled = selectedCount == 1
+        deleteButton.isEnabled = selectedCount > 0
+        deleteButton.title = selectedCount > 1 ? "Delete \(selectedCount) Profiles" : "Delete"
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

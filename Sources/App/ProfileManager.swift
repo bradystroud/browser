@@ -118,12 +118,25 @@ final class ProfileManager {
     /// operating against a cache directory that's just been removed.
     @discardableResult
     func deleteProfile(id: String) -> Bool {
-        guard profiles.count > 1, let index = profiles.firstIndex(where: { $0.id == id }) else { return false }
-        let name = profiles[index].name
-        profiles.remove(at: index)
+        deleteProfiles(ids: [id])
+    }
+
+    /// Bulk counterpart to `deleteProfile(id:)`. The profile list is changed
+    /// and persisted once, so observers never see a half-deleted batch.
+    /// Unknown IDs are ignored, but the operation is rejected if it would
+    /// remove every remaining profile.
+    @discardableResult
+    func deleteProfiles(ids: Set<String>) -> Bool {
+        let profilesToDelete = profiles.filter { ids.contains($0.id) }
+        guard !profilesToDelete.isEmpty, profilesToDelete.count < profiles.count else { return false }
+
+        profiles.removeAll { ids.contains($0.id) }
         save()
+
         let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(name))
+        for profile in profilesToDelete {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(profile.name))
+        }
         return true
     }
 }
