@@ -111,6 +111,27 @@ final class MainMenuBuilder {
         // -printPage:/-exportAsPDF: for why (browser-5kq.6).
         menu.addItem(withTitle: "Export as PDF…", action: #selector(BrowserWindow.exportAsPDF(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Print…", action: #selector(BrowserWindow.printPage(_:)), keyEquivalent: "p")
+        menu.addItem(.separator())
+        // Explicit targets (BookmarkImportCoordinator.shared), not the nil-
+        // target/responder-chain pattern most of this menu uses -- import
+        // is a standalone singleton coordinator, like RoutingCoordinator/
+        // ContentBlockerCoordinator, precisely so this doesn't need to add
+        // any surface area to AppDelegate (browser-ymx).
+        let importFileItem = NSMenuItem(
+            title: "Import Bookmarks…",
+            action: #selector(BookmarkImportCoordinator.importFromFile(_:)),
+            keyEquivalent: ""
+        )
+        importFileItem.target = BookmarkImportCoordinator.shared
+        menu.addItem(importFileItem)
+
+        let importSafariItem = NSMenuItem(
+            title: "Import Bookmarks from Safari…",
+            action: #selector(BookmarkImportCoordinator.importFromSafari(_:)),
+            keyEquivalent: ""
+        )
+        importSafariItem.target = BookmarkImportCoordinator.shared
+        menu.addItem(importSafariItem)
         return menu
     }
 
@@ -145,6 +166,9 @@ final class MainMenuBuilder {
         let fontSizeItem = NSMenuItem(title: "Reader Text Size", action: nil, keyEquivalent: "")
         fontSizeItem.submenu = readerFontSizeMenu()
         menu.addItem(fontSizeItem)
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Tab Overview", action: #selector(BrowserWindowController.showTabOverview(_:)), keyEquivalent: "\\")
+            .keyEquivalentModifierMask = [.command, .shift]
         return menu
     }
 

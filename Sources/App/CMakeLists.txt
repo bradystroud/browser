@@ -17,6 +17,8 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWEngineInternal.h
   ../Bridge/BRWBrowser.h
   ../Bridge/BRWBrowser.mm
+  ../Bridge/BRWPageMessageRouter.h
+  ../Bridge/BRWPageMessageRouter.mm
   ../Bridge/BRWContentBlocker.h
   ../Bridge/BRWContentBlocker.mm
   ../Bridge/BRWContentBlockerInternal.h
@@ -80,6 +82,11 @@ set(BROWSER_SWIFT_SRCS
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
   StartPage/StartPageSettingsPaneController.swift
+  Import/BookmarkImportCoordinator.swift
+  TabOverview/TabThumbnailCache.swift
+  TabOverview/TabOverviewCellView.swift
+  TabOverview/TabOverviewView.swift
+  TabOverview/TabOverviewController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -112,6 +119,9 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteError.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/Statement.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteConnection.swift
@@ -147,6 +157,8 @@ set(BROWSER_SRCS
 
 set(BROWSER_HELPER_SRCS
   ../Bridge/process_helper_mac.mm
+  ../Bridge/BRWHelperApp.h
+  ../Bridge/BRWHelperApp.mm
   )
 source_group(Bridge FILES ${BROWSER_HELPER_SRCS})
 
