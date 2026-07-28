@@ -31,6 +31,25 @@ final class ProfileManager {
     private let fileURL: URL
     private(set) var profiles: [Profile] = []
 
+    /// True only while `init` itself is still running (browser-2bj). A
+    /// brand-new profiles directory makes `init` call createProfile() ->
+    /// save() -> post .profileManagerDidChange synchronously, and
+    /// MainMenuBuilder's own observer for that notification touches
+    /// `ProfileManager.shared` again to rebuild the Profiles menu -- while
+    /// `shared`'s lazy `static let` initializer is still on the stack,
+    /// which crashes (libdispatch: "trying to lock recursively"). Existing
+    /// installs never hit this (profiles.json already has an entry, so
+    /// `init` never calls createProfile() at all) -- only a genuinely fresh
+    /// profiles directory (a new user, or any agent's fresh --profiles-root
+    /// test) does, which is why it went unnoticed until now. Suppressing
+    /// the post while this is true isn't losing information: nothing
+    /// observing this notification exists yet in a way that needs it --
+    /// MainMenuBuilder's own initial `build()` call reads
+    /// `ProfileManager.shared.profiles` directly, after `shared` has
+    /// finished constructing, so it already sees the freshly-bootstrapped
+    /// default profile without needing to be told.
+    private var isBootstrapping = true
+
     private init() {
         let dir = URL(fileURLWithPath: CommandLineArgs.sessionAndProfilesMetadataDirectory())
         fileURL = dir.appendingPathComponent("profiles.json")
@@ -38,6 +57,7 @@ final class ProfileManager {
         if profiles.isEmpty {
             _ = createProfile(name: Self.defaultProfileName, colorHex: ProfileColorPalette.hexValues[7])
         }
+        isBootstrapping = false
     }
 
     private func load() {
@@ -52,6 +72,10 @@ final class ProfileManager {
     private func save() {
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         try? data.write(to: fileURL, options: .atomic)
+        // See isBootstrapping's own doc comment (browser-2bj) -- never
+        // skipped outside of init() itself, so every real create/rename/
+        // recolor/delete after launch still notifies exactly as before.
+        guard !isBootstrapping else { return }
         NotificationCenter.default.post(name: .profileManagerDidChange, object: self)
     }
 
