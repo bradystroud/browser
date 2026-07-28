@@ -59,12 +59,33 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let forwardButton = NSButton()
     private let reloadButton = NSButton()
     private let omniboxField = NSTextField()
-    private let profileDotView: ProfileDotView
-    /// A simple "Private" pill next to the profile dot -- the whole visual
-    /// distinction Private Browsing gets for now (browser-12m.1 keeps this
-    /// deliberately minimal; a glass UI overhaul is coming and will restyle
-    /// every piece of chrome here, this pill included). nil (never created)
-    /// for a normal window.
+    /// The omnibox floating pill (browser-qpy): hudWindow material,
+    /// withinWindow blending -- differentiates it from the
+    /// underWindowBackground chrome it floats on top of (see
+    /// chromeBackground). Fixed height, variable width (see
+    /// Self.omniboxPillHeight/omniboxCollapsedWidth and omniboxFrame()).
+    private let omniboxContainerView = GlassBackgroundView(
+        material: .hudWindow, blendingMode: .withinWindow,
+        solidFallbackColor: .controlBackgroundColor,
+        cornerRadius: BrowserWindowController.omniboxPillHeight / 2
+    )
+    /// True while the omnibox field is actually being edited (see
+    /// controlTextDidBeginEditing/controlTextDidEndEditing below) -- expands
+    /// the pill to show the full editable URL; false shows a narrow,
+    /// domain-only pill (see Self.domainOnlyDisplay(for:)).
+    private var isOmniboxFocused = false
+    private static let omniboxPillHeight: CGFloat = 30
+    private static let omniboxCollapsedWidth: CGFloat = 280
+    /// Minimum breathing room between the expanded pill and whatever sits
+    /// on either side of it (back/forward on the left, the private-browsing
+    /// pill if any on the right).
+    private static let omniboxHorizontalMargin: CGFloat = 16
+    /// A simple "Private" pill -- the whole visual distinction Private
+    /// Browsing gets for now (browser-12m.1). nil (never created) for a
+    /// normal window. The profile-dot indicator this used to sit next to
+    /// is gone (browser-qpy point 5: the profile accent is now a glass
+    /// tint, not a solid dot -- see updateChromeTint(for:)), so this is
+    /// now anchored directly off the toolbar's trailing edge instead.
     private let privateLabel: NSTextField?
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
@@ -94,7 +115,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         self.profile = profile
         self.isPrivate = isPrivate
         self.initialURL = initialURL
-        self.profileDotView = ProfileDotView(colorHex: profile.colorHex)
         if isPrivate {
             let label = NSTextField(labelWithString: "Private")
             label.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -310,54 +330,125 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         forwardButton.action = #selector(goForwardAction(_:))
         toolbarView.addSubview(forwardButton)
 
-        reloadButton.frame = NSRect(
-            x: margin + (buttonSize + gap) * 2,
-            y: (toolbarHeight - buttonSize) / 2,
-            width: buttonSize,
-            height: buttonSize
-        )
-        reloadButton.isBordered = false
-        reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
-        reloadButton.contentTintColor = .secondaryLabelColor
-        reloadButton.target = self
-        reloadButton.action = #selector(reloadPage(_:))
-        toolbarView.addSubview(reloadButton)
-
-        let profileDotMargin: CGFloat = 10
-        profileDotView.frame.origin = NSPoint(
-            x: toolbarView.bounds.width - profileDotView.frame.width - profileDotMargin,
-            y: (toolbarHeight - profileDotView.frame.height) / 2
-        )
-        profileDotView.autoresizingMask = [.minXMargin]
-        toolbarView.addSubview(profileDotView)
-
-        // leftOfChrome tracks whichever view is currently the leftmost piece
-        // of trailing toolbar chrome, so the omnibox width calculation below
-        // (and any later addition here) doesn't need special-casing per
-        // view -- it just always measures against the last one placed.
-        var leftOfChrome: NSView = profileDotView
         if let privateLabel {
             let labelSize = CGSize(width: 54, height: 18)
             privateLabel.frame = NSRect(
-                x: profileDotView.frame.minX - gap - labelSize.width,
+                x: toolbarView.bounds.width - margin - labelSize.width,
                 y: (toolbarHeight - labelSize.height) / 2,
                 width: labelSize.width,
                 height: labelSize.height
             )
             privateLabel.autoresizingMask = [.minXMargin]
             toolbarView.addSubview(privateLabel)
-            leftOfChrome = privateLabel
         }
 
-        let omniboxX = margin + (buttonSize + gap) * 3 + gap
-        let omniboxWidth = leftOfChrome.frame.minX - gap * 2 - omniboxX
-        omniboxField.frame = NSRect(x: omniboxX, y: (toolbarHeight - 24) / 2, width: max(0, omniboxWidth), height: 24)
-        omniboxField.autoresizingMask = [.width]
+        // Omnibox pill (browser-qpy): a centered floating capsule, domain-
+        // only when unfocused, expanding to the full editable URL on focus/
+        // ⌘L (see setOmniboxFocused(_:animated:)) -- reload lives inside its
+        // trailing edge, not as a separate toolbar button.
+        omniboxContainerView.layer?.borderWidth = 0.5
+        omniboxContainerView.layer?.borderColor = NSColor.separatorColor.cgColor
+        omniboxContainerView.shadow = NSShadow()
+        omniboxContainerView.layer?.shadowOpacity = 0.15
+        omniboxContainerView.layer?.shadowRadius = 4
+        omniboxContainerView.layer?.shadowOffset = NSSize(width: 0, height: -1)
+        toolbarView.addSubview(omniboxContainerView)
+
+        omniboxField.isBordered = false
+        omniboxField.drawsBackground = false
+        omniboxField.focusRingType = .none
         omniboxField.placeholderString = "Search or enter website name"
         omniboxField.target = self
         omniboxField.action = #selector(omniboxSubmitted)
         omniboxField.delegate = self
-        toolbarView.addSubview(omniboxField)
+        omniboxContainerView.addSubview(omniboxField)
+
+        reloadButton.isBordered = false
+        reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
+        reloadButton.contentTintColor = .secondaryLabelColor
+        reloadButton.target = self
+        reloadButton.action = #selector(reloadPage(_:))
+        omniboxContainerView.addSubview(reloadButton)
+
+        layoutOmniboxContainer()
+    }
+
+    /// The pill's outer frame -- centered in the toolbar, width depending on
+    /// isOmniboxFocused. Called from setUpToolbarContents, windowDidResize,
+    /// and setOmniboxFocused(_:animated:).
+    private func omniboxFrame() -> NSRect {
+        let toolbarHeight = toolbarView.bounds.height
+        let width = isOmniboxFocused ? expandedOmniboxWidth() : Self.omniboxCollapsedWidth
+        let x = (toolbarView.bounds.width - width) / 2
+        return NSRect(x: x, y: (toolbarHeight - Self.omniboxPillHeight) / 2, width: width, height: Self.omniboxPillHeight)
+    }
+
+    /// How wide the expanded pill can get before it would crowd back/forward
+    /// on the left or the private-browsing pill (if any) on the right --
+    /// never narrower than the collapsed width even in a very small window.
+    private func expandedOmniboxWidth() -> CGFloat {
+        let margin: CGFloat = 8
+        let buttonSize: CGFloat = 24
+        let gap: CGFloat = 4
+        let leadingReserved = margin + (buttonSize + gap) * 2 + Self.omniboxHorizontalMargin
+        let trailingReserved = (privateLabel != nil ? 54 + gap : 0) + margin + Self.omniboxHorizontalMargin
+        return max(Self.omniboxCollapsedWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
+    }
+
+    /// Repositions the pill itself (not animated -- see
+    /// setOmniboxFocused(_:animated:), the only place that needs the
+    /// animated variant) and its inner content (the field + trailing reload
+    /// button, which never animate, only snap to their new size).
+    private func layoutOmniboxContainer() {
+        omniboxContainerView.frame = omniboxFrame()
+        layoutOmniboxInnerContent()
+    }
+
+    private func layoutOmniboxInnerContent() {
+        let width = omniboxContainerView.frame.width
+        let reloadSize: CGFloat = 20
+        let innerMargin: CGFloat = 8
+        reloadButton.frame = NSRect(
+            x: width - reloadSize - innerMargin, y: (Self.omniboxPillHeight - reloadSize) / 2,
+            width: reloadSize, height: reloadSize
+        )
+        omniboxField.frame = NSRect(
+            x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2,
+            width: max(0, width - innerMargin * 2 - reloadSize - 4), height: 20
+        )
+    }
+
+    /// Just the host, e.g. "example.com" -- what the pill shows while
+    /// collapsed/unfocused. Falls back to the raw string if it does not
+    /// parse as a URL with a host (e.g. "about:blank", or the empty string
+    /// shown for the internal start page -- see Tab.urlString).
+    private static func domainOnlyDisplay(for urlString: String) -> String {
+        guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else { return urlString }
+        return host
+    }
+
+    /// Expands/collapses the pill and swaps the field's displayed text
+    /// between the full editable URL (focused) and just the domain
+    /// (unfocused) -- called from controlTextDidBeginEditing/
+    /// controlTextDidEndEditing below (so both a click into the field and
+    /// ⌘L's makeFirstResponder call trigger it identically) and from
+    /// commitOmniboxNavigation/Escape's own makeFirstResponder(nil) calls,
+    /// which resign the field the same way.
+    private func setOmniboxFocused(_ focused: Bool, animated: Bool) {
+        guard isOmniboxFocused != focused else { return }
+        isOmniboxFocused = focused
+        if let tab = activeTab {
+            omniboxField.stringValue = focused ? tab.urlString : Self.domainOnlyDisplay(for: tab.urlString)
+        }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                omniboxContainerView.animator().frame = omniboxFrame()
+            }
+        } else {
+            omniboxContainerView.frame = omniboxFrame()
+        }
+        layoutOmniboxInnerContent()
     }
 
     // MARK: - Tabs
@@ -731,8 +822,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func refreshToolbar(for tab: Tab) {
         backButton.isEnabled = tab.canGoBack
         forwardButton.isEnabled = tab.canGoForward
+        // Domain-only while the pill is collapsed/unfocused (browser-qpy);
+        // the full URL only while actually being edited -- see
+        // setOmniboxFocused(_:animated:), which is what actually flips
+        // isOmniboxFocused.
         if omniboxField.currentEditor() == nil {
-            omniboxField.stringValue = tab.urlString
+            omniboxField.stringValue = isOmniboxFocused ? tab.urlString : Self.domainOnlyDisplay(for: tab.urlString)
         }
         updateChromeTint(for: tab)
     }
@@ -1074,6 +1169,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         autocomplete.update(query: omniboxField.stringValue, history: history, below: omniboxField, in: window)
     }
 
+    /// NSTextFieldDelegate -- fires when the field editor actually attaches
+    /// (a click into the field, or ⌘L's makeFirstResponder call in
+    /// focusOmnibox(_:) below) -- expands the omnibox pill (browser-qpy).
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        setOmniboxFocused(true, animated: true)
+    }
+
+    /// NSTextFieldDelegate -- fires when the field editor resigns (Escape's
+    /// or commitOmniboxNavigation's makeFirstResponder(nil) calls, or a
+    /// click elsewhere) -- collapses the pill back to domain-only.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        setOmniboxFocused(false, animated: true)
+    }
+
     // MARK: - Furniture: history / bookmarks / downloads
 
     /// ⌘D -- bookmarks the active tab's current page at the top level. No
@@ -1215,5 +1324,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func windowDidResize(_ notification: Notification) {
         WindowManager.shared.scheduleSessionSave()
+        // The omnibox pill isn't autoresizing-mask-stretched (see
+        // omniboxFrame()'s explicit centered-width calculation, which
+        // depends on the current toolbar width) -- reposition it live as
+        // the window is dragged, same as any other manually-framed chrome
+        // would need to on a resize.
+        layoutOmniboxContainer()
     }
 }
