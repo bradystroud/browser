@@ -9,6 +9,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     TabStripViewDelegate, TabDelegate, NSMenuItemValidation
 {
     let profile: Profile
+
+    /// True for a Private Browsing window (browser-12m.1) -- see WindowManager.
+    /// openNewPrivateWindow(). `profile` above is still a real (if throwaway,
+    /// never-registered-with-ProfileManager) value purely so every existing
+    /// piece of this controller that reads `.name`/`.colorHex` keeps working
+    /// unchanged; every place that must behave differently for a private
+    /// window checks this flag explicitly instead.
+    let isPrivate: Bool
     private(set) var tabs: [Tab] = []
     private(set) var activeTabIndex: Int?
     /// Every tab group in this window, in section order (see the ordering
@@ -30,6 +38,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let reloadButton = NSButton()
     private let omniboxField = NSTextField()
     private let profileDotView: ProfileDotView
+    /// A simple "Private" pill next to the profile dot -- the whole visual
+    /// distinction Private Browsing gets for now (browser-12m.1 keeps this
+    /// deliberately minimal; a glass UI overhaul is coming and will restyle
+    /// every piece of chrome here, this pill included). nil (never created)
+    /// for a normal window.
+    private let privateLabel: NSTextField?
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
@@ -54,10 +68,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         return tabs[index]
     }
 
-    init(profile: Profile, initialURL: String) {
+    init(profile: Profile, initialURL: String, isPrivate: Bool = false) {
         self.profile = profile
+        self.isPrivate = isPrivate
         self.initialURL = initialURL
         self.profileDotView = ProfileDotView(colorHex: profile.colorHex)
+        if isPrivate {
+            let label = NSTextField(labelWithString: "Private")
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
+            label.textColor = .white
+            label.alignment = .center
+            label.wantsLayer = true
+            label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+            label.layer?.cornerRadius = 8
+            self.privateLabel = label
+        } else {
+            self.privateLabel = nil
+        }
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
@@ -65,7 +92,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             backing: .buffered,
             defer: false
         )
-        window.title = "Browser — \(profile.name)"
+        window.title = isPrivate ? "Private Browsing" : "Browser — \(profile.name)"
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -252,8 +279,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         profileDotView.autoresizingMask = [.minXMargin]
         toolbarView.addSubview(profileDotView)
 
+        // leftOfChrome tracks whichever view is currently the leftmost piece
+        // of trailing toolbar chrome, so the omnibox width calculation below
+        // (and any later addition here) doesn't need special-casing per
+        // view -- it just always measures against the last one placed.
+        var leftOfChrome: NSView = profileDotView
+        if let privateLabel {
+            let labelSize = CGSize(width: 54, height: 18)
+            privateLabel.frame = NSRect(
+                x: profileDotView.frame.minX - gap - labelSize.width,
+                y: (toolbarHeight - labelSize.height) / 2,
+                width: labelSize.width,
+                height: labelSize.height
+            )
+            privateLabel.autoresizingMask = [.minXMargin]
+            toolbarView.addSubview(privateLabel)
+            leftOfChrome = privateLabel
+        }
+
         let omniboxX = margin + (buttonSize + gap) * 3 + gap
-        let omniboxWidth = profileDotView.frame.minX - gap * 2 - omniboxX
+        let omniboxWidth = leftOfChrome.frame.minX - gap * 2 - omniboxX
         omniboxField.frame = NSRect(x: omniboxX, y: (toolbarHeight - 24) / 2, width: max(0, omniboxWidth), height: 24)
         omniboxField.autoresizingMask = [.width]
         omniboxField.placeholderString = "Search or enter website name"
@@ -267,7 +312,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     @discardableResult
     func addTab(url: String, makeActive: Bool) -> Tab {
-        let tab = Tab(profileName: profile.name, initialURL: url)
+        let tab = Tab(profileName: profile.name, initialURL: url, isPrivate: isPrivate)
         tab.delegate = self
         tabs.append(tab)
         let newIndex = tabs.count - 1
@@ -647,7 +692,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     private func updateWindowTitle(for tab: Tab) {
-        window?.title = "\(tab.title) — \(profile.name)"
+        window?.title = isPrivate ? "\(tab.title) — Private Browsing" : "\(tab.title) — \(profile.name)"
     }
 
     // MARK: - TabDelegate
@@ -992,8 +1037,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // MARK: - TabDelegate (furniture)
 
     func tab(_ tab: Tab, didCommitNavigationTo url: String) {
-        // No incognito-style contexts exist yet (see AGENTS.md/plan) -- once
-        // one is added, this is where a "don't record" check belongs.
+        // Private Browsing (browser-12m.1): never touches HistoryStore, and
+        // deliberately doesn't even reach WindowManager.scheduleSessionSave --
+        // this window is excluded from every session snapshot outright (see
+        // WindowManager.currentSnapshot()), so there'd be nothing useful for
+        // that save to persist about it anyway.
+        guard !isPrivate else { return }
         let history = ProfileDataStoreManager.shared.stores(for: profile).history
         try? history.recordVisit(url: url, title: tab.title)
         if let appDelegate = NSApp.delegate as? AppDelegate, tab === activeTab {
@@ -1003,10 +1052,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart) {
+        // Private Browsing: the file still lands on disk (macOS gives no way
+        // around that -- the user asked to save/open something real), but
+        // it's never recorded in DownloadStore. See docs/plans's Private
+        // Browsing notes for this being an accepted, documented limitation
+        // shared with every mainstream browser's incognito mode.
+        guard !isPrivate else { return }
         DownloadCoordinator.shared.beginDownload(profile: profile, info: info)
     }
 
     func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate) {
+        guard !isPrivate else { return }
         DownloadCoordinator.shared.updateDownload(profile: profile, info: info)
     }
 
@@ -1015,8 +1071,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// contract. Checks PermissionStore for a remembered per-origin decision
     /// first; only shows the Safari-style prompt popover if none exists yet.
     func tab(_ tab: Tab, didRequestPermission kinds: EnginePermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void) {
-        let store = PermissionStoreManager.shared.store(for: profile)
-        if let remembered = store.decision(for: requestingOrigin, kinds: kinds) {
+        // Private Browsing: no PermissionStore lookup or write at all -- not
+        // just "don't persist this decision" but "don't even remember it for
+        // the rest of this window's life," matching every mainstream
+        // browser's incognito behavior (a site re-prompts every time in a
+        // private window, even within the same window/session).
+        let store = isPrivate ? nil : PermissionStoreManager.shared.store(for: profile)
+        if let store, let remembered = store.decision(for: requestingOrigin, kinds: kinds) {
             decision(remembered)
             return
         }
@@ -1037,7 +1098,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         pendingPermissionRequest = (tab, promptId)
         permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: omniboxField) { [weak self] allow in
             self?.pendingPermissionRequest = nil
-            store.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
             decision(allow)
         }
     }

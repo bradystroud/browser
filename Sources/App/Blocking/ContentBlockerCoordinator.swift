@@ -59,6 +59,15 @@ final class ContentBlockerCoordinator {
                 allowlistedHosts: settings.allowlistedHosts
             )
         }
+        // "private" is the fixed profile_name every private-browsing window's
+        // BRWClientHandler is constructed with (see BRWBrowser.mm's
+        // -initPrivateWithHostView:initialURL:) -- there's no real Profile to
+        // load a BlockingSettings for, but without an entry here
+        // BRWContentBlockerShouldBlock finds no snapshot for that name and
+        // silently never blocks anything for private windows. Always-enabled,
+        // no per-profile allowlist: a private window has no settings UI of
+        // its own to manage one from.
+        bridgeSettings["private"] = BRWProfileBlockingSettings(enabled: true, allowlistedHosts: [])
 
         BRWContentBlocker.update(withBlockedDomains: domains, profileSettings: bridgeSettings)
     }

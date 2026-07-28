@@ -88,6 +88,33 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   return self;
 }
 
+- (instancetype)initPrivateWithHostView:(NSView *)hostView
+                              initialURL:(NSString *)initialURL {
+  self = [super init];
+  if (self) {
+    // "private" is a fixed, non-user-visible profile_name -- it has no
+    // ProfilesRootPath() directory and is never looked up via
+    // BRWGetOrCreateProfileContext, but BRWClientHandler still needs some
+    // string to key its own BlockingSettings snapshot lookup (see
+    // ContentBlockerCoordinator.swift, which publishes a matching "private"
+    // entry so private windows still get content-blocking applied instead of
+    // silently no-oping for lack of a snapshot entry).
+    _handler = new BRWClientHandler(hostView, "private");
+
+    CefWindowInfo window_info;
+    CefRect bounds(0, 0, (int)hostView.bounds.size.width, (int)hostView.bounds.size.height);
+    window_info.SetAsChild((__bridge void *)hostView, bounds);
+    window_info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+
+    CefBrowserSettings browser_settings;
+    CefRefPtr<CefRequestContext> request_context = BRWCreateEphemeralRequestContext();
+
+    CefBrowserHost::CreateBrowser(window_info, _handler, ToStdString(initialURL),
+                                   browser_settings, nullptr, request_context);
+  }
+  return self;
+}
+
 - (void)setDelegate:(id<BRWBrowserDelegate>)delegate {
   if (_handler) {
     _handler->SetDelegate(delegate);

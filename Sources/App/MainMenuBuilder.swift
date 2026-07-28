@@ -93,6 +93,8 @@ final class MainMenuBuilder {
     private func fileMenu() -> NSMenu {
         let menu = NSMenu(title: "File")
         menu.addItem(withTitle: "New Window", action: #selector(AppDelegate.newWindow(_:)), keyEquivalent: "n")
+        menu.addItem(withTitle: "New Private Window", action: #selector(AppDelegate.newPrivateWindow(_:)), keyEquivalent: "n")
+            .keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(withTitle: "New Tab", action: #selector(BrowserWindowController.newTab(_:)), keyEquivalent: "t")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTab(_:)), keyEquivalent: "w")

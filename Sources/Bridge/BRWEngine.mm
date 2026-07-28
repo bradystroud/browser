@@ -92,6 +92,19 @@ CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &pro
   return context;
 }
 
+// Declared in BRWEngineInternal.h -- BRWBrowser.mm is the other caller.
+CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
+  // Default-constructed CefRequestContextSettings leaves cache_path empty --
+  // that's what puts this context in CEF's "incognito mode" (see this
+  // function's own doc comment for the exact header citation). Deliberately
+  // NOT inserted into ProfileContexts(): every other context in that map is
+  // looked up again later by profile name for reuse across browsers of the
+  // same profile, but a private window's context is used exactly once, by
+  // exactly the one CefBrowser it backs.
+  CefRequestContextSettings settings;
+  return CefRequestContext::CreateContext(settings, nullptr);
+}
+
 @implementation BRWEngine
 
 + (BOOL)initializeWithProfilesRootPath:(NSString *)profilesRootPath {

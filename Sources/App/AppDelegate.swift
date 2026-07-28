@@ -138,6 +138,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.openNewWindow(profile: profile)
     }
 
+    /// ⇧⌘N -- Private Browsing (browser-12m.1). Always a fresh, dedicated
+    /// ephemeral window/profile -- unlike newWindow(_:) above, there's no
+    /// "same profile as the key window" concept here, since a private window
+    /// never has a real profile identity at all.
+    @objc func newPrivateWindow(_ sender: Any?) {
+        WindowManager.shared.openNewPrivateWindow()
+    }
+
     @objc func newProfilePrompt(_ sender: Any?) {
         guard let profile = NewProfilePrompt.run() else { return }
         mainMenuBuilder.rebuildProfilesMenu()

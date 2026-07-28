@@ -25,8 +25,8 @@ enum StartPageRenderer {
     /// (none exists yet) and no CEF request interception needed.
     static let settingsFragment = "#browser-settings"
 
-    static func dataURL(profileName: String) -> String {
-        let html = renderHTML(profileName: profileName)
+    static func dataURL(profileName: String, isPrivate: Bool = false) -> String {
+        let html = isPrivate ? renderPrivateHTML() : renderHTML(profileName: profileName)
         let base64 = Data(html.utf8).base64EncodedString()
         return "data:text/html;charset=utf-8;base64,\(base64)"
     }
@@ -62,6 +62,30 @@ enum StartPageRenderer {
         <a class="gear" href="\(settingsFragment)" title="Start page settings">⚙</a>
         <main>
         \(sections)
+        </main>
+        </body>
+        </html>
+        """
+    }
+
+    /// Private Browsing's start page (browser-12m.1): deliberately never
+    /// touches ProfileManager/ProfileDataStoreManager -- there is no real
+    /// profile behind a private tab to look Favorites/Frequently Visited up
+    /// for, and doing so risks accidentally rendering (or, worse, writing
+    /// back to) a real profile's data. Shows a plain "browsing privately"
+    /// notice instead, matching the convention every mainstream browser's
+    /// incognito new-tab page already uses.
+    private static func renderPrivateHTML() -> String {
+        return """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>\(css(gradient: gradientCSS(from: "#3a3a3c")))</style>
+        </head>
+        <body>
+        <main>
+        <p class="empty">You're browsing privately.<br>History, downloads, and site data from this window won't be saved.</p>
         </main>
         </body>
         </html>

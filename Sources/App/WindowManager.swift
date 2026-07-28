@@ -11,10 +11,26 @@ final class WindowManager {
     private init() {}
 
     @discardableResult
-    func openNewWindow(profile: Profile, initialURL: String = "https://example.com") -> BrowserWindowController {
-        let controller = BrowserWindowController(profile: profile, initialURL: initialURL)
+    func openNewWindow(profile: Profile, initialURL: String = "https://example.com", isPrivate: Bool = false) -> BrowserWindowController {
+        let controller = BrowserWindowController(profile: profile, initialURL: initialURL, isPrivate: isPrivate)
         registerAndShow(controller)
         return controller
+    }
+
+    /// ⇧⌘N (browser-12m.1). `profile` is a fresh, throwaway value with its
+    /// own random `id` -- constructed here, never passed to
+    /// ProfileManager.shared.addProfile/saved anywhere, purely so
+    /// BrowserWindowController (which requires a real `Profile`) has
+    /// something to read `.name`/`.colorHex` from. Its `id` still needs to be
+    /// unique per window (not, say, a single shared constant) so
+    /// frontmostWindowController(forProfileId:)/closeAllWindows(forProfileId:)
+    /// -- both keyed by profile id -- can't accidentally conflate two
+    /// simultaneously open private windows, or a private window with a real
+    /// profile, as the same target.
+    @discardableResult
+    func openNewPrivateWindow() -> BrowserWindowController {
+        let profile = Profile(id: "private-\(UUID().uuidString)", name: "Private", colorHex: "#3a3a3c")
+        return openNewWindow(profile: profile, initialURL: "about:blank", isPrivate: true)
     }
 
     /// Shared by openNewWindow and restoreSession: registers the controller,
@@ -116,6 +132,10 @@ final class WindowManager {
     /// empty, unrestorable entry.
     private func currentSnapshot() -> SessionSnapshot {
         let windows: [SessionSnapshot.Window] = windowControllers.compactMap { controller in
+            // Private Browsing (browser-12m.1): never persisted, so there's
+            // nothing to restore on next launch either -- consistent with
+            // "closing a private window discards everything."
+            guard !controller.isPrivate else { return nil }
             let tabs = controller.tabs.map {
                 SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
             }
