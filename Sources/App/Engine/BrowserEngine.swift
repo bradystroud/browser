@@ -58,6 +58,13 @@ protocol EngineTabDelegate: AnyObject {
     /// respondToPageMessage(requestId:success:response:) below exactly once
     /// or the page's promise never resolves.
     func engineTabDidReceivePageMessage(_ request: String, requestId: Int64)
+
+    /// Fires once per top-level navigation at "document-start" timing --
+    /// see BRWBrowser.h's -browserDidStartMainFrameLoad for the exact CEF
+    /// guarantee (after commit, before the new document's own scripts run).
+    /// The right moment to executeJavaScript(_:) a script that needs to run
+    /// before the page's own code does.
+    func engineTabDidStartMainFrameLoad()
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -135,6 +142,14 @@ protocol BrowserEngine {
     static func initialize(profilesRootPath: String) -> Bool
 
     static func createTab(profileName: String, hostView: NSView, initialURL: String) -> EngineTab
+
+    /// Creates a tab for a Private Browsing window (browser-12m.1): backed by
+    /// an engine context with no persisted profile identity at all -- not
+    /// just an empty/throwaway `profileName`, an actually distinct in-memory
+    /// context per call, so no two private tabs (even in the same window)
+    /// share cookies/storage with each other or with any real profile. See
+    /// the CEF adapter for exactly what "in-memory" means for CEF.
+    static func createPrivateTab(hostView: NSView, initialURL: String) -> EngineTab
 
     /// Registers the block the app uses to close every window it owns as
     /// part of quitting -- see the CEF adapter for why this ordering matters

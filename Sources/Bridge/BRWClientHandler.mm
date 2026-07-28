@@ -135,6 +135,21 @@ void BRWClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void BRWClientHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
+                                     CefRefPtr<CefFrame> frame,
+                                     TransitionType transition_type) {
+  // Only the main frame's document-start matters for page-level feature
+  // scripts (password-form detection today) -- an iframe's own scripts
+  // aren't where a site's login form normally lives, and injecting there
+  // too would just multiply cefQuery traffic for no benefit in v1.
+  if (!frame->IsMain()) {
+    return;
+  }
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidStartMainFrameLoad)]) {
+    [delegate_ browserDidStartMainFrameLoad];
+  }
+}
+
 void BRWClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,
                                   int httpStatusCode) {

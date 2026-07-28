@@ -80,6 +80,16 @@ class BRWClientHandler : public CefClient,
                              bool isLoading,
                              bool canGoBack,
                              bool canGoForward) override;
+  // Fires "after a navigation has been committed and before the browser
+  // begins loading contents in the frame" (CEF's own doc comment) -- i.e.
+  // before the new document's own scripts run. This is the "document-start"
+  // hook browser-ojh.1's password-form-detection script needs (via
+  // -browserDidStartMainFrameLoad on the delegate), not OnLoadingStateChange
+  // above, which fires browser-wide rather than per-frame and doesn't
+  // guarantee the new frame/document already exists.
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                    CefRefPtr<CefFrame> frame,
+                    TransitionType transition_type) override;
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                  CefRefPtr<CefFrame> frame,
                  int httpStatusCode) override;

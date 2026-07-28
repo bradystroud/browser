@@ -51,6 +51,16 @@ final class Tab: NSObject, EngineTabDelegate {
     let profileName: String
     let hostView = NSView()
 
+    /// True for a Private Browsing tab (browser-12m.1). `profileName` above
+    /// is still set (to whatever throwaway profile the owning window uses
+    /// cosmetically -- see WindowManager.openNewPrivateWindow) but is never
+    /// used to look up or create a real engine-side profile context for this
+    /// tab; see createBrowserIfNeeded(). BrowserWindowController reads this
+    /// to suppress history/download/permission persistence and the "Private"
+    /// label; WindowManager reads it to exclude the tab's window from session
+    /// save/restore.
+    let isPrivate: Bool
+
     private(set) var browser: EngineTab?
     private(set) var title: String
 
@@ -139,9 +149,10 @@ final class Tab: NSObject, EngineTabDelegate {
     /// letting the engine actually try to navigate to them.
     private static let blankPageSentinel = "about:blank"
 
-    init(profileName: String, initialURL: String) {
+    init(profileName: String, initialURL: String, isPrivate: Bool = false) {
         self.profileName = profileName
-        let resolved = Self.resolveInitialLoad(initialURL, profileName: profileName)
+        self.isPrivate = isPrivate
+        let resolved = Self.resolveInitialLoad(initialURL, profileName: profileName, isPrivate: isPrivate)
         self.isShowingStartPage = resolved.isStartPage
         self.engineURLString = resolved.url
         self.title = resolved.isStartPage ? "New Tab" : initialURL
@@ -149,24 +160,31 @@ final class Tab: NSObject, EngineTabDelegate {
         hostView.wantsLayer = true
     }
 
-    private static func resolveInitialLoad(_ requestedURL: String, profileName: String) -> (url: String, isStartPage: Bool) {
+    private static func resolveInitialLoad(_ requestedURL: String, profileName: String, isPrivate: Bool) -> (url: String, isStartPage: Bool) {
         guard requestedURL == blankPageSentinel || requestedURL.isEmpty else {
             return (requestedURL, false)
         }
-        return (StartPageRenderer.dataURL(profileName: profileName), true)
+        return (StartPageRenderer.dataURL(profileName: profileName, isPrivate: isPrivate), true)
     }
 
     /// Must be called only once `hostView` is attached to a window with a
     /// real frame (CEF's SetAsChild needs real bounds at creation time).
     func createBrowserIfNeeded() {
         guard browser == nil else { return }
-        let browser = ActiveEngine.createTab(profileName: profileName, hostView: hostView, initialURL: engineURLString)
+        // A private tab never goes through ActiveEngine.createTab(profileName:...)
+        // -- that path always resolves to a persisted-cache_path context (see
+        // BRWGetOrCreateProfileContext), even for a made-up profile name.
+        // createPrivateTab is the only path that gets CEF's actual empty-
+        // cache_path incognito context (browser-12m.1).
+        let browser = isPrivate
+            ? ActiveEngine.createPrivateTab(hostView: hostView, initialURL: engineURLString)
+            : ActiveEngine.createTab(profileName: profileName, hostView: hostView, initialURL: engineURLString)
         browser.delegate = self
         self.browser = browser
     }
 
     func load(url: String) {
-        let resolved = Self.resolveInitialLoad(url, profileName: profileName)
+        let resolved = Self.resolveInitialLoad(url, profileName: profileName, isPrivate: isPrivate)
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
         if browser == nil {
@@ -309,6 +327,23 @@ final class Tab: NSObject, EngineTabDelegate {
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
         delegate?.tabDidChangeDisplayState(self)
+    }
+
+    /// Document-start hook (browser-ojh.1) -- injects the password-form
+    /// watcher on every top-level navigation, unconditionally, regardless of
+    /// whether this tab is currently visible/active. Deliberately not gated
+    /// behind any per-window controller: a background tab's form can still
+    /// be submitted (e.g. after a redirect finishes while another tab has
+    /// focus), and missing that would silently drop a save-password
+    /// opportunity. The script itself is a no-op past its first run per
+    /// document (see PasswordDetectionScript's own guard) and reports
+    /// through the generic page-message channel (onPageMessage below),
+    /// which whichever PasswordManagerController is currently watching this
+    /// tab picks up -- see that class's own doc comment for why *that* part,
+    /// unlike injection, does need to be window-scoped.
+    func engineTabDidStartMainFrameLoad() {
+        guard !isShowingStartPage else { return }
+        executeJavaScript(PasswordDetectionScript.source)
     }
 
     func engineTabDidCommitNavigation(_ url: String) {

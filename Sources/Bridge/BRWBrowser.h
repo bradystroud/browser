@@ -108,6 +108,16 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// navigates away, either of which cancels it from CEF's side with no
 /// notification back to this delegate).
 - (void)browserDidReceivePageMessage:(NSString *)request requestId:(int64_t)requestId;
+
+/// Fires once per top-level (main-frame) navigation, after it has committed
+/// but before the new document starts loading/running its own scripts --
+/// i.e. "document-start" timing (see BRWClientHandler.mm's OnLoadStart for
+/// CEF's exact guarantee). The right moment for a delegate to inject a
+/// script via -executeJavaScript: that needs to run before the page's own
+/// code does (browser-ojh.1's password-form-detection script is the first
+/// user). Not fired for same-document navigations (fragments, history
+/// state) or sub-frame loads.
+- (void)browserDidStartMainFrameLoad;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -118,6 +128,18 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 - (instancetype)initWithProfileName:(NSString *)profileName
                              hostView:(NSView *)hostView
                            initialURL:(NSString *)initialURL NS_DESIGNATED_INITIALIZER;
+
+/// Private Browsing (browser-12m.1): backed by a brand-new CefRequestContext
+/// with an empty cache_path (CEF's documented incognito mode -- see
+/// BRWCreateEphemeralRequestContext's doc comment in BRWEngineInternal.h),
+/// used by exactly this one browser and discarded when it closes. Distinct
+/// from -initWithProfileName:hostView:initialURL: in that there is no real
+/// profile identity behind it at all -- it isn't `profileName`-scoped and
+/// isn't reused across windows, so two private windows never share cookies
+/// or storage with each other any more than they share them with a real
+/// profile.
+- (instancetype)initPrivateWithHostView:(NSView *)hostView
+                              initialURL:(NSString *)initialURL NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (nonatomic, weak, nullable) id<BRWBrowserDelegate> delegate;

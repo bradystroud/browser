@@ -31,6 +31,10 @@ enum CEFEngine: BrowserEngine {
         CEFTab(profileName: profileName, hostView: hostView, initialURL: initialURL)
     }
 
+    static func createPrivateTab(hostView: NSView, initialURL: String) -> EngineTab {
+        CEFTab(privateHostView: hostView, initialURL: initialURL)
+    }
+
     static func setWindowCloseHandler(_ handler: @escaping () -> Void) {
         BRWEngine.setWindowCloseHandler(handler)
     }
@@ -50,6 +54,15 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     init(profileName: String, hostView: NSView, initialURL: String) {
         browser = BRWBrowser(profileName: profileName, hostView: hostView, initialURL: initialURL)
+        super.init()
+        browser.delegate = self
+    }
+
+    /// Private Browsing (browser-12m.1) -- see BRWBrowser.h's
+    /// -initPrivateWithHostView:initialURL: for what makes this different
+    /// from the designated initializer above.
+    init(privateHostView hostView: NSView, initialURL: String) {
+        browser = BRWBrowser(privateWithHostView: hostView, initialURL: initialURL)
         super.init()
         browser.delegate = self
     }
@@ -133,6 +146,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidReceivePageMessage(_ request: String, requestId: Int64) {
         delegate?.engineTabDidReceivePageMessage(request, requestId: requestId)
+    }
+
+    func browserDidStartMainFrameLoad() {
+        delegate?.engineTabDidStartMainFrameLoad()
     }
 }
 

@@ -22,6 +22,10 @@ final class BrowserWindow: NSWindow {
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         readerMode.attach(to: self)
+        // Idempotent -- see PasswordManagerCoordinator.activate()'s own doc
+        // comment for why it's kicked off here rather than in AppDelegate or
+        // BrowserWindowController (browser-ojh.1).
+        PasswordManagerCoordinator.shared.activate()
     }
 
     required init?(coder: NSCoder) {
