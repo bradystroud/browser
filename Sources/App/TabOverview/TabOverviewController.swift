@@ -32,7 +32,11 @@ final class TabOverviewController {
         // "Collapsed-group tabs appear in the grid (overview reveals
         // everything)" -- every tab in windowController.tabs, not filtered
         // by visibleTabIndices the way strip cycling is.
-        let tabs = windowController.tabs.map { (id: $0.id, title: $0.title, favicon: $0.faviconImage) }
+        // cpuUsagePercent is read once here, matching this view's existing
+        // "built once when shown; no live updates" design (see
+        // TabOverviewView's own doc comment) -- not a live-refreshing
+        // monitor, just a subtle snapshot indicator (browser-7jz.4).
+        let tabs = windowController.tabs.map { (id: $0.id, title: $0.title, favicon: $0.faviconImage, cpuUsagePercent: $0.cpuUsagePercent()) }
         view.configure(
             tabs: tabs,
             selectedTabId: windowController.activeTab?.id,

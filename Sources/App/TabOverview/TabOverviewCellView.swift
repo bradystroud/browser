@@ -12,6 +12,13 @@ final class TabOverviewCellView: NSView {
 
     private static let genericFavicon = NSImage(systemSymbolName: "globe", accessibilityDescription: "Website")
 
+    /// Only tabs genuinely busy enough to matter get the badge -- Safari's
+    /// own "Energy Impact"-style indicators are reserved for real outliers,
+    /// not shown on every tab, so a plain "using >1 core's worth" threshold
+    /// (browser-7jz.4) keeps this "subtle" rather than noisy on an
+    /// ordinary, mostly-idle page.
+    private static let highUsageThreshold = 100.0
+
     private let thumbnailView = NSImageView()
     private let placeholderFaviconView = NSImageView()
     private let stripFaviconView = NSImageView()
@@ -24,6 +31,17 @@ final class TabOverviewCellView: NSView {
         return label
     }()
 
+    /// A small "gauge.with.dots.needle.67percent" badge (browser-7jz.4),
+    /// shown only when cpuUsagePercent is above highUsageThreshold -- CEF's
+    /// real CefTaskManager-backed per-tab CPU stat (see BRWBrowser.h's
+    /// -cpuUsagePercent), not a placeholder/guess.
+    private let energyBadgeView: NSImageView = {
+        let view = NSImageView(image: NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: "High CPU usage") ?? NSImage())
+        view.contentTintColor = .systemOrange
+        view.isHidden = true
+        return view
+    }()
+
     private var isSelected = false {
         didSet {
             guard oldValue != isSelected else { return }
@@ -31,7 +49,7 @@ final class TabOverviewCellView: NSView {
         }
     }
 
-    init(tabId: UUID, title: String, favicon: NSImage?, thumbnail: NSImage?) {
+    init(tabId: UUID, title: String, favicon: NSImage?, thumbnail: NSImage?, cpuUsagePercent: Double) {
         self.tabId = tabId
         super.init(frame: .zero)
         wantsLayer = true
@@ -55,6 +73,12 @@ final class TabOverviewCellView: NSView {
 
         titleLabel.stringValue = title
         addSubview(titleLabel)
+
+        if cpuUsagePercent > Self.highUsageThreshold {
+            energyBadgeView.isHidden = false
+            energyBadgeView.toolTip = String(format: "Using %.0f%% CPU", cpuUsagePercent)
+        }
+        addSubview(energyBadgeView)
 
         setThumbnail(thumbnail)
     }
@@ -82,6 +106,9 @@ final class TabOverviewCellView: NSView {
         let faviconSize: CGFloat = 14
 
         titleLabel.frame = NSRect(x: margin, y: margin, width: max(0, bounds.width - margin * 2), height: titleHeight)
+
+        let badgeSize: CGFloat = 16
+        energyBadgeView.frame = NSRect(x: bounds.width - margin - badgeSize, y: bounds.height - margin - badgeSize, width: badgeSize, height: badgeSize)
 
         if !thumbnailView.isHidden {
             stripFaviconView.frame = NSRect(

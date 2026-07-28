@@ -84,6 +84,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         browser.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile)
     }
     func clearResponsiveDesignMode() { browser.clearResponsiveDesignMode() }
+    func cpuUsagePercent() -> Double { browser.cpuUsagePercent() }
     func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
     func isAudioMuted() -> Bool { browser.isAudioMuted() }
     func print() { browser.print() }

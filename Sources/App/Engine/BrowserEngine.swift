@@ -93,6 +93,11 @@ protocol EngineTab: AnyObject {
     /// call even if none is currently active.
     func clearResponsiveDesignMode()
 
+    /// This tab's current CPU usage as a percentage of one core
+    /// (browser-7jz.4) -- see BRWBrowser.h's -cpuUsagePercent for the real
+    /// CefTaskManager-backed mechanism and why 0 is the safe default.
+    func cpuUsagePercent() -> Double
+
     /// Mutes/unmutes this tab's audio output (browser-rhi.4) -- see
     /// BRWBrowser.h's -setAudioMuted: for why this is a real, direct CEF
     /// call rather than a JS workaround.

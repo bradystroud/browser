@@ -5,6 +5,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_string_visitor.h"
+#include "include/cef_task_manager.h"
 #include "include/cef_values.h"
 
 #import "BRWClientHandler.h"
@@ -204,6 +205,27 @@ class PdfPrintCallback : public CefPdfPrintCallback {
     return;
   }
   _handler->GetBrowser()->GetHost()->ExecuteDevToolsMethod(0, "Emulation.clearDeviceMetricsOverride", nullptr);
+}
+
+- (double)cpuUsagePercent {
+  if (!_handler || !_handler->GetBrowser()) {
+    return 0.0;
+  }
+  CefRefPtr<CefTaskManager> task_manager = CefTaskManager::GetTaskManager();
+  if (!task_manager) {
+    // nullptr means this was called from the wrong thread -- see this
+    // method's own doc comment.
+    return 0.0;
+  }
+  int64_t task_id = task_manager->GetTaskIdForBrowserId(_handler->GetBrowser()->GetIdentifier());
+  if (task_id == -1) {
+    return 0.0;
+  }
+  CefTaskInfo info;
+  if (!task_manager->GetTaskInfo(task_id, info)) {
+    return 0.0;
+  }
+  return info.cpu_usage;
 }
 
 - (void)setAudioMuted:(BOOL)muted {

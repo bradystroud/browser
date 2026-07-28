@@ -183,6 +183,17 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// safe to call even if none is currently active.
 - (void)clearResponsiveDesignMode;
 
+/// This tab's current CPU usage, as a percentage of one core (0-100 per
+/// core, so a value above 100 means more than one core's worth of work --
+/// see CefTaskInfo's own doc comment in cef_types.h) -- backed by CEF's
+/// real CefTaskManager (browser-7jz.4), the same per-process stats engine
+/// behind Chromium's own Task Manager (Shift+Esc in real Chrome). Returns
+/// 0 if no task is currently tracked for this browser (e.g. its renderer
+/// process hasn't finished starting yet) or if this method is called from
+/// any thread other than the UI thread -- CefTaskManager's own methods are
+/// documented UI-thread-only.
+- (double)cpuUsagePercent;
+
 /// Mutes/unmutes this tab's audio output (browser-rhi.4) -- wraps CEF's own
 /// CefBrowserHost::SetAudioMuted, a real one-call mute confirmed present in
 /// this project's pinned CEF 150.0.14 headers (cef_browser.h), contrary to

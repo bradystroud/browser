@@ -43,7 +43,7 @@ final class TabOverviewView: NSView {
     /// `faviconProvider` are pulled once, up front, per this doc comment's
     /// "no live updates" note.
     func configure(
-        tabs: [(id: UUID, title: String, favicon: NSImage?)],
+        tabs: [(id: UUID, title: String, favicon: NSImage?, cpuUsagePercent: Double)],
         selectedTabId: UUID?,
         thumbnailProvider: (UUID) -> NSImage?,
         onSelect: @escaping (UUID) -> Void,
@@ -54,7 +54,7 @@ final class TabOverviewView: NSView {
         cells = tabs.map { tab in
             let cell = TabOverviewCellView(
                 tabId: tab.id, title: tab.title, favicon: tab.favicon,
-                thumbnail: thumbnailProvider(tab.id))
+                thumbnail: thumbnailProvider(tab.id), cpuUsagePercent: tab.cpuUsagePercent)
             cell.setHighlighted(tab.id == selectedTabId)
             cell.onSelect = { onSelect(tab.id) }
             addSubview(cell)

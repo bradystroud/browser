@@ -250,6 +250,13 @@ final class Tab: NSObject, EngineTabDelegate {
         browser?.clearResponsiveDesignMode()
     }
 
+    /// This tab's current CPU usage as a percentage of one core
+    /// (browser-7jz.4) -- 0 if there's no engine-side browser yet (matches
+    /// EngineTab.cpuUsagePercent()'s own safe-default contract).
+    func cpuUsagePercent() -> Double {
+        browser?.cpuUsagePercent() ?? 0
+    }
+
     func print() { browser?.print() }
 
     /// Exports the current page to a PDF at `path` -- see
