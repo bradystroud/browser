@@ -166,12 +166,31 @@ set(BROWSER_BLOCKLIST_CORE_SRCS
   )
 source_group(BlockListCore FILES ${BROWSER_BLOCKLIST_CORE_SRCS})
 
+# AutofillCore's card/address heuristic classifier + Keychain/JSON stores
+# (../../Packages/AutofillCore/Sources/AutofillCore) are pure Swift/
+# Foundation/Security with no AppKit dependency, so they're also packaged
+# standalone as Packages/AutofillCore/ at the repo root for a fast, isolated
+# `swift test` (browser-ojh.2) -- including real Keychain/filesystem
+# round-trip tests, not just pure-function ones (see that package's own
+# README/doc comments). Same reasoning as BROWSER_ROUTING_CORE_SRCS/
+# BROWSER_BROWSER_CORE_SRCS/BROWSER_BLOCKLIST_CORE_SRCS above: rather than
+# linking that package from this Xcode-generator CMake target, these same
+# source files are compiled directly into the Browser executable here too --
+# one copy of the logic, two ways to build it.
+set(BROWSER_AUTOFILL_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/AutofillCore/Sources/AutofillCore/FieldClassifier.swift
+  ${CMAKE_SOURCE_DIR}/Packages/AutofillCore/Sources/AutofillCore/CardStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/AutofillCore/Sources/AutofillCore/AddressStore.swift
+  )
+source_group(AutofillCore FILES ${BROWSER_AUTOFILL_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
   ${BROWSER_ROUTING_CORE_SRCS}
   ${BROWSER_BLOCKLIST_CORE_SRCS}
   ${BROWSER_BROWSER_CORE_SRCS}
+  ${BROWSER_AUTOFILL_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
