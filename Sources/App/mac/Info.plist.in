@@ -57,5 +57,7 @@
 	<string>Websites you visit can request microphone access.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Websites you visit can request your location.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Used to fill your saved contact info into address forms when you choose "Fill from Contacts".</string>
 </dict>
 </plist>

@@ -92,6 +92,7 @@ set(BROWSER_SWIFT_SRCS
   Autofill/AddressFormSheetController.swift
   Autofill/AddressesPaneController.swift
   Autofill/AutofillPaneController.swift
+  Autofill/ContactsAutofillSource.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift

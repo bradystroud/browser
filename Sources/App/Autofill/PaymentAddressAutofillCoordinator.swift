@@ -300,9 +300,77 @@ final class PaymentAddressAutofillCoordinator: NSObject {
                 item.representedObject = (tab, address.id)
                 menu.addItem(item)
             }
+            // Always offered for an address-group field, even with zero
+            // saved addresses (browser-ojh.3) -- Contacts.app is a second,
+            // independent fill source, not conditional on having already
+            // saved something through this app first.
+            if !menu.items.isEmpty {
+                menu.addItem(.separator())
+            }
+            let contactsItem = NSMenuItem(title: "Fill from Contacts…", action: #selector(fillFromContactsTapped(_:)), keyEquivalent: "")
+            contactsItem.target = self
+            contactsItem.representedObject = (tab, sender)
+            menu.addItem(contactsItem)
         }
         guard menu.items.count > 0 else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.midX, y: 0), in: sender)
+    }
+
+    /// Requests Contacts access (if not already determined), then shows a
+    /// second menu listing the user's own contacts -- picking one fills the
+    /// same recognized address form via AutofillFillScript.
+    /// fillAddressScript, exactly like a saved address does. Never prompts
+    /// for Contacts access a second time after a denial (see
+    /// ContactsAutofillSource.requestAccessIfNeeded's own doc comment) --
+    /// shows a one-time explanatory alert pointing at System Settings
+    /// instead.
+    @objc private func fillFromContactsTapped(_ sender: NSMenuItem) {
+        guard let (tab, button) = sender.representedObject as? (Tab, NSButton) else { return }
+        ContactsAutofillSource.requestAccessIfNeeded { [weak self] granted in
+            guard let self else { return }
+            guard granted else {
+                self.showContactsAccessDeniedAlert()
+                return
+            }
+            self.showContactsPicker(for: tab, anchoredTo: button)
+        }
+    }
+
+    private func showContactsAccessDeniedAlert() {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Contacts Access Needed"
+        alert.informativeText = "To fill from Contacts, allow access in System Settings > Privacy & Security > Contacts."
+        alert.runModal()
+    }
+
+    private func showContactsPicker(for tab: Tab, anchoredTo button: NSButton) {
+        let candidates = ContactsAutofillSource.fetchCandidates()
+        guard !candidates.isEmpty else {
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "No Contacts Found"
+            alert.informativeText = "No contacts with a name, address, phone, or email were found."
+            alert.runModal()
+            return
+        }
+        let menu = NSMenu()
+        for candidate in candidates {
+            let item = NSMenuItem(title: candidate.displayName, action: #selector(fillFromContact(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = (tab, candidate)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.midX, y: 0), in: button)
+    }
+
+    @objc private func fillFromContact(_ sender: NSMenuItem) {
+        guard let (tab, candidate) = sender.representedObject as? (Tab, ContactFillCandidate) else { return }
+        tab.executeJavaScript(AutofillFillScript.fillAddressScript(
+            fullName: candidate.fullName, streetAddress: candidate.streetAddress, addressLine2: candidate.addressLine2,
+            city: candidate.city, state: candidate.state, postalCode: candidate.postalCode, country: candidate.country,
+            phone: candidate.phone, email: candidate.email
+        ))
     }
 
     @objc private func fillCard(_ sender: NSMenuItem) {
