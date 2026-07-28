@@ -33,6 +33,7 @@ set(BROWSER_SWIFT_SRCS
   BrowserWindowController.swift
   ColorSwatchPicker.swift
   CommandLineArgs.swift
+  GlassBackgroundView.swift
   MainMenuBuilder.swift
   NewProfilePrompt.swift
   NSColor+Hex.swift
@@ -72,6 +73,7 @@ set(BROWSER_SWIFT_SRCS
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
+  Passwords/AutofillScript.swift
   Passwords/PasswordStore.swift
   Passwords/PasswordNeverStore.swift
   Passwords/SavePasswordPromptController.swift
