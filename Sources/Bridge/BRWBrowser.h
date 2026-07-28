@@ -93,6 +93,21 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 - (void)browserDidUpdateFindResultWithMatchCount:(int)matchCount
                               activeMatchOrdinal:(int)activeMatchOrdinal
                                      finalUpdate:(BOOL)isFinalUpdate;
+
+/// A page called `window.cefQuery({request: ...})` via the generic JS<->
+/// native message channel (browser-ojh.1's BRWPageMessageRouter). `request`
+/// is exactly the string the page passed as `request` -- this bridge does
+/// not interpret it; feature code on the Swift side (e.g. the password
+/// manager's form-detection script) defines and parses its own payload
+/// shape, typically JSON with a "type" field so unrelated features sharing
+/// this one channel can tell their own messages apart. Answer at most once,
+/// on the main thread, by calling -respondToPageMessageWithId:success:
+/// response: with the same `requestId` -- that resolves the page's
+/// `onSuccess`/`onFailure` callback. Not answering leaves the page's promise
+/// pending forever (until the page itself calls `cefQueryCancel` or
+/// navigates away, either of which cancels it from CEF's side with no
+/// notification back to this delegate).
+- (void)browserDidReceivePageMessage:(NSString *)request requestId:(int64_t)requestId;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -172,6 +187,15 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// alternative to a full CefMessageRouter round-trip for a single boolean
 /// signal -- see docs/ai-tasks/reader-mode-notes.md.
 - (void)getPageSourceWithCompletion:(void (^)(NSString *_Nullable source))completion;
+
+/// Answers a page message previously delivered via
+/// -browserDidReceivePageMessage:requestId: on this browser's delegate (or
+/// any other browser's -- `requestId` is globally unique across the whole
+/// process, not just this tab, since it's CEF's own query id). `response`
+/// becomes the string the page's `onSuccess`/`onFailure` callback receives.
+/// A no-op if `requestId` is no longer pending (e.g. the page already
+/// navigated away and CEF canceled the query on its own).
+- (void)respondToPageMessageWithId:(int64_t)requestId success:(BOOL)success response:(NSString *)response;
 
 @end
 

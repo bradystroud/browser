@@ -77,6 +77,9 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func getPageSource(completion: @escaping (String?) -> Void) {
         browser.getPageSource(completion: completion)
     }
+    func respondToPageMessage(requestId: Int64, success: Bool, response: String) {
+        browser.respondToPageMessage(withId: requestId, success: success, response: response)
+    }
 
     // MARK: - BRWBrowserDelegate -> EngineTabDelegate
 
@@ -126,6 +129,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func browserDidUpdateFindResult(withMatchCount matchCount: Int32, activeMatchOrdinal: Int32, finalUpdate isFinalUpdate: Bool) {
         delegate?.engineTabDidUpdateFindResult(
             matchCount: Int(matchCount), activeMatchOrdinal: Int(activeMatchOrdinal), isFinalUpdate: isFinalUpdate)
+    }
+
+    func browserDidReceivePageMessage(_ request: String, requestId: Int64) {
+        delegate?.engineTabDidReceivePageMessage(request, requestId: requestId)
     }
 }
 

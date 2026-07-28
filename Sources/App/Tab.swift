@@ -218,6 +218,14 @@ final class Tab: NSObject, EngineTabDelegate {
         browser.getPageSource(completion: completion)
     }
 
+    /// Answers a page message previously delivered via onPageMessage below --
+    /// see EngineTab.respondToPageMessage for the exact contract (in
+    /// particular, `requestId` is global across every tab, so this can be
+    /// called on any live Tab, not just the one that received the message).
+    func respondToPageMessage(requestId: Int64, success: Bool, response: String) {
+        browser?.respondToPageMessage(requestId: requestId, success: success, response: response)
+    }
+
     /// Set by FindBarController while it's attached to this tab and the find
     /// bar is showing, to receive live match-count updates -- deliberately a
     /// plain closure property rather than a new TabDelegate method: TabDelegate
@@ -229,6 +237,23 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func engineTabDidUpdateFindResult(matchCount: Int, activeMatchOrdinal: Int, isFinalUpdate: Bool) {
         onFindResult?(matchCount, activeMatchOrdinal, isFinalUpdate)
+    }
+
+    /// Set by whichever feature controller wants this tab's raw page
+    /// messages (browser-ojh.1's password-manager form-detection script is
+    /// the first user) -- a plain closure property for the same reason as
+    /// onFindResult just above: TabDelegate is implemented by the hot
+    /// BrowserWindowController, and this generic channel's messages are a
+    /// feature controller's concern, not the window controller's. `request`
+    /// is an opaque string the page passed to `window.cefQuery` -- callers
+    /// parse their own payload shape out of it (see BRWBrowser.h's
+    /// -browserDidReceivePageMessage:requestId: for the full contract,
+    /// including that not calling respondToPageMessage(requestId:...)
+    /// exactly once leaves the page's promise pending forever).
+    var onPageMessage: ((_ request: String, _ requestId: Int64) -> Void)?
+
+    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64) {
+        onPageMessage?(request, requestId)
     }
 
     /// Seeds a restored tab's display title immediately at launch, before

@@ -10,6 +10,8 @@
 #include "include/cef_sandbox_mac.h"
 #endif
 
+#import "BRWHelperApp.h"
+
 int main(int argc, char *argv[]) {
 #if defined(CEF_USE_SANDBOX)
   CefScopedSandboxContext sandbox_context;
@@ -26,5 +28,11 @@ int main(int argc, char *argv[]) {
   }
 
   CefMainArgs main_args(argc, argv);
-  return CefExecuteProcess(main_args, nullptr, nullptr);
+  // A real CefApp (rather than nullptr) is required in this process so its
+  // CefRenderProcessHandler half -- the renderer-side of the page-message-
+  // router (browser-ojh.1) -- actually gets installed when this process
+  // turns out to be a renderer. BRWHelperApp, not the browser process's
+  // (much larger) BRWCefApp -- see BRWHelperApp.h's doc comment for why.
+  CefRefPtr<BRWHelperApp> app(new BRWHelperApp());
+  return CefExecuteProcess(main_args, app.get(), nullptr);
 }

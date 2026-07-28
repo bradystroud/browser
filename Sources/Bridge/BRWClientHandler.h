@@ -129,6 +129,28 @@ class BRWClientHandler : public CefClient,
                      int activeMatchOrdinal,
                      bool finalUpdate) override;
 
+  // CefClient methods:
+  // Forwards to BRWPageMessageRouter -- see that class's own doc comment
+  // for what this generic JS<->native channel is for (browser-ojh.1).
+  bool OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                 CefRefPtr<CefFrame> frame,
+                                 CefProcessId source_process,
+                                 CefRefPtr<CefProcessMessage> message) override;
+
+  // CefRequestHandler methods:
+  // Both forward to BRWPageMessageRouter, exactly as its own doc comments
+  // require -- unrelated to the content-blocker methods below despite
+  // living on the same CefRequestHandler interface.
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       CefRefPtr<CefRequest> request,
+                       bool user_gesture,
+                       bool is_redirect) override;
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                  TerminationStatus status,
+                                  int error_code,
+                                  const CefString& error_string) override;
+
   // CefRequestHandler methods:
   // Returning `this` means OnBeforeResourceLoad below (this same object,
   // via CefResourceRequestHandler) is called for every resource this
@@ -186,6 +208,12 @@ class BRWClientHandler : public CefClient,
   // requestShutdownWithCompletion:] polls this down to zero before calling
   // CefShutdown.
   static size_t LiveCount();
+
+  // Finds the handler owning `browser`, if any -- used by
+  // BRWPageMessageRouter to route an incoming page message to the right
+  // tab's delegate. nullptr if `browser` doesn't match any live handler
+  // (e.g. it's already been closed).
+  static BRWClientHandler* ForBrowser(CefRefPtr<CefBrowser> browser);
 
  private:
   NSView* host_view_;

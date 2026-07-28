@@ -50,6 +50,14 @@ protocol EngineTabDelegate: AnyObject {
     /// findNext:) -- see BRWBrowser.h's -browserDidUpdateFindResultWithMatchCount:...
     /// for the exact semantics (delivered repeatedly, not just once).
     func engineTabDidUpdateFindResult(matchCount: Int, activeMatchOrdinal: Int, isFinalUpdate: Bool)
+
+    /// A page called `window.cefQuery({request: ...})` via the generic
+    /// JS<->native channel (browser-ojh.1) -- see BRWBrowser.h's
+    /// -browserDidReceivePageMessage:requestId: for the exact contract,
+    /// including that `requestId` must eventually reach
+    /// respondToPageMessage(requestId:success:response:) below exactly once
+    /// or the page's promise never resolves.
+    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -97,6 +105,13 @@ protocol EngineTab: AnyObject {
     /// API this wraps and why it exists alongside the fire-and-forget
     /// executeJavaScript(_:) above.
     func getPageSource(completion: @escaping (String?) -> Void)
+
+    /// Answers a page message previously delivered via
+    /// engineTabDidReceivePageMessage(_:requestId:) -- see BRWBrowser.h's
+    /// -respondToPageMessageWithId:success:response: for the exact contract
+    /// (in particular, that `requestId` is global across every tab, not
+    /// scoped to whichever EngineTab this is called on).
+    func respondToPageMessage(requestId: Int64, success: Bool, response: String)
 }
 
 /// Process-wide engine lifecycle + tab creation. A protocol with static

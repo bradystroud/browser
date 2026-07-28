@@ -1,5 +1,6 @@
 #import "BRWClientHandler.h"
 #import "BRWContentBlockerInternal.h"
+#import "BRWPageMessageRouter.h"
 
 #include <vector>
 
@@ -62,6 +63,7 @@ void BRWClientHandler::LoadURLWhenReady(const std::string& url) {
 
 void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+  BRWPageMessageRouter::Get().OnBeforeClose(browser);
   closed_ = true;
   browser_ = nullptr;
   Registry().erase(this);
@@ -108,6 +110,20 @@ void BRWClientHandler::CloseAll() {
 // static
 size_t BRWClientHandler::LiveCount() {
   return Registry().size();
+}
+
+// static
+BRWClientHandler* BRWClientHandler::ForBrowser(CefRefPtr<CefBrowser> browser) {
+  if (!browser) {
+    return nullptr;
+  }
+  int identifier = browser->GetIdentifier();
+  for (BRWClientHandler* handler : Registry()) {
+    if (handler->browser_ && handler->browser_->GetIdentifier() == identifier) {
+      return handler;
+    }
+  }
+  return nullptr;
 }
 
 void BRWClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
@@ -380,4 +396,31 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
     return RV_CANCEL;
   }
   return RV_CONTINUE;
+}
+
+bool BRWClientHandler::OnProcessMessageReceived(CefRefPtr<CefBrowser> browser,
+                                                 CefRefPtr<CefFrame> frame,
+                                                 CefProcessId source_process,
+                                                 CefRefPtr<CefProcessMessage> message) {
+  return BRWPageMessageRouter::Get().OnProcessMessageReceived(browser, frame, source_process, message);
+}
+
+bool BRWClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
+                                       CefRefPtr<CefFrame> frame,
+                                       CefRefPtr<CefRequest> request,
+                                       bool user_gesture,
+                                       bool is_redirect) {
+  // Must be called "only if the navigation is allowed to proceed" per
+  // CefMessageRouterBrowserSide::OnBeforeBrowse's own doc comment -- this
+  // override never itself blocks navigation (always returns false, "allow"),
+  // so that condition is always satisfied here.
+  BRWPageMessageRouter::Get().OnBeforeBrowse(browser, frame);
+  return false;
+}
+
+void BRWClientHandler::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                                  TerminationStatus status,
+                                                  int error_code,
+                                                  const CefString& error_string) {
+  BRWPageMessageRouter::Get().OnRenderProcessTerminated(browser);
 }

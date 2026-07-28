@@ -8,6 +8,7 @@
 
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
+#import "BRWPageMessageRouter.h"
 
 namespace {
 std::string ToStdString(NSString *s) {
@@ -201,6 +202,13 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   }
   CefRefPtr<StringVisitorBlock> visitor = new StringVisitorBlock(completion);
   _handler->GetBrowser()->GetMainFrame()->GetSource(visitor);
+}
+
+- (void)respondToPageMessageWithId:(int64_t)requestId success:(BOOL)success response:(NSString *)response {
+  // Global (process-wide) router, not this browser's own _handler -- the
+  // requestId came from BRWPageMessageRouter and is unique across every
+  // tab, not scoped to whichever BRWBrowser happens to call this.
+  BRWPageMessageRouter::Get().Respond(requestId, success, ToStdString(response));
 }
 
 @end
