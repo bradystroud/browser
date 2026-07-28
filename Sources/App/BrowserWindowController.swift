@@ -33,6 +33,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     private let tabStripView = TabStripView(frame: .zero)
     private let toolbarView = NSView()
+    /// The unified glass background behind the tab strip + toolbar (browser-
+    /// qpy's liquid-glass restyle) -- one continuous vibrant material,
+    /// Safari's own "unified toolbar" look, rather than each view tinting
+    /// itself separately. Sits behind both (added to contentView first);
+    /// falls back to a solid fill under Reduce Transparency (see
+    /// GlassBackgroundView).
+    private let chromeBackground = GlassBackgroundView(
+        material: .underWindowBackground, blendingMode: .behindWindow,
+        solidFallbackColor: .windowBackgroundColor
+    )
+    /// Blends the profile accent (always, subtle) and the active tab's site
+    /// theme color (when present, more prominent) into chromeBackground --
+    /// browser-qpy points 5/6 ("profile color accent integrates as a subtle
+    /// tint of the glass" / "theme-color tinting blends into the glass
+    /// material"). Updated by updateChromeTint(), called from
+    /// refreshToolbar(for:) (already the single call site for "the active
+    /// tab's state changed," whether via navigation or a tab switch).
+    private let chromeTintView: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        return view
+    }()
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let reloadButton = NSButton()
@@ -193,11 +215,40 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - View setup
 
+    /// Space reserved at the tab strip's leading edge for the traffic-light
+    /// buttons, which float over this area now that the titlebar is hidden
+    /// (browser-qpy) -- wide enough to clear them at any window size (they
+    /// don't move), a touch more generous than their tightest possible fit.
+    private static let trafficLightReservedWidth: CGFloat = 78
+
     private func setUpViews() {
-        guard let contentView = window?.contentView else { return }
+        guard let window, let contentView = window.contentView else { return }
         let tabStripHeight: CGFloat = 32
         let toolbarHeight: CGFloat = 36
+        let chromeHeight = tabStripHeight + toolbarHeight
 
+        // Hidden titlebar + full-size content view (browser-qpy): the tab
+        // strip effectively becomes the titlebar area, with the traffic
+        // lights floating over its leading edge (see
+        // Self.trafficLightReservedWidth / TabStripView.leadingInset below).
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.styleMask.insert(.fullSizeContentView)
+
+        chromeBackground.frame = NSRect(
+            x: 0,
+            y: contentView.bounds.height - chromeHeight,
+            width: contentView.bounds.width,
+            height: chromeHeight
+        )
+        chromeBackground.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(chromeBackground)
+
+        chromeTintView.frame = chromeBackground.bounds
+        chromeTintView.autoresizingMask = [.width, .height]
+        chromeBackground.addSubview(chromeTintView)
+
+        tabStripView.leadingInset = Self.trafficLightReservedWidth
         tabStripView.frame = NSRect(
             x: 0,
             y: contentView.bounds.height - tabStripHeight,
@@ -215,11 +266,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             height: toolbarHeight
         )
         toolbarView.autoresizingMask = [.width, .minYMargin]
-        // Layer-backed so refreshToolbar(for:) can tint its background with
-        // the active tab's site theme color (browser-rhi.5) -- a nil
-        // layer.backgroundColor (the untinted case) just renders as
-        // transparent, showing the window's own background beneath.
-        toolbarView.wantsLayer = true
         contentView.addSubview(toolbarView)
         setUpToolbarContents()
 
@@ -243,6 +289,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         backButton.frame = NSRect(x: margin, y: (toolbarHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
         backButton.isBordered = false
         backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
+        // Glassy toolbar buttons (browser-qpy): a muted secondary-label
+        // glyph sitting borderless on the glass, not the default system-
+        // accent-blue tint a plain NSButton image would otherwise pick up.
+        backButton.contentTintColor = .secondaryLabelColor
         backButton.target = self
         backButton.action = #selector(goBackAction(_:))
         toolbarView.addSubview(backButton)
@@ -255,6 +305,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         )
         forwardButton.isBordered = false
         forwardButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")
+        forwardButton.contentTintColor = .secondaryLabelColor
         forwardButton.target = self
         forwardButton.action = #selector(goForwardAction(_:))
         toolbarView.addSubview(forwardButton)
@@ -267,6 +318,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         )
         reloadButton.isBordered = false
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
+        reloadButton.contentTintColor = .secondaryLabelColor
         reloadButton.target = self
         reloadButton.action = #selector(reloadPage(_:))
         toolbarView.addSubview(reloadButton)
@@ -682,13 +734,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if omniboxField.currentEditor() == nil {
             omniboxField.stringValue = tab.urlString
         }
-        // Site-theme-color tint (browser-rhi.5) -- always re-evaluated
-        // against whichever tab is *currently* active, so it updates both
-        // when that tab's own color changes (navigation) and when a
-        // different tab becomes active (tab switch); nil themeColorHex (or
-        // one that fails the contrast check -- see NSColor.tinted(
-        // withThemeColorHex:)) clears back to a plain, untinted toolbar.
-        toolbarView.layer?.backgroundColor = NSColor.windowBackgroundColor.tinted(withThemeColorHex: tab.themeColorHex)?.cgColor
+        updateChromeTint(for: tab)
+    }
+
+    /// Blends this window's profile accent (always, as a subtle baseline)
+    /// and the active tab's site theme color (browser-rhi.5, when present
+    /// -- more prominent, since it's more specific/timely than the
+    /// per-window profile identity) into the shared glass background.
+    /// Always re-evaluated against whichever tab is *currently* active, so
+    /// it updates both when that tab's own color changes (navigation) and
+    /// when a different tab becomes active (tab switch) -- refreshToolbar(
+    /// for:) is already the one call site both of those already go through.
+    /// A private window shows no profile-accent baseline (no real profile
+    /// to accent), just the active tab's theme color when present.
+    ///
+    /// This tints an already-translucent glass surface, not a solid
+    /// background -- unlike NSColor.tinted(withThemeColorHex:) (used by
+    /// TabButtonView, which blends against one specific solid base color
+    /// and rechecks WCAG contrast), so it doesn't reuse that helper; both
+    /// alpha values below are deliberately conservative enough to stay
+    /// legible over vibrancy without needing a fresh contrast check for
+    /// every possible glass/vibrancy combination.
+    private func updateChromeTint(for tab: Tab) {
+        let themeColor = tab.themeColorHex.flatMap { NSColor(hex: $0) }
+        let profileColor = isPrivate ? nil : (NSColor(hex: profile.colorHex) ?? .controlAccentColor)
+        guard let tintColor = themeColor ?? profileColor else {
+            chromeTintView.layer?.backgroundColor = nil
+            return
+        }
+        let alpha: CGFloat = themeColor != nil ? 0.16 : 0.05
+        chromeTintView.layer?.backgroundColor = tintColor.withAlphaComponent(alpha).cgColor
     }
 
     private func updateWindowTitle(for tab: Tab) {

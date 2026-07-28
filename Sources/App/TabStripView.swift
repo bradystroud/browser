@@ -90,6 +90,9 @@ final class TabStripView: NSView {
         button.title = ""
         button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
         button.imageScaling = .scaleProportionallyDown
+        // Glassy, borderless icon button (browser-qpy) -- matches the
+        // toolbar's back/forward/reload treatment.
+        button.contentTintColor = .secondaryLabelColor
         return button
     }()
 
@@ -107,6 +110,18 @@ final class TabStripView: NSView {
     private static let tabSpacing: CGFloat = 2
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 24
+
+    /// Extra space reserved before the first tab, for the traffic-light
+    /// buttons that now float over this area once the window's titlebar is
+    /// hidden (browser-qpy's liquid-glass restyle) -- set once by
+    /// BrowserWindowController, 0 by default so this view still lays out
+    /// sensibly if ever reused somewhere without a hidden titlebar.
+    var leadingInset: CGFloat = 0 {
+        didSet {
+            guard oldValue != leadingInset else { return }
+            needsLayout = true
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -291,7 +306,7 @@ final class TabStripView: NSView {
     /// of an expanded group) shares whatever width remains, same
     /// even-width-down-to-a-minimum scheme as before groups existed.
     private func layoutTabs() {
-        let available = max(0, bounds.width - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
+        let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
         let itemCount = stripItems.count
         let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
 
