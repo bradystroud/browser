@@ -778,6 +778,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         selectTab(at: visible[(position - 1 + visible.count) % visible.count])
     }
 
+    /// ⌥⌘P / Window > Pin Tab -- pins or unpins the active tab. Menu item
+    /// title toggles in validateMenuItem(_:) below.
+    @objc func togglePinActiveTab(_ sender: Any?) {
+        guard let index = activeTabIndex else { return }
+        if tabs[index].isPinned {
+            unpinTab(at: index)
+        } else {
+            pinTab(at: index)
+        }
+    }
+
     @objc func goBackAction(_ sender: Any?) {
         activeTab?.goBack()
     }
@@ -835,6 +846,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             return activeTab?.canGoBack ?? false
         case #selector(goForwardAction(_:)):
             return activeTab?.canGoForward ?? false
+        case #selector(togglePinActiveTab(_:)):
+            menuItem.title = (activeTab?.isPinned ?? false) ? "Unpin Tab" : "Pin Tab"
+            return activeTab != nil
         default:
             return true
         }

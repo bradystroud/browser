@@ -301,6 +301,12 @@ final class MainMenuBuilder {
             .keyEquivalentModifierMask = [.command, .shift]
         windowMenu.addItem(withTitle: "Select Previous Tab", action: #selector(BrowserWindowController.selectPreviousTab(_:)), keyEquivalent: "[")
             .keyEquivalentModifierMask = [.command, .shift]
+        // ⌥⌘P, not plain ⌘P (Print) -- Safari itself has no pin shortcut
+        // (context-menu only), so this doesn't need to match anything, just
+        // avoid colliding with Print. Title toggles between "Pin Tab"/
+        // "Unpin Tab" in BrowserWindowController.validateMenuItem(_:).
+        windowMenu.addItem(withTitle: "Pin Tab", action: #selector(BrowserWindowController.togglePinActiveTab(_:)), keyEquivalent: "p")
+            .keyEquivalentModifierMask = [.command, .option]
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
