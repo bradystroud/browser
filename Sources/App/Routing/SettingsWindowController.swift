@@ -1,13 +1,15 @@
 import AppKit
 
 /// The app's "Settings…" window (⌘,), standard macOS placement in the app
-/// menu. Hosts four sections in an NSTabView: "Routing Rules" (main/first
+/// menu. Hosts five sections in an NSTabView: "Routing Rules" (main/first
 /// tab, per Brady's original request -- see RoutingRulesPaneController),
 /// "Profiles" (create/rename/recolor/delete -- see ProfilesPaneController),
 /// "Privacy" (per-profile ad/tracker blocking -- see
-/// PrivacyPaneController, browser-12m.5.1), and "Start Page" (per-profile
+/// PrivacyPaneController, browser-12m.5.1), "Start Page" (per-profile
 /// start-page customization -- see StartPageSettingsPaneController,
-/// browser-5kq.3/.4). This controller just owns the window and composes the
+/// browser-5kq.3/.4), and "Passwords" (per-profile saved-credential list,
+/// Touch-ID-gated reveal, delete -- see PasswordsPaneController,
+/// browser-ojh.1). This controller just owns the window and composes the
 /// panes; all the section-specific logic lives in their own controllers.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
@@ -16,6 +18,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let profilesPane = ProfilesPaneController()
     private let privacyPane = PrivacyPaneController()
     private let startPagePane = StartPageSettingsPaneController()
+    private let passwordsPane = PasswordsPaneController()
     private let tabView = NSTabView()
 
     private init() {
@@ -41,6 +44,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         profilesPane.reload()
         privacyPane.reload()
         startPagePane.reload()
+        passwordsPane.reload()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -75,10 +79,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         startPageItem.label = "Start Page"
         startPageItem.view = startPagePane.view
 
+        let passwordsItem = NSTabViewItem(identifier: "passwords")
+        passwordsItem.label = "Passwords"
+        passwordsItem.view = passwordsPane.view
+
         tabView.addTabViewItem(routingItem)
         tabView.addTabViewItem(profilesItem)
         tabView.addTabViewItem(privacyItem)
         tabView.addTabViewItem(startPageItem)
+        tabView.addTabViewItem(passwordsItem)
         contentView.addSubview(tabView)
     }
 

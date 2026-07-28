@@ -78,6 +78,7 @@ set(BROWSER_SWIFT_SRCS
   Passwords/PasswordNeverStore.swift
   Passwords/SavePasswordPromptController.swift
   Passwords/PasswordManagerCoordinator.swift
+  Passwords/PasswordsPaneController.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift
