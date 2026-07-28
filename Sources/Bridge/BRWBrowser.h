@@ -118,6 +118,16 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// user). Not fired for same-document navigations (fragments, history
 /// state) or sub-frame loads.
 - (void)browserDidStartMainFrameLoad;
+
+/// The user chose "Look Up Image" from the native right-click context menu
+/// over an `<img>` element (browser-5kq.2) -- only ever fires when
+/// +[BRWBrowser setVisualLookUpAvailable:] was called with YES, since that's
+/// what makes BRWClientHandler offer the menu item at all. `imageURL` is the
+/// image's own source URL (a `data:` URL for an inline image, otherwise
+/// whatever absolute URL the page loaded it from); `pageURL` is the
+/// containing page's URL, useful as a Referer header on a follow-up fetch
+/// for `imageURL` since some hosts reject image requests with no Referer.
+- (void)browserDidRequestVisualLookUpForImageURL:(NSString *)imageURL pageURL:(NSString *)pageURL;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -263,6 +273,17 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// A no-op if `requestId` is no longer pending (e.g. the page already
 /// navigated away and CEF canceled the query on its own).
 - (void)respondToPageMessageWithId:(int64_t)requestId success:(BOOL)success response:(NSString *)response;
+
+/// Process-wide (not per-browser), since whether Visual Look Up can work at
+/// all is a Mac hardware/OS capability (Swift-side ImageAnalyzer.isSupported,
+/// browser-5kq.2), not something that varies by tab. Call once at launch
+/// with the actual support state -- every BRWClientHandler checks this same
+/// flag before offering "Look Up Image" in its context menu, so a browser
+/// created before this is called (unlikely in practice; call it during app
+/// launch, before any window opens) simply wouldn't offer the item until a
+/// later navigation's next right-click, which re-checks the flag fresh each
+/// time rather than caching it per-handler.
++ (void)setVisualLookUpAvailable:(BOOL)available;
 
 @end
 

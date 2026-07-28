@@ -299,4 +299,8 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   BRWPageMessageRouter::Get().Respond(requestId, success, ToStdString(response));
 }
 
++ (void)setVisualLookUpAvailable:(BOOL)available {
+  BRWClientHandler::SetVisualLookUpAvailable(available);
+}
+
 @end

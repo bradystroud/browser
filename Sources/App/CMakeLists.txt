@@ -112,6 +112,8 @@ set(BROWSER_SWIFT_SRCS
   TabOverview/TabOverviewView.swift
   TabOverview/TabOverviewController.swift
   DevTools/ResponsiveDesignMode.swift
+  VisualLookUp/VisualLookUpController.swift
+  VisualLookUp/VisualLookUpPanelController.swift
   PictureInPicture/PictureInPictureScript.swift
   Notifications/NotificationOverrideScript.swift
   Notifications/WebPushCoordinator.swift

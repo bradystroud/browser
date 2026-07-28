@@ -1,4 +1,5 @@
 import AppKit
+import VisionKit
 
 /// The only concrete BrowserEngine today, and the only file in Sources/App
 /// (besides BrowserEngine.swift's doc comments, and the necessarily
@@ -29,6 +30,17 @@ enum CEFEngine: BrowserEngine {
             // browser-7jz.3 -- registers with PageMessageDispatcher and
             // UNUserNotificationCenter before any tab can navigate.
             WebPushCoordinator.shared.activate()
+            // browser-5kq.2 -- a Mac hardware/OS capability check, done
+            // once here (rather than per-browser) since every
+            // BRWClientHandler shares the same process-wide flag; see
+            // BRWBrowser.h's +setVisualLookUpAvailable: for why. VisionKit's
+            // ImageAnalyzer needs macOS 13+ -- this app's deployment target
+            // is 12.0, so on an older Mac the flag is just never set to
+            // true, and no "Look Up Image" menu item ever appears (the
+            // graceful degradation this whole feature is built around).
+            if #available(macOS 13.0, *) {
+                setVisualLookUpAvailable(ImageAnalyzer.isSupported)
+            }
         }
         return ok
     }
@@ -47,6 +59,10 @@ enum CEFEngine: BrowserEngine {
 
     static var isTerminating: Bool {
         (NSApp as? BRWApplication)?.isTerminating ?? false
+    }
+
+    static func setVisualLookUpAvailable(_ available: Bool) {
+        BRWBrowser.setVisualLookUpAvailable(available)
     }
 }
 
@@ -163,6 +179,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidStartMainFrameLoad() {
         delegate?.engineTabDidStartMainFrameLoad()
+    }
+
+    func browserDidRequestVisualLookUp(forImageURL imageURL: String, pageURL: String) {
+        delegate?.engineTabDidRequestVisualLookUp(imageURL: imageURL, pageURL: pageURL)
     }
 }
 

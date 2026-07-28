@@ -330,6 +330,21 @@ final class Tab: NSObject, EngineTabDelegate {
         onPageMessage?(request, requestId)
     }
 
+    /// "Look Up Image" from the native context menu (browser-5kq.2) --
+    /// no per-tab state needed, so this just forwards straight through to
+    /// the app-wide controller that fetches/analyzes/presents the result.
+    /// In practice this method is never even called pre-macOS 13 (the
+    /// context-menu item that triggers it only appears once
+    /// ImageAnalyzer.isSupported has already gated it at launch -- see
+    /// CEFEngineAdapter.swift's initialize()), but the compiler can't know
+    /// that from here, so the macOS-13-only call still needs its own
+    /// explicit availability check.
+    func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String) {
+        if #available(macOS 13.0, *) {
+            VisualLookUpController.handleRequest(imageURL: imageURL, pageURL: pageURL)
+        }
+    }
+
     /// Seeds a restored tab's display title immediately at launch, before
     /// its page has even started (re)loading, so the tab strip shows a real
     /// title right away instead of the raw URL -- the real page's own title

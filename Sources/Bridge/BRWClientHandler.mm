@@ -412,6 +412,46 @@ void BRWClientHandler::OnFindResult(CefRefPtr<CefBrowser> browser,
   }
 }
 
+namespace {
+// User-defined menu ids must fall between MENU_ID_USER_FIRST and
+// MENU_ID_USER_LAST (see cef_types.h) -- this is the only one this bridge
+// currently defines.
+const int kVisualLookUpCommandId = MENU_ID_USER_FIRST;
+}  // namespace
+
+// static
+bool BRWClientHandler::visual_look_up_available_ = false;
+
+void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                                             CefRefPtr<CefFrame> frame,
+                                             CefRefPtr<CefContextMenuParams> params,
+                                             CefRefPtr<CefMenuModel> model) {
+  if (!visual_look_up_available_ || !params->HasImageContents()) {
+    return;
+  }
+  if (model->GetCount() > 0) {
+    model->AddSeparator();
+  }
+  model->AddItem(kVisualLookUpCommandId, "Look Up Image");
+}
+
+bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                                              CefRefPtr<CefFrame> frame,
+                                              CefRefPtr<CefContextMenuParams> params,
+                                              int command_id,
+                                              EventFlags event_flags) {
+  if (command_id != kVisualLookUpCommandId) {
+    // Not ours -- let CEF's default handling take it (copy/paste, spelling
+    // suggestions, etc.), exactly as if this handler didn't exist.
+    return false;
+  }
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestVisualLookUpForImageURL:pageURL:)]) {
+    [delegate_ browserDidRequestVisualLookUpForImageURL:ToNSString(params->GetSourceUrl())
+                                                 pageURL:ToNSString(params->GetPageUrl())];
+  }
+  return true;
+}
+
 BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
     CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,

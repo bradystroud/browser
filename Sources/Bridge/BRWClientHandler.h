@@ -7,6 +7,7 @@
 #include <string>
 
 #include "include/cef_client.h"
+#include "include/cef_context_menu_handler.h"
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_download_item.h"
@@ -32,7 +33,8 @@ class BRWClientHandler : public CefClient,
                          public CefPermissionHandler,
                          public CefFindHandler,
                          public CefRequestHandler,
-                         public CefResourceRequestHandler {
+                         public CefResourceRequestHandler,
+                         public CefContextMenuHandler {
  public:
   // `profile_name` identifies which profile's BlockingSettings apply to
   // this browser's requests -- see OnBeforeResourceLoad below
@@ -57,6 +59,14 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
+  // Unlike CefCommandHandler (browser-5kq.1/browser-6hi.1's own investigations
+  // both found that interface "Only used with Chrome style") --
+  // CefContextMenuHandler is a plain CefClient handler with no such
+  // restriction, and does fire for Alloy-style browsers: this app's existing
+  // native right-click menu (copy/paste, etc.) already comes from CEF's own
+  // default context-menu implementation, which this handler customizes
+  // rather than replaces (browser-5kq.2).
+  CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
 
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -138,6 +148,28 @@ class BRWClientHandler : public CefClient,
                      const CefRect& selectionRect,
                      int activeMatchOrdinal,
                      bool finalUpdate) override;
+
+  // CefContextMenuHandler methods:
+  // Adds a "Look Up Image" entry to CEF's own default context menu when
+  // right-clicking an image (browser-5kq.2) -- only when Visual Look Up is
+  // actually supported on this Mac (checked Swift-side via
+  // ImageAnalyzer.isSupported before this handler is even installed; see
+  // BRWBrowser.mm's -setVisualLookUpAvailable:).
+  void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                            CefRefPtr<CefFrame> frame,
+                            CefRefPtr<CefContextMenuParams> params,
+                            CefRefPtr<CefMenuModel> model) override;
+  // Handles the "Look Up Image" command by forwarding the image's source URL
+  // (and the page URL, for a Referer header on the follow-up fetch) to the
+  // delegate -- returns true (handled) only for that one command id; every
+  // other command id returns false so CEF's own default handling (copy,
+  // paste, spelling suggestions, etc.) still works exactly as before this
+  // handler was added.
+  bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame,
+                             CefRefPtr<CefContextMenuParams> params,
+                             int command_id,
+                             EventFlags event_flags) override;
 
   // CefClient methods:
   // Forwards to BRWPageMessageRouter -- see that class's own doc comment
@@ -229,6 +261,15 @@ class BRWClientHandler : public CefClient,
   // (e.g. it's already been closed).
   static BRWClientHandler* ForBrowser(CefRefPtr<CefBrowser> browser);
 
+  // Whether to offer "Look Up Image" in the context menu at all
+  // (browser-5kq.2) -- a Mac-wide hardware/OS capability
+  // (ImageAnalyzer.isSupported), not something that varies per browser/tab,
+  // so this is process-wide rather than a per-instance member. Set once at
+  // launch by -[BRWBrowser setVisualLookUpAvailable:]; defaults to false
+  // (no menu item) until Swift confirms support, rather than risking
+  // offering a menu item that would do nothing on an unsupported Mac.
+  static void SetVisualLookUpAvailable(bool available) { visual_look_up_available_ = available; }
+
  private:
   NSView* host_view_;
   // Which profile's BlockingSettings apply to this browser's requests --
@@ -255,6 +296,9 @@ class BRWClientHandler : public CefClient,
   // spaces flow through the same BRWBrowserDelegate methods on the Swift
   // side.
   uint64_t next_media_prompt_id_ = 1;
+
+  // See SetVisualLookUpAvailable's own doc comment for why this is static.
+  static bool visual_look_up_available_;
 
   IMPLEMENT_REFCOUNTING(BRWClientHandler);
 };

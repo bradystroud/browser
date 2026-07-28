@@ -65,6 +65,12 @@ protocol EngineTabDelegate: AnyObject {
     /// The right moment to executeJavaScript(_:) a script that needs to run
     /// before the page's own code does.
     func engineTabDidStartMainFrameLoad()
+
+    /// The user chose "Look Up Image" from the native context menu over an
+    /// image (browser-5kq.2) -- see BRWBrowser.h's
+    /// -browserDidRequestVisualLookUpForImageURL:pageURL: for what `imageURL`/
+    /// `pageURL` actually are.
+    func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -183,4 +189,11 @@ protocol BrowserEngine {
     /// Whether the engine's own termination sequence (see
     /// setWindowCloseHandler) is currently in progress.
     static var isTerminating: Bool { get }
+
+    /// Whether every browser's context menu should offer "Look Up Image"
+    /// over an image (browser-5kq.2) -- see BRWBrowser.h's
+    /// +setVisualLookUpAvailable: for why this is process-wide rather than
+    /// per-tab. Call once, before creating the first tab, with whatever
+    /// VisionKit.ImageAnalyzer.isSupported reports.
+    static func setVisualLookUpAvailable(_ available: Bool)
 }
