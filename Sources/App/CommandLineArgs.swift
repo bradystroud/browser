@@ -44,17 +44,36 @@ enum CommandLineArgs {
     /// directory (not per-profile), so this is the only way to run a second,
     /// fully independent instance for testing without quitting whichever one
     /// is already running against the default path.
+    ///
+    /// Path logic itself lives in BrowserCore's `ProfilesRootResolver`
+    /// (browser-1rp) -- pure/dependency-free, so it's unit-testable via
+    /// `swift test`, unlike this enum itself (Xcode-app-only, no test
+    /// target). See that type's own doc comment for why
+    /// sessionAndProfilesMetadataDirectory() below is a *separate* function
+    /// with its own default, not just a second call to this one.
     static func profilesRootPath() -> String {
-        let args = CommandLine.arguments
-        let profilesRoot: URL
-        if let index = args.firstIndex(of: "--profiles-root"), index + 1 < args.count {
-            profilesRoot = URL(fileURLWithPath: args[index + 1])
-        } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            profilesRoot = appSupport.appendingPathComponent("Browser").appendingPathComponent("Profiles")
-        }
-        try? FileManager.default.createDirectory(at: profilesRoot, withIntermediateDirectories: true)
-        return profilesRoot.path
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
+        let profilesRoot = ProfilesRootResolver.profilesRootPath(arguments: CommandLine.arguments, appSupportDirectory: appSupport)
+        try? FileManager.default.createDirectory(atPath: profilesRoot, withIntermediateDirectories: true)
+        return profilesRoot
+    }
+
+    /// Where `SessionStore`/`ProfileManager` read/write `session.json`/
+    /// `profiles.json` (browser-1rp: previously hardcoded regardless of
+    /// `--profiles-root`, so every "isolated" test launch actually read and
+    /// wrote Brady's real session/profile state). A normal launch resolves
+    /// to the exact same `~/Library/Application Support/Browser` directory
+    /// those two stores have always used; an explicit `--profiles-root
+    /// <path>` launch resolves to that same path, fully containing a test
+    /// instance's session/profile metadata alongside its per-profile cache
+    /// directories under `profilesRootPath()` above -- see
+    /// `ProfilesRootResolver.sessionAndProfilesMetadataDirectory`'s own doc
+    /// comment for why this can't just reuse profilesRootPath()'s default.
+    static func sessionAndProfilesMetadataDirectory() -> String {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
+        let dir = ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments, appSupportDirectory: appSupport)
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     /// True when the launch explicitly asked for a particular profile/URL

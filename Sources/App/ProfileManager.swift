@@ -11,10 +11,18 @@ extension Notification.Name {
 }
 
 /// Profiles persisted as JSON under
-/// ~/Library/Application Support/Browser/profiles.json. This is the single
-/// source of truth for what profiles exist and their display identity (name,
-/// color); it is independent of BRWEngine's profile-name -> CefRequestContext
-/// map, which just needs a profile's `name` to key its cache directory.
+/// CommandLineArgs.sessionAndProfilesMetadataDirectory() -- normally
+/// `~/Library/Application Support/Browser/profiles.json`, but an explicit
+/// `--profiles-root <path>` launch fully redirects this alongside
+/// SessionStore's session.json (browser-1rp -- previously both were
+/// hardcoded regardless of that flag, so every "isolated" test launch
+/// actually read and wrote Brady's real session/profile state). This is the
+/// single source of truth for what profiles exist and their display identity
+/// (name, color); it is independent of BRWEngine's profile-name ->
+/// CefRequestContext map, which just needs a profile's `name` to key its
+/// cache directory (itself under CommandLineArgs.profilesRootPath(), the
+/// sibling, CEF-facing path -- see that function's own doc comment for why
+/// it isn't the same directory as this one).
 final class ProfileManager {
     static let shared = ProfileManager()
 
@@ -24,9 +32,7 @@ final class ProfileManager {
     private(set) var profiles: [Profile] = []
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("Browser")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = URL(fileURLWithPath: CommandLineArgs.sessionAndProfilesMetadataDirectory())
         fileURL = dir.appendingPathComponent("profiles.json")
         load()
         if profiles.isEmpty {

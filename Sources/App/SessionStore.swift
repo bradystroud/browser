@@ -91,11 +91,13 @@ struct SessionSnapshot: Codable {
     static let maxTabsPerWindow = 50
 }
 
-/// Reads/writes SessionSnapshot as JSON at
-/// ~/Library/Application Support/Browser/session.json (same fixed location
-/// regardless of `--profiles-root`, matching ProfileManager's profiles.json
-/// precedent -- see CommandLineArgs.profilesRootPath's doc comment for why
-/// that override exists and what it does and doesn't cover).
+/// Reads/writes SessionSnapshot as JSON under
+/// CommandLineArgs.sessionAndProfilesMetadataDirectory() -- normally
+/// `~/Library/Application Support/Browser/session.json`, but an explicit
+/// `--profiles-root <path>` launch fully redirects this alongside
+/// ProfileManager's profiles.json (browser-1rp -- previously both were
+/// hardcoded regardless of that flag, so every "isolated" test launch
+/// actually read and wrote Brady's real session/profile state).
 ///
 /// Saves are debounced (see scheduleSave) for the high-frequency triggers
 /// (typing/navigating, dragging a window) -- WindowManager.
@@ -118,9 +120,7 @@ final class SessionStore {
     private var pendingSaveWorkItem: DispatchWorkItem?
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("Browser")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = URL(fileURLWithPath: CommandLineArgs.sessionAndProfilesMetadataDirectory())
         fileURL = dir.appendingPathComponent("session.json")
     }
 
