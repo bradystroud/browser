@@ -3,3 +3,4 @@
 #import "../Bridge/BRWApplication.h"
 #import "../Bridge/BRWEngine.h"
 #import "../Bridge/BRWBrowser.h"
+#import "../Bridge/BRWContentBlocker.h"

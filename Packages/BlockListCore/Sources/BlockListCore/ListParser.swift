@@ -33,6 +33,15 @@ public enum ListParser {
         "0.0.0.0", "127.0.0.1", "::1", "255.255.255.255",
     ]
 
+    /// Every recognized domain across the whole (possibly mixed-format)
+    /// text, in file order, including duplicates -- callers that just want
+    /// to load a list should use `parse(_:into:)` instead; this is for
+    /// callers (like `BlockList`) that need the actual domain strings, not
+    /// just a trie populated from them.
+    public static func parseDomains(_ text: String) -> [String] {
+        text.split(separator: "\n", omittingEmptySubsequences: false).flatMap { domains(inLine: $0) }
+    }
+
     /// Parses `text` (either format, lines may be mixed) and inserts every
     /// recognized domain into `trie`. Returns the number of *new* domains
     /// added (duplicates already in `trie` don't count), for logging/
@@ -40,12 +49,10 @@ public enum ListParser {
     @discardableResult
     public static func parse(_ text: String, into trie: DomainTrie) -> Int {
         var added = 0
-        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            for domain in domains(inLine: rawLine) {
-                let countBefore = trie.count
-                trie.insert(domain)
-                if trie.count != countBefore { added += 1 }
-            }
+        for domain in parseDomains(text) {
+            let countBefore = trie.count
+            trie.insert(domain)
+            if trie.count != countBefore { added += 1 }
         }
         return added
     }

@@ -10,14 +10,29 @@ import Foundation
 /// the list."
 public final class BlockList {
     private let trie = DomainTrie()
+    // Tracked alongside the trie (not derived from it -- DomainTrie doesn't
+    // support enumeration, only lookup) so callers that need the flat list
+    // of every loaded domain -- e.g. Phase 2's bridge handoff, which pushes
+    // this list down to BRWContentBlocker to build its own C++-side lookup
+    // structure -- don't need to re-parse or otherwise reconstruct it.
+    private var domains: Set<String> = []
 
     public init() {}
 
     /// Number of distinct domains currently loaded.
     public var domainCount: Int { trie.count }
 
+    /// Every distinct domain currently loaded, in no particular order.
+    public func allDomains() -> [String] {
+        Array(domains)
+    }
+
     public func addDomain(_ domain: String) {
+        let countBefore = trie.count
         trie.insert(domain)
+        if trie.count != countBefore {
+            domains.insert(domain)
+        }
     }
 
     /// Parses and loads every domain found in `text` (either supported
@@ -25,7 +40,16 @@ public final class BlockList {
     /// added.
     @discardableResult
     public func load(_ text: String) -> Int {
-        ListParser.parse(text, into: trie)
+        var added = 0
+        for domain in ListParser.parseDomains(text) {
+            let countBefore = trie.count
+            trie.insert(domain)
+            if trie.count != countBefore {
+                domains.insert(domain)
+                added += 1
+            }
+        }
+        return added
     }
 
     /// Loads the bundled starter list (see `starterBlockListText`) into

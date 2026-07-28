@@ -1,16 +1,19 @@
 import AppKit
 
 /// The app's "Settings…" window (⌘,), standard macOS placement in the app
-/// menu. Hosts two sections in an NSTabView: "Routing Rules" (main/first
-/// tab, per Brady's original request -- see RoutingRulesPaneController) and
-/// "Profiles" (create/rename/recolor/delete -- see ProfilesPaneController).
-/// This controller just owns the window and composes the two panes; all the
-/// section-specific logic lives in their own controllers.
+/// menu. Hosts three sections in an NSTabView: "Routing Rules" (main/first
+/// tab, per Brady's original request -- see RoutingRulesPaneController),
+/// "Profiles" (create/rename/recolor/delete -- see ProfilesPaneController),
+/// and "Privacy" (per-profile ad/tracker blocking -- see
+/// PrivacyPaneController, browser-12m.5.1). This controller just owns the
+/// window and composes the panes; all the section-specific logic lives in
+/// their own controllers.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
     private let routingRulesPane = RoutingRulesPaneController()
     private let profilesPane = ProfilesPaneController()
+    private let privacyPane = PrivacyPaneController()
 
     private init() {
         let window = NSWindow(
@@ -33,6 +36,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     func show() {
         routingRulesPane.reload()
         profilesPane.reload()
+        privacyPane.reload()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -51,8 +55,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         profilesItem.label = "Profiles"
         profilesItem.view = profilesPane.view
 
+        let privacyItem = NSTabViewItem(identifier: "privacy")
+        privacyItem.label = "Privacy"
+        privacyItem.view = privacyPane.view
+
         tabView.addTabViewItem(routingItem)
         tabView.addTabViewItem(profilesItem)
+        tabView.addTabViewItem(privacyItem)
         contentView.addSubview(tabView)
     }
 
