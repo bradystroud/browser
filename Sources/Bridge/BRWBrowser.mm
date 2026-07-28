@@ -42,7 +42,7 @@ class PdfPrintCallback : public CefPdfPrintCallback {
                            initialURL:(NSString *)initialURL {
   self = [super init];
   if (self) {
-    _handler = new BRWClientHandler(hostView);
+    _handler = new BRWClientHandler(hostView, ToStdString(profileName));
 
     CefWindowInfo window_info;
     CefRect bounds(0, 0, (int)hostView.bounds.size.width, (int)hostView.bounds.size.height);
@@ -144,6 +144,18 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   CefPdfPrintSettings settings;
   CefRefPtr<PdfPrintCallback> callback = new PdfPrintCallback(completion);
   _handler->GetBrowser()->GetHost()->PrintToPDF(ToStdString(path), settings, callback);
+}
+
+- (void)find:(NSString *)searchText forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->Find(ToStdString(searchText), forward, matchCase, findNext);
+  }
+}
+
+- (void)stopFinding:(BOOL)clearSelection {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->StopFinding(clearSelection);
+  }
 }
 
 @end

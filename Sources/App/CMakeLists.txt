@@ -17,6 +17,9 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWEngineInternal.h
   ../Bridge/BRWBrowser.h
   ../Bridge/BRWBrowser.mm
+  ../Bridge/BRWContentBlocker.h
+  ../Bridge/BRWContentBlocker.mm
+  ../Bridge/BRWContentBlockerInternal.h
   )
 source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
 
@@ -24,6 +27,7 @@ set(BROWSER_SWIFT_SRCS
   main.swift
   AppDelegate.swift
   BrowserWindow.swift
+  FindBarController.swift
   BrowserWindowController.swift
   ColorSwatchPicker.swift
   CommandLineArgs.swift
@@ -36,6 +40,9 @@ set(BROWSER_SWIFT_SRCS
   Tab.swift
   TabButtonView.swift
   TabStripView.swift
+  TabGroup.swift
+  TabGroupHeaderView.swift
+  TabGroupPrompt.swift
   WindowManager.swift
   SessionStore.swift
   ShortcutsHelp.swift
@@ -62,6 +69,9 @@ set(BROWSER_SWIFT_SRCS
   Furniture/DownloadsWindowController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
+  Blocking/BlockingSettingsStore.swift
+  Blocking/ContentBlockerCoordinator.swift
+  Blocking/PrivacyPaneController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -100,10 +110,30 @@ set(BROWSER_BROWSER_CORE_SRCS
   )
 source_group(BrowserCore FILES ${BROWSER_BROWSER_CORE_SRCS})
 
+# BlockListCore's domain trie/parser/settings model
+# (../../Packages/BlockListCore/Sources/BlockListCore) are pure Swift/
+# Foundation with no AppKit dependency, so they're also packaged standalone
+# as Packages/BlockListCore/ at the repo root for a fast, isolated
+# `swift test` (see Packages/BlockListCore/README.md). Same reasoning as
+# BROWSER_ROUTING_CORE_SRCS/BROWSER_BROWSER_CORE_SRCS above: rather than
+# linking that package from this Xcode-generator CMake target, these same
+# source files are compiled directly into the Browser executable here too --
+# one copy of the logic, two ways to build it.
+set(BROWSER_BLOCKLIST_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/DomainTrie.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/ListParser.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/BlockList.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/BlockingSettings.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/StarterList.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BlockListCore/Sources/BlockListCore/RemoteListSource.swift
+  )
+source_group(BlockListCore FILES ${BROWSER_BLOCKLIST_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
   ${BROWSER_ROUTING_CORE_SRCS}
+  ${BROWSER_BLOCKLIST_CORE_SRCS}
   ${BROWSER_BROWSER_CORE_SRCS}
   )
 

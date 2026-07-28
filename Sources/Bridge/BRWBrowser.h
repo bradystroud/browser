@@ -82,6 +82,17 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// still pending. Any UI still showing for it should be torn down without
 /// calling that request's `decision` block.
 - (void)browserDidDismissPermissionRequest:(uint64_t)promptId;
+
+/// Result update for a search started via -find:forward:matchCase:findNext:
+/// (browser-5kq.5). `matchCount` is the number of matches found so far;
+/// `activeMatchOrdinal` is the 1-based position of the currently highlighted
+/// match (0 if there are no matches yet); `isFinalUpdate` is YES once no
+/// more updates for this search will arrive. CEF delivers this repeatedly
+/// (an incremental count as the page is scanned, then a final settled one),
+/// not just once per search.
+- (void)browserDidUpdateFindResultWithMatchCount:(int)matchCount
+                              activeMatchOrdinal:(int)activeMatchOrdinal
+                                     finalUpdate:(BOOL)isFinalUpdate;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -128,6 +139,20 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// called exactly once, on the main thread, with whether it succeeded and
 /// the same `path` back.
 - (void)printToPDFWithPath:(NSString *)path completion:(void (^)(BOOL success, NSString *path))completion;
+
+/// Searches the current page for `searchText` (see BRWBrowser.mm's -find:
+/// for CEF's exact semantics -- changing `searchText` or `matchCase`
+/// restarts the search; an empty `searchText` stops it; `findNext`
+/// distinguishes a fresh search from a "find next/previous" repeat of the
+/// same one). Results arrive via -browserDidUpdateFindResultWithMatchCount:
+/// activeMatchOrdinal:finalUpdate: on the delegate, not as a return value or
+/// completion block, since CEF delivers them asynchronously and repeatedly.
+- (void)find:(NSString *)searchText forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext;
+
+/// Cancels any in-progress search. `clearSelection` also clears the
+/// highlighted-match selection on the page (YES when the user dismisses the
+/// find bar; NO would leave the last match highlighted).
+- (void)stopFinding:(BOOL)clearSelection;
 
 @end
 

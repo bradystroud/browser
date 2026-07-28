@@ -10,7 +10,10 @@
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_download_item.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_request_handler.h"
+#include "include/cef_resource_request_handler.h"
 
 #import "BRWBrowser.h"  // for the BRWBrowserDelegate protocol only.
 
@@ -18,17 +21,24 @@
 // NSView the browser is parented into so it can make the CEF-created native
 // view track that host view's size via ordinary AppKit autoresizing, instead
 // of hand-rolling resize-notification plumbing. Also forwards title/URL/
-// favicon/loading-state/navigation-commit/download/permission changes to the
-// BRWBrowserDelegate the Swift side installs, so a tab model can stay in sync
-// without polling CEF.
+// favicon/loading-state/navigation-commit/download/permission/find-result
+// changes to the BRWBrowserDelegate the Swift side installs, so a tab model
+// can stay in sync without polling CEF.
 class BRWClientHandler : public CefClient,
                          public CefLifeSpanHandler,
                          public CefLoadHandler,
                          public CefDisplayHandler,
                          public CefDownloadHandler,
-                         public CefPermissionHandler {
+                         public CefPermissionHandler,
+                         public CefFindHandler,
+                         public CefRequestHandler,
+                         public CefResourceRequestHandler {
  public:
-  explicit BRWClientHandler(NSView* host_view);
+  // `profile_name` identifies which profile's BlockingSettings apply to
+  // this browser's requests -- see OnBeforeResourceLoad below
+  // (browser-12m.5.1). Matches the same profile name BRWBrowser passes to
+  // BRWGetOrCreateProfileContext for its CefRequestContext.
+  BRWClientHandler(NSView* host_view, const std::string& profile_name);
 
   void SetDelegate(id<BRWBrowserDelegate> delegate) { delegate_ = delegate; }
   id<BRWBrowserDelegate> GetDelegate() { return delegate_; }
@@ -45,6 +55,8 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+  CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+  CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
 
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -109,6 +121,42 @@ class BRWClientHandler : public CefClient,
                                  uint64_t prompt_id,
                                  cef_permission_request_result_t result) override;
 
+  // CefFindHandler methods:
+  void OnFindResult(CefRefPtr<CefBrowser> browser,
+                     int identifier,
+                     int count,
+                     const CefRect& selectionRect,
+                     int activeMatchOrdinal,
+                     bool finalUpdate) override;
+
+  // CefRequestHandler methods:
+  // Returning `this` means OnBeforeResourceLoad below (this same object,
+  // via CefResourceRequestHandler) is called for every resource this
+  // browser loads -- content-blocker enforcement (browser-12m.5.1). Called
+  // on the IO thread.
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      CefRefPtr<CefRequest> request,
+      bool is_navigation,
+      bool is_download,
+      const CefString& request_initiator,
+      bool& disable_default_handling) override {
+    return this;
+  }
+
+  // CefResourceRequestHandler methods:
+  // Called on the IO thread, once per resource request this browser makes.
+  // Cancels (RV_CANCEL) any request whose host the content blocker says to
+  // block for this browser's profile -- see BRWContentBlockerShouldBlock
+  // (BRWContentBlockerInternal.h) for the actual (lock-free) lookup this
+  // defers to. Never touches Swift or AppKit from this method: it must stay
+  // safe to call from the IO thread.
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser,
+                                    CefRefPtr<CefFrame> frame,
+                                    CefRefPtr<CefRequest> request,
+                                    CefRefPtr<CefCallback> callback) override;
+
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   bool IsClosed() const { return closed_; }
 
@@ -141,6 +189,11 @@ class BRWClientHandler : public CefClient,
 
  private:
   NSView* host_view_;
+  // Which profile's BlockingSettings apply to this browser's requests --
+  // see OnBeforeResourceLoad. Set once at construction, never changes for
+  // this handler's lifetime (matches BRWBrowser: a tab's profile is fixed
+  // at creation, see docs/plans's per-window/per-tab profile identity).
+  std::string profile_name_;
   CefRefPtr<CefBrowser> browser_;
   bool closed_ = false;
   // Set by RequestClose() when it runs before OnAfterCreated has fired for

@@ -14,7 +14,17 @@ enum CEFEngine: BrowserEngine {
     }
 
     static func initialize(profilesRootPath: String) -> Bool {
-        BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
+        let ok = BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
+        if ok {
+            // Must start only once the engine is up: the very first
+            // snapshot push (loading the starter list + every existing
+            // profile's BlockingSettings) needs ProfileManager/CEF ready,
+            // and every browser created from here on needs a snapshot
+            // already published before its first request -- see
+            // ContentBlockerCoordinator's doc comment (browser-12m.5.1).
+            ContentBlockerCoordinator.shared.start()
+        }
+        return ok
     }
 
     static func createTab(profileName: String, hostView: NSView, initialURL: String) -> EngineTab {
@@ -54,6 +64,12 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func print() { browser.print() }
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         browser.printToPDF(withPath: path, completion: completion)
+    }
+    func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
+        browser.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
+    }
+    func stopFinding(clearSelection: Bool) {
+        browser.stopFinding(clearSelection)
     }
 
     // MARK: - BRWBrowserDelegate -> EngineTabDelegate
@@ -99,6 +115,11 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidDismissPermissionRequest(_ promptId: UInt64) {
         delegate?.engineTabDidDismissPermissionRequest(promptId)
+    }
+
+    func browserDidUpdateFindResult(withMatchCount matchCount: Int32, activeMatchOrdinal: Int32, finalUpdate isFinalUpdate: Bool) {
+        delegate?.engineTabDidUpdateFindResult(
+            matchCount: Int(matchCount), activeMatchOrdinal: Int(activeMatchOrdinal), isFinalUpdate: isFinalUpdate)
     }
 }
 

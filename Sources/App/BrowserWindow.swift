@@ -7,12 +7,21 @@ import UniformTypeIdentifiers
 /// would be clutter, and no mainstream browser does this either), so there is
 /// no menu-key-equivalent to intercept it first.
 final class BrowserWindow: NSWindow {
+    /// One find bar per window, created lazily the first time ⌘F fires (see
+    /// -toggleFindBar:). FindBarController.swift for why this lives here
+    /// rather than on BrowserWindowController.
+    private let findBar = FindBarController()
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
            let characters = event.charactersIgnoringModifiers,
            let digit = Int(characters), (1...9).contains(digit),
            let controller = windowController as? BrowserWindowController {
-            controller.selectTab(at: digit - 1)
+            // Position among *visible* tabs (browser-rhi.1: a collapsed tab
+            // group's members don't count), not a raw index into `tabs` --
+            // matches Ctrl+Tab cycling's same "visible tabs as one sequence"
+            // rule (see BrowserWindowController.visibleTabIndices).
+            controller.selectVisibleTab(atPosition: digit - 1)
             return true
         }
         return super.performKeyEquivalent(with: event)
@@ -69,5 +78,14 @@ final class BrowserWindow: NSWindow {
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "Untitled" : cleaned
+    }
+
+    /// ⌘F -- lives here for the same reason -printPage:/-exportAsPDF: do
+    /// (see those methods' doc comments): BrowserWindowController was hot
+    /// with concurrent Tab Groups work when this was written. Shows the find
+    /// bar (creating it lazily) and focuses it; if already showing, just
+    /// refocuses -- see FindBarController.show(in:).
+    @objc func toggleFindBar(_ sender: Any?) {
+        findBar.show(in: self)
     }
 }

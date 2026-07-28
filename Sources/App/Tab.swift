@@ -87,6 +87,14 @@ final class Tab: NSObject, EngineTabDelegate {
     /// counterpart.
     var isPinned = false
 
+    /// Which TabGroup (if any) this tab belongs to -- see
+    /// BrowserWindowController.tabGroups/moveTab(at:toGroup:). Mutually
+    /// exclusive with isPinned: moving into a group always unpins first,
+    /// and pinning always clears this (see the ordering invariant on
+    /// BrowserWindowController.tabs: [pinned][group sections][loose]).
+    /// Persisted via SessionSnapshot.Tab.groupId; pure UI/session state.
+    var groupId: UUID?
+
     weak var delegate: TabDelegate?
 
     init(profileName: String, initialURL: String) {
@@ -135,6 +143,27 @@ final class Tab: NSObject, EngineTabDelegate {
             return
         }
         browser.printToPDF(path: path, completion: completion)
+    }
+
+    func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
+        browser?.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
+    }
+
+    func stopFinding(clearSelection: Bool) {
+        browser?.stopFinding(clearSelection: clearSelection)
+    }
+
+    /// Set by FindBarController while it's attached to this tab and the find
+    /// bar is showing, to receive live match-count updates -- deliberately a
+    /// plain closure property rather than a new TabDelegate method: TabDelegate
+    /// is implemented by BrowserWindowController (hot with concurrent Tab
+    /// Groups work at the time this was written), and find results are
+    /// FindBarController's concern alone, not something the window controller
+    /// itself needs to know about.
+    var onFindResult: ((_ matchCount: Int, _ activeMatchOrdinal: Int, _ isFinalUpdate: Bool) -> Void)?
+
+    func engineTabDidUpdateFindResult(matchCount: Int, activeMatchOrdinal: Int, isFinalUpdate: Bool) {
+        onFindResult?(matchCount, activeMatchOrdinal, isFinalUpdate)
     }
 
     /// Seeds a restored tab's display title immediately at launch, before

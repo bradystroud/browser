@@ -49,6 +49,7 @@ enum ShortcutsHelp {
         #selector(AppDelegate.newWindow(_:)): .windowsAndProfiles,
         #selector(NSWindow.performClose(_:)): .windowsAndProfiles,
         #selector(BrowserWindowController.copyCurrentURL(_:)): .links,
+        #selector(BrowserWindow.toggleFindBar(_:)): .navigation,
         #selector(BrowserWindowController.addBookmark(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,

@@ -1,7 +1,9 @@
 #import "BRWClientHandler.h"
+#import "BRWContentBlockerInternal.h"
 
 #include <vector>
 
+#include "include/cef_parser.h"
 #include "include/wrapper/cef_helpers.h"
 
 namespace {
@@ -18,7 +20,8 @@ std::set<BRWClientHandler*>& Registry() {
 }
 }  // namespace
 
-BRWClientHandler::BRWClientHandler(NSView* host_view) : host_view_(host_view) {
+BRWClientHandler::BRWClientHandler(NSView* host_view, const std::string& profile_name)
+    : host_view_(host_view), profile_name_(profile_name) {
   Registry().insert(this);
 }
 
@@ -337,4 +340,44 @@ void BRWClientHandler::OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidDismissPermissionRequest:)]) {
     [delegate_ browserDidDismissPermissionRequest:prompt_id];
   }
+}
+
+void BRWClientHandler::OnFindResult(CefRefPtr<CefBrowser> browser,
+                                     int identifier,
+                                     int count,
+                                     const CefRect& selectionRect,
+                                     int activeMatchOrdinal,
+                                     bool finalUpdate) {
+  // |identifier| (a per-search-session id) and |selectionRect| (the
+  // matched text's on-screen location) aren't surfaced -- CEF/Chromium
+  // already highlights matches on the page itself, so this bridge only
+  // needs the count/position for the find bar's "N of M" label, not to draw
+  // anything itself.
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidUpdateFindResultWithMatchCount:activeMatchOrdinal:finalUpdate:)]) {
+    [delegate_ browserDidUpdateFindResultWithMatchCount:count
+                                     activeMatchOrdinal:activeMatchOrdinal
+                                            finalUpdate:finalUpdate];
+  }
+}
+
+BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    CefRefPtr<CefCallback> callback) {
+  // Runs on the IO thread, once per resource request -- deliberately no
+  // CEF_REQUIRE_UI_THREAD() here, unlike most of this file's other
+  // overrides. profile_name_ is set once at construction and never
+  // mutated, so reading it from any thread is safe without synchronization;
+  // BRWContentBlockerShouldBlock itself is documented lock-free-on-the-
+  // hot-path (see BRWContentBlockerInternal.h).
+  CefURLParts parts;
+  if (!CefParseURL(request->GetURL(), parts)) {
+    return RV_CONTINUE;  // Unparseable URL -- fail open, don't block.
+  }
+  std::string host = CefString(&parts.host).ToString();
+  if (BRWContentBlockerShouldBlock(profile_name_, host)) {
+    return RV_CANCEL;
+  }
+  return RV_CONTINUE;
 }

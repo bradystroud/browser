@@ -124,6 +124,11 @@ final class MainMenuBuilder {
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(.separator())
+        // Targets BrowserWindow (the NSWindow itself), not
+        // BrowserWindowController -- see BrowserWindow.toggleFindBar:'s own
+        // doc comment for why (browser-5kq.5).
+        menu.addItem(withTitle: "Find…", action: #selector(BrowserWindow.toggleFindBar(_:)), keyEquivalent: "f")
         return menu
     }
 

@@ -45,6 +45,11 @@ protocol EngineTabDelegate: AnyObject {
     /// The request identified by `promptId` no longer needs an answer --
     /// see BRWBrowser.h's -browserDidDismissPermissionRequest:.
     func engineTabDidDismissPermissionRequest(_ promptId: UInt64)
+
+    /// Result update for a search started via find(_:forward:matchCase:
+    /// findNext:) -- see BRWBrowser.h's -browserDidUpdateFindResultWithMatchCount:...
+    /// for the exact semantics (delivered repeatedly, not just once).
+    func engineTabDidUpdateFindResult(matchCount: Int, activeMatchOrdinal: Int, isFinalUpdate: Bool)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -73,6 +78,14 @@ protocol EngineTab: AnyObject {
     /// for exactly what's left at defaults. `completion` runs exactly once,
     /// on the main thread, with whether it succeeded and the same `path` back.
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void)
+
+    /// Searches the current page -- see BRWBrowser.h's -find:forward:
+    /// matchCase:findNext: for CEF's exact semantics (browser-5kq.5).
+    /// Results arrive via EngineTabDelegate.engineTabDidUpdateFindResult.
+    func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool)
+
+    /// Cancels any in-progress search -- see BRWBrowser.h's -stopFinding:.
+    func stopFinding(clearSelection: Bool)
 }
 
 /// Process-wide engine lifecycle + tab creation. A protocol with static
