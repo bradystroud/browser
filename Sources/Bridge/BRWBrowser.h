@@ -7,6 +7,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// Bitmask of permission kinds this app's UI actually prompts for -- a
+/// small, engine-agnostic subset of CEF's own much larger permission type
+/// lists (~4 media-access types plus ~29 generic prompt types; see
+/// BRWClientHandler.mm's translation from cef_media_access_permission_types_t
+/// / cef_permission_request_types_t). Only what browser-12m.2's scope covers:
+/// camera, microphone, geolocation, notifications.
+typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
+    BRWPermissionKindCamera = 1 << 0,
+    BRWPermissionKindMicrophone = 1 << 1,
+    BRWPermissionKindGeolocation = 1 << 2,
+    BRWPermissionKindNotifications = 1 << 3,
+};
+
 /// Per-tab navigation/state callbacks, all delivered on the main thread (CEF's
 /// UI thread is the main thread in this architecture -- see BRWMessagePump).
 /// One BRWBrowser has at most one delegate; the Swift-side tab model owns
@@ -47,6 +60,28 @@ NS_ASSUME_NONNULL_BEGIN
                              isComplete:(BOOL)isComplete
                             isCancelled:(BOOL)isCancelled
                             isInterrupted:(BOOL)isInterrupted;
+
+/// A page at `requestingOrigin` wants permission for `kinds` (e.g. camera
+/// and microphone together, for one getUserMedia call -- CEF requires an
+/// all-or-nothing answer for a bundled media request, so this is always one
+/// combined ask, never split per-kind). `promptId` is opaque, unique for the
+/// life of this specific request, and only for correlating with a later
+/// -browserDidDismissPermissionRequest: if the request goes away before the
+/// user answers (navigation, tab/browser close). Call `decision` at most
+/// once, on the main thread, with YES to allow or NO to deny -- and never
+/// after a matching -browserDidDismissPermissionRequest: for the same
+/// `promptId`, since CEF's own underlying callback may no longer be valid
+/// to invoke by then.
+- (void)browserDidRequestPermission:(BRWPermissionKind)kinds
+                            promptId:(uint64_t)promptId
+                    requestingOrigin:(NSString *)requestingOrigin
+                            decision:(void (^)(BOOL allow))decision;
+
+/// The request identified by `promptId` (see -browserDidRequestPermission:...)
+/// no longer needs an answer -- the underlying page moved on while it was
+/// still pending. Any UI still showing for it should be torn down without
+/// calling that request's `decision` block.
+- (void)browserDidDismissPermissionRequest:(uint64_t)promptId;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed

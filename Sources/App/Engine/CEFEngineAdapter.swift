@@ -83,6 +83,19 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
             id: downloadId, receivedBytes: receivedBytes, totalBytes: totalBytes,
             isComplete: isComplete, isCancelled: isCancelled, isInterrupted: isInterrupted)
     }
+
+    func browserDidRequestPermission(_ kinds: BRWPermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void) {
+        var engineKinds: EnginePermissionKind = []
+        if kinds.contains(.camera) { engineKinds.insert(.camera) }
+        if kinds.contains(.microphone) { engineKinds.insert(.microphone) }
+        if kinds.contains(.geolocation) { engineKinds.insert(.geolocation) }
+        if kinds.contains(.notifications) { engineKinds.insert(.notifications) }
+        delegate?.engineTabDidRequestPermission(engineKinds, promptId: promptId, requestingOrigin: requestingOrigin, decision: decision)
+    }
+
+    func browserDidDismissPermissionRequest(_ promptId: UInt64) {
+        delegate?.engineTabDidDismissPermissionRequest(promptId)
+    }
 }
 
 /// The engine the app builds against today. main.swift and AppDelegate

@@ -10,6 +10,13 @@ protocol TabDelegate: AnyObject {
 
     func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart)
     func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate)
+
+    /// Mirrors EngineTabDelegate.engineTabDidRequestPermission -- see that
+    /// method's doc comment for the promptId/decision contract.
+    func tab(_ tab: Tab, didRequestPermission kinds: EnginePermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void)
+
+    /// Mirrors EngineTabDelegate.engineTabDidDismissPermissionRequest.
+    func tab(_ tab: Tab, didDismissPermissionRequestWithId promptId: UInt64)
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -107,6 +114,16 @@ final class Tab: NSObject, EngineTabDelegate {
     func showDevTools() { browser?.showDevTools() }
     func closeDevTools() { browser?.closeDevTools() }
 
+    /// Seeds a restored tab's display title immediately at launch, before
+    /// its page has even started (re)loading, so the tab strip shows a real
+    /// title right away instead of the raw URL -- the real page's own title
+    /// arrives later via engineTabDidChangeTitle and naturally overwrites
+    /// this. See WindowManager.restoreSession.
+    func seedRestoredTitle(_ title: String) {
+        guard !title.isEmpty else { return }
+        self.title = title
+    }
+
     func close() {
         browser?.close()
         browser = nil
@@ -170,5 +187,13 @@ final class Tab: NSObject, EngineTabDelegate {
         delegate?.tab(self, didUpdateDownload: TabDownloadUpdate(
             downloadId: downloadId, receivedBytes: receivedBytes, totalBytes: totalBytes,
             isComplete: isComplete, isCancelled: isCancelled, isInterrupted: isInterrupted))
+    }
+
+    func engineTabDidRequestPermission(_ kinds: EnginePermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void) {
+        delegate?.tab(self, didRequestPermission: kinds, promptId: promptId, requestingOrigin: requestingOrigin, decision: decision)
+    }
+
+    func engineTabDidDismissPermissionRequest(_ promptId: UInt64) {
+        delegate?.tab(self, didDismissPermissionRequestWithId: promptId)
     }
 }

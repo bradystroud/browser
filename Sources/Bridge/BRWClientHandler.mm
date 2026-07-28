@@ -241,3 +241,100 @@ void BRWClientHandler::OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
                                  isCancelled:download_item->IsCanceled()
                                isInterrupted:download_item->IsInterrupted()];
 }
+
+namespace {
+BRWPermissionKind ToBRWPermissionKindFromMedia(uint32_t cef_media_permissions) {
+  BRWPermissionKind kinds = 0;
+  if (cef_media_permissions & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE) {
+    kinds |= BRWPermissionKindCamera;
+  }
+  if (cef_media_permissions & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE) {
+    kinds |= BRWPermissionKindMicrophone;
+  }
+  // Desktop capture (screen/window sharing) isn't one of the four kinds
+  // this app's UI supports yet (see BRWBrowser.h) -- intentionally not
+  // translated, so a desktop-capture-only request falls through to CEF's
+  // own default handling (deny, in Alloy style) rather than silently
+  // mis-mapping it onto camera/microphone.
+  return kinds;
+}
+
+BRWPermissionKind ToBRWPermissionKindFromPrompt(uint32_t cef_permission_types) {
+  BRWPermissionKind kinds = 0;
+  if (cef_permission_types & CEF_PERMISSION_TYPE_GEOLOCATION) {
+    kinds |= BRWPermissionKindGeolocation;
+  }
+  if (cef_permission_types & CEF_PERMISSION_TYPE_NOTIFICATIONS) {
+    kinds |= BRWPermissionKindNotifications;
+  }
+  // Every other CEF_PERMISSION_TYPE_* (clipboard, MIDI sysex, local fonts,
+  // storage access, etc.) isn't in this app's supported set yet -- falls
+  // through to CEF's own default (Alloy style: CEF_PERMISSION_RESULT_IGNORE)
+  // the same way an unsupported media type does above.
+  return kinds;
+}
+
+// Reserved so synthetic ids minted for the media-access path (which CEF
+// gives no id of its own) can never collide with a real CEF-issued
+// prompt_id from the permission-prompt path (OnShowPermissionPrompt /
+// OnDismissPermissionPrompt) -- both id spaces flow through the same
+// BRWBrowserDelegate methods on the Swift side.
+constexpr uint64_t kSyntheticPromptIdBit = 1ULL << 63;
+}  // namespace
+
+bool BRWClientHandler::OnRequestMediaAccessPermission(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefMediaAccessCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  BRWPermissionKind kinds = ToBRWPermissionKindFromMedia(requested_permissions);
+  if (kinds == 0 || !delegate_ ||
+      ![delegate_ respondsToSelector:@selector(browserDidRequestPermission:promptId:requestingOrigin:decision:)]) {
+    return false;  // Proceed with CEF's own default handling (deny, in Alloy style).
+  }
+
+  uint64_t prompt_id = kSyntheticPromptIdBit | next_media_prompt_id_++;
+  [delegate_ browserDidRequestPermission:kinds
+                                 promptId:prompt_id
+                         requestingOrigin:ToNSString(requesting_origin)
+                                 decision:^(BOOL allow) {
+    // getUserMedia requires allowed_permissions to exactly match
+    // required_permissions when granting -- partial grants aren't valid
+    // for a bundled request, see CefMediaAccessCallback::Continue's own
+    // doc comment.
+    callback->Continue(allow ? requested_permissions : 0);
+  }];
+  return true;
+}
+
+bool BRWClientHandler::OnShowPermissionPrompt(
+    CefRefPtr<CefBrowser> browser,
+    uint64_t prompt_id,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  BRWPermissionKind kinds = ToBRWPermissionKindFromPrompt(requested_permissions);
+  if (kinds == 0 || !delegate_ ||
+      ![delegate_ respondsToSelector:@selector(browserDidRequestPermission:promptId:requestingOrigin:decision:)]) {
+    return false;  // Proceed with CEF's own default handling (Alloy style: CEF_PERMISSION_RESULT_IGNORE).
+  }
+
+  [delegate_ browserDidRequestPermission:kinds
+                                 promptId:prompt_id
+                         requestingOrigin:ToNSString(requesting_origin)
+                                 decision:^(BOOL allow) {
+    callback->Continue(allow ? CEF_PERMISSION_RESULT_ACCEPT : CEF_PERMISSION_RESULT_DENY);
+  }];
+  return true;
+}
+
+void BRWClientHandler::OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                                  uint64_t prompt_id,
+                                                  cef_permission_request_result_t result) {
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidDismissPermissionRequest:)]) {
+    [delegate_ browserDidDismissPermissionRequest:prompt_id];
+  }
+}

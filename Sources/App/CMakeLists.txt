@@ -37,6 +37,7 @@ set(BROWSER_SWIFT_SRCS
   TabButtonView.swift
   TabStripView.swift
   WindowManager.swift
+  SessionStore.swift
   ShortcutsHelp.swift
   ShortcutsOverlayController.swift
   ShortcutsOverlayPanelFactory.swift
@@ -59,6 +60,8 @@ set(BROWSER_SWIFT_SRCS
   Furniture/BookmarksWindowController.swift
   Furniture/DownloadCoordinator.swift
   Furniture/DownloadsWindowController.swift
+  Permissions/PermissionStore.swift
+  Permissions/PermissionPromptController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 

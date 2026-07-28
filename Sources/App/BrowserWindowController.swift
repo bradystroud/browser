@@ -26,6 +26,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let profileDotView: ProfileDotView
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
+    private let permissionPrompt = PermissionPromptController()
+    /// The tab + promptId a permission request is currently showing UI for,
+    /// so a CEF-initiated dismiss (engineTabDidDismissPermissionRequest) for
+    /// an unrelated/stale promptId doesn't tear down a newer prompt.
+    private var pendingPermissionRequest: (tab: Tab, promptId: UInt64)?
 
     var activeTab: Tab? {
         guard let index = activeTabIndex, tabs.indices.contains(index) else { return nil }
@@ -67,16 +72,42 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// SetAsChild's bounds are still valid and every close path is still
     /// exercised for real), just invisible and focus-neutral on the actual
     /// display.
-    func show() {
+    ///
+    /// `restoring`/`activeIndex`, when non-empty, recreate a session-restored
+    /// window's tabs instead of the usual single `initialURL` tab -- see
+    /// WindowManager.restoreSession. All restored tabs are added inactive
+    /// first and only the designated active one is then explicitly
+    /// activated, so inactive tabs' CefBrowsers stay lazily uncreated until
+    /// the user actually clicks over to one (Tab.createBrowserIfNeeded is a
+    /// no-op until then) -- restoring 20 background tabs doesn't spin up 20
+    /// CefBrowsers at launch. Each also skips the "new tab focuses omnibox"
+    /// UX (Tab.needsInitialOmniboxFocus) -- that's for a user deliberately
+    /// opening a new tab, not an automatic relaunch.
+    func show(restoring restoreTabs: [SessionSnapshot.Tab] = [], activeIndex: Int = 0) {
         if CommandLineArgs.testNoActivate() {
             window?.setFrameOrigin(NSPoint(x: -3000, y: -3000))
             window?.orderBack(nil)
         } else {
             window?.makeKeyAndOrderFront(nil)
         }
-        if tabs.isEmpty {
+        guard tabs.isEmpty else { return }
+
+        guard !restoreTabs.isEmpty else {
             addTab(url: initialURL, makeActive: true)
+            return
         }
+
+        for restoreTab in restoreTabs {
+            let tab = addTab(url: restoreTab.url, makeActive: false)
+            tab.needsInitialOmniboxFocus = false
+            tab.seedRestoredTitle(restoreTab.title)
+        }
+        let validIndex = tabs.indices.contains(activeIndex) ? activeIndex : 0
+        tabStripView.reload(
+            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
+            selectedIndex: validIndex
+        )
+        activateTab(at: validIndex)
     }
 
     // MARK: - View setup
@@ -206,6 +237,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 self?.focusOmnibox(nil)
             }
         }
+        WindowManager.shared.scheduleSessionSave()
         return tab
     }
 
@@ -217,6 +249,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func activateTab(at index: Int, updateStrip: Bool = true) {
         guard tabs.indices.contains(index) else { return }
         autocomplete.dismiss()
+        dismissPermissionPromptIfShowing()
 
         if let currentIndex = activeTabIndex, tabs.indices.contains(currentIndex) {
             tabs[currentIndex].hostView.removeFromSuperview()
@@ -273,6 +306,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         } else {
             activeTabIndex = newActiveIndex
         }
+        // The tabs.isEmpty/window-closing early return above doesn't need
+        // this: closing the window fires onWindowClosed, which already
+        // schedules a save (see WindowManager.registerAndShow).
+        WindowManager.shared.scheduleSessionSave()
     }
 
     private func refreshToolbar(for tab: Tab) {
@@ -559,6 +596,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if let appDelegate = NSApp.delegate as? AppDelegate, tab === activeTab {
             appDelegate.mainMenuBuilder.rebuildRecentHistory(for: profile)
         }
+        WindowManager.shared.scheduleSessionSave()
     }
 
     func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart) {
@@ -569,14 +607,73 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         DownloadCoordinator.shared.updateDownload(profile: profile, info: info)
     }
 
+    /// A page wants camera/microphone/location/notification permission --
+    /// see EngineTabDelegate.engineTabDidRequestPermission for the full
+    /// contract. Checks PermissionStore for a remembered per-origin decision
+    /// first; only shows the Safari-style prompt popover if none exists yet.
+    func tab(_ tab: Tab, didRequestPermission kinds: EnginePermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void) {
+        let store = PermissionStoreManager.shared.store(for: profile)
+        if let remembered = store.decision(for: requestingOrigin, kinds: kinds) {
+            decision(remembered)
+            return
+        }
+
+        // No remembered decision, so answering means showing UI -- only
+        // possible for the tab that's actually visible right now. A
+        // background tab's undecided request just denies immediately rather
+        // than queuing until it becomes active. See
+        // docs/ai-tasks/permissions-notes.md for why this is a documented v1
+        // limitation rather than something more elaborate: media/
+        // geolocation/notification requests overwhelmingly fire from a user
+        // gesture on the tab that's already visible in practice.
+        guard tab === activeTab else {
+            decision(false)
+            return
+        }
+
+        pendingPermissionRequest = (tab, promptId)
+        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: omniboxField) { [weak self] allow in
+            self?.pendingPermissionRequest = nil
+            store.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            decision(allow)
+        }
+    }
+
+    func tab(_ tab: Tab, didDismissPermissionRequestWithId promptId: UInt64) {
+        guard pendingPermissionRequest?.promptId == promptId else { return }
+        pendingPermissionRequest = nil
+        // CEF-initiated: its own underlying callback may already be invalid,
+        // so this only tears down the UI, never answers the request -- see
+        // PermissionPromptController.dismiss(invokingDecision:)'s doc comment.
+        permissionPrompt.dismiss(invokingDecision: false)
+    }
+
+    private func dismissPermissionPromptIfShowing() {
+        guard pendingPermissionRequest != nil else { return }
+        pendingPermissionRequest = nil
+        permissionPrompt.dismiss(invokingDecision: true)
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
         autocomplete.dismiss()
+        dismissPermissionPromptIfShowing()
         for tab in tabs {
             tab.close()
         }
         tabs.removeAll()
         onWindowClosed?()
+    }
+
+    /// Window frame changes are part of the persisted session (see
+    /// WindowManager.scheduleSessionSave) -- debounced, so dragging/resizing
+    /// doesn't hammer disk on every intermediate frame.
+    func windowDidMove(_ notification: Notification) {
+        WindowManager.shared.scheduleSessionSave()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        WindowManager.shared.scheduleSessionSave()
     }
 }

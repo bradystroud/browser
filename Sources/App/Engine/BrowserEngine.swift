@@ -1,8 +1,22 @@
 import AppKit
 
-/// Per-tab navigation/state/download callbacks -- the engine-agnostic
-/// counterpart of the bridge's BRWBrowserDelegate (Objective-C protocol,
-/// CEF-specific naming). One EngineTab has at most one delegate.
+/// A small, engine-agnostic bitmask of permission kinds this app's UI
+/// actually prompts for -- mirrors BRWPermissionKind (BRWBrowser.h) 1:1; see
+/// CEFEngineAdapter.swift's translation and BRWClientHandler.mm's own
+/// translation from CEF's much larger permission type enums. Only what
+/// browser-12m.2 covers: camera, microphone, geolocation, notifications.
+struct EnginePermissionKind: OptionSet {
+    let rawValue: Int
+    static let camera = EnginePermissionKind(rawValue: 1 << 0)
+    static let microphone = EnginePermissionKind(rawValue: 1 << 1)
+    static let geolocation = EnginePermissionKind(rawValue: 1 << 2)
+    static let notifications = EnginePermissionKind(rawValue: 1 << 3)
+}
+
+/// Per-tab navigation/state/download/permission callbacks -- the
+/// engine-agnostic counterpart of the bridge's BRWBrowserDelegate
+/// (Objective-C protocol, CEF-specific naming). One EngineTab has at most
+/// one delegate.
 protocol EngineTabDelegate: AnyObject {
     func engineTabDidChangeTitle(_ title: String)
     func engineTabDidChangeURL(_ url: String)
@@ -17,6 +31,20 @@ protocol EngineTabDelegate: AnyObject {
 
     func engineTabDidBeginDownload(id: Int64, url: String, suggestedName: String, destinationPath: String)
     func engineTabDidUpdateDownload(id: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool)
+
+    /// A page at `requestingOrigin` wants permission for `kinds` (e.g.
+    /// camera and microphone together, for one getUserMedia call -- see
+    /// BRWBrowser.h's -browserDidRequestPermission:... for why a bundled
+    /// media request is always one combined ask). `promptId` correlates
+    /// with a later `engineTabDidDismissPermissionRequest` if the request
+    /// goes away before the user answers. Call `decision` at most once, on
+    /// the main thread, with true to allow or false to deny -- never after
+    /// a matching dismiss for the same `promptId`.
+    func engineTabDidRequestPermission(_ kinds: EnginePermissionKind, promptId: UInt64, requestingOrigin: String, decision: @escaping (Bool) -> Void)
+
+    /// The request identified by `promptId` no longer needs an answer --
+    /// see BRWBrowser.h's -browserDidDismissPermissionRequest:.
+    func engineTabDidDismissPermissionRequest(_ promptId: UInt64)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart

@@ -10,6 +10,7 @@
 #include "include/cef_display_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_download_item.h"
+#include "include/cef_permission_handler.h"
 
 #import "BRWBrowser.h"  // for the BRWBrowserDelegate protocol only.
 
@@ -17,14 +18,15 @@
 // NSView the browser is parented into so it can make the CEF-created native
 // view track that host view's size via ordinary AppKit autoresizing, instead
 // of hand-rolling resize-notification plumbing. Also forwards title/URL/
-// favicon/loading-state/navigation-commit/download changes to the
+// favicon/loading-state/navigation-commit/download/permission changes to the
 // BRWBrowserDelegate the Swift side installs, so a tab model can stay in sync
 // without polling CEF.
 class BRWClientHandler : public CefClient,
                          public CefLifeSpanHandler,
                          public CefLoadHandler,
                          public CefDisplayHandler,
-                         public CefDownloadHandler {
+                         public CefDownloadHandler,
+                         public CefPermissionHandler {
  public:
   explicit BRWClientHandler(NSView* host_view);
 
@@ -42,6 +44,7 @@ class BRWClientHandler : public CefClient,
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
 
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
@@ -91,6 +94,21 @@ class BRWClientHandler : public CefClient,
                           CefRefPtr<CefDownloadItem> download_item,
                           CefRefPtr<CefDownloadItemCallback> callback) override;
 
+  // CefPermissionHandler methods:
+  bool OnRequestMediaAccessPermission(CefRefPtr<CefBrowser> browser,
+                                      CefRefPtr<CefFrame> frame,
+                                      const CefString& requesting_origin,
+                                      uint32_t requested_permissions,
+                                      CefRefPtr<CefMediaAccessCallback> callback) override;
+  bool OnShowPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                              uint64_t prompt_id,
+                              const CefString& requesting_origin,
+                              uint32_t requested_permissions,
+                              CefRefPtr<CefPermissionPromptCallback> callback) override;
+  void OnDismissPermissionPrompt(CefRefPtr<CefBrowser> browser,
+                                 uint64_t prompt_id,
+                                 cef_permission_request_result_t result) override;
+
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   bool IsClosed() const { return closed_; }
 
@@ -135,6 +153,13 @@ class BRWClientHandler : public CefClient,
   bool close_requested_ = false;
   __weak id<BRWBrowserDelegate> delegate_;
   std::string pending_url_;
+  // Synthetic prompt ids for OnRequestMediaAccessPermission, which -- unlike
+  // OnShowPermissionPrompt -- gives us no id of its own. Reserves the high
+  // bit (see BRWClientHandler.mm's kSyntheticPromptIdBit) so these can never
+  // collide with a real CEF-issued prompt_id from the other path; both id
+  // spaces flow through the same BRWBrowserDelegate methods on the Swift
+  // side.
+  uint64_t next_media_prompt_id_ = 1;
 
   IMPLEMENT_REFCOUNTING(BRWClientHandler);
 };
