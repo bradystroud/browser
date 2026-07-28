@@ -1,4 +1,0 @@
-module AutofillCore {
-header "AutofillCore-Swift.h"
-export *
-}
