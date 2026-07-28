@@ -201,6 +201,16 @@ final class Tab: NSObject, EngineTabDelegate {
     func showDevTools() { browser?.showDevTools() }
     func closeDevTools() { browser?.closeDevTools() }
 
+    /// Responsive Design Mode (browser-6hi.2) -- see EngineTab's own doc
+    /// comment for why this doesn't need DevTools' own UI open at all.
+    func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
+        browser?.setResponsiveDesignMode(width: width, height: height, deviceScaleFactor: deviceScaleFactor, mobile: mobile)
+    }
+
+    func clearResponsiveDesignMode() {
+        browser?.clearResponsiveDesignMode()
+    }
+
     func print() { browser?.print() }
 
     /// Exports the current page to a PDF at `path` -- see

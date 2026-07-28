@@ -83,6 +83,16 @@ protocol EngineTab: AnyObject {
     func showDevTools()
     func closeDevTools()
 
+    /// Overrides this tab's viewport to a fixed device size/scale, the same
+    /// effect as DevTools' own device toolbar (browser-6hi.2) -- see
+    /// BRWBrowser.h's -setResponsiveDesignModeWithWidth:... for why this
+    /// works without opening DevTools' own UI at all.
+    func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool)
+
+    /// Turns off any override set by setResponsiveDesignMode(...) -- safe to
+    /// call even if none is currently active.
+    func clearResponsiveDesignMode()
+
     /// Opens the engine's native print dialog for this tab's current page --
     /// see BRWBrowser.h's -print for what "native" actually means in this
     /// Alloy-style app (browser-5kq.6).

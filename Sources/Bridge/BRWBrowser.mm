@@ -5,6 +5,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_string_visitor.h"
+#include "include/cef_values.h"
 
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
@@ -178,6 +179,31 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->CloseDevTools();
   }
+}
+
+- (void)setResponsiveDesignModeWithWidth:(int)width
+                                    height:(int)height
+                         deviceScaleFactor:(double)deviceScaleFactor
+                                    mobile:(BOOL)mobile {
+  if (!_handler || !_handler->GetBrowser()) {
+    return;
+  }
+  // message_id=0 means "assign the next number automatically" -- nothing in
+  // this bridge needs to correlate this call with its (fire-and-forget, from
+  // this method's own caller's perspective) DevTools protocol response.
+  CefRefPtr<CefDictionaryValue> params = CefDictionaryValue::Create();
+  params->SetInt("width", width);
+  params->SetInt("height", height);
+  params->SetDouble("deviceScaleFactor", deviceScaleFactor);
+  params->SetBool("mobile", mobile);
+  _handler->GetBrowser()->GetHost()->ExecuteDevToolsMethod(0, "Emulation.setDeviceMetricsOverride", params);
+}
+
+- (void)clearResponsiveDesignMode {
+  if (!_handler || !_handler->GetBrowser()) {
+    return;
+  }
+  _handler->GetBrowser()->GetHost()->ExecuteDevToolsMethod(0, "Emulation.clearDeviceMetricsOverride", nullptr);
 }
 
 - (void)print {

@@ -146,6 +146,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.openNewPrivateWindow()
     }
 
+    /// View > Responsive Design Mode > <device> -- overrides the key
+    /// window's active tab viewport via CDP (browser-6hi.2); see
+    /// BRWBrowser.h's -setResponsiveDesignModeWithWidth:... for why this
+    /// works without opening DevTools' own UI at all. `sender`'s
+    /// representedObject is the ResponsiveDevicePreset the menu item was
+    /// built for (see MainMenuBuilder.responsiveDesignModeMenu()).
+    @objc func setResponsiveDesignMode(_ sender: NSMenuItem) {
+        guard let preset = sender.representedObject as? ResponsiveDevicePreset,
+              let tab = WindowManager.shared.keyBrowserWindowController?.activeTab else { return }
+        tab.setResponsiveDesignMode(width: preset.width, height: preset.height, deviceScaleFactor: preset.deviceScaleFactor, mobile: preset.mobile)
+    }
+
+    /// View > Responsive Design Mode > Off.
+    @objc func clearResponsiveDesignMode(_ sender: Any?) {
+        WindowManager.shared.keyBrowserWindowController?.activeTab?.clearResponsiveDesignMode()
+    }
+
     @objc func newProfilePrompt(_ sender: Any?) {
         guard let profile = NewProfilePrompt.run() else { return }
         mainMenuBuilder.rebuildProfilesMenu()

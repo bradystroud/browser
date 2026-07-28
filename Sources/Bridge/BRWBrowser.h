@@ -164,6 +164,25 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// call when none is open.
 - (void)closeDevTools;
 
+/// Overrides this tab's viewport to a fixed size/scale, the same effect as
+/// DevTools' own device toolbar / Responsive Design Mode (browser-6hi.2) --
+/// implemented via the DevTools protocol's Emulation.setDeviceMetricsOverride
+/// (see BRWBrowser.mm's -setResponsiveDesignModeWithWidth:... for why this
+/// doesn't require the DevTools window to be open at all: CEF documents that
+/// ExecuteDevToolsMethod works without an active DevTools instance).
+/// `mobile` also flips the page into "mobile" layout mode -- viewport meta
+/// tag handling, matching media queries, etc. -- the same way DevTools'
+/// device toolbar does when a phone/tablet preset is selected.
+- (void)setResponsiveDesignModeWithWidth:(int)width
+                                    height:(int)height
+                         deviceScaleFactor:(double)deviceScaleFactor
+                                    mobile:(BOOL)mobile
+    NS_SWIFT_NAME(setResponsiveDesignMode(width:height:deviceScaleFactor:mobile:));
+
+/// Turns off any override set by -setResponsiveDesignModeWithWidth:... --
+/// safe to call even if none is currently active.
+- (void)clearResponsiveDesignMode;
+
 /// Opens CEF's native print dialog for this tab's current page (see
 /// BRWBrowser.mm's -print for what "native" actually means in this Alloy-
 /// style app -- verified empirically, not assumed, per browser-5kq.6).

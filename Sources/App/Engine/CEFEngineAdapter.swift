@@ -77,6 +77,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func close() { browser.close() }
     func showDevTools() { browser.showDevTools() }
     func closeDevTools() { browser.closeDevTools() }
+    func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
+        browser.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile)
+    }
+    func clearResponsiveDesignMode() { browser.clearResponsiveDesignMode() }
     func print() { browser.print() }
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         browser.printToPDF(withPath: path, completion: completion)

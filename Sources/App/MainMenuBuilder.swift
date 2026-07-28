@@ -171,6 +171,29 @@ final class MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Tab Overview", action: #selector(BrowserWindowController.showTabOverview(_:)), keyEquivalent: "\\")
             .keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(.separator())
+        let responsiveItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
+        responsiveItem.submenu = responsiveDesignModeMenu()
+        menu.addItem(responsiveItem)
+        return menu
+    }
+
+    /// browser-6hi.2 -- a fixed device-preset list plus "Off", each
+    /// targeting AppDelegate.setResponsiveDesignMode(_:)/
+    /// clearResponsiveDesignMode(_:) (not BrowserWindowController -- see
+    /// those methods' own doc comments for why the active-tab lookup lives
+    /// there instead). No "Custom Size…" entry (yet): the fixed presets
+    /// cover the common case simply; a custom-size prompt is a
+    /// straightforward follow-up if ever asked for.
+    private func responsiveDesignModeMenu() -> NSMenu {
+        let menu = NSMenu(title: "Responsive Design Mode")
+        for preset in ResponsiveDevicePreset.all {
+            let item = NSMenuItem(title: preset.name, action: #selector(AppDelegate.setResponsiveDesignMode(_:)), keyEquivalent: "")
+            item.representedObject = preset
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Off", action: #selector(AppDelegate.clearResponsiveDesignMode(_:)), keyEquivalent: "")
         return menu
     }
 
