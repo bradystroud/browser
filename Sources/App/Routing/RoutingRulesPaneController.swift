@@ -169,6 +169,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
 
     private func matchSummary(for match: RoutingRule.Match) -> String {
         var parts: [String] = []
+        if let urlContains = match.urlContains { parts.append("contains: \(urlContains)") }
         if let domainGlob = match.domainGlob { parts.append("domain: \(domainGlob)") }
         if let urlRegex = match.urlRegex { parts.append("regex: \(urlRegex)") }
         if let sourceBundleIds = match.sourceBundleIds, !sourceBundleIds.isEmpty {

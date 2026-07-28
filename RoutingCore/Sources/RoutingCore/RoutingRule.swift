@@ -10,18 +10,32 @@ import Foundation
 /// equivalent to but orderable ahead of `defaultProfileId`.
 public struct RoutingRule: Codable, Equatable, Identifiable {
     public struct Match: Codable, Equatable {
+        /// Plain case-insensitive substring match anywhere in the full URL
+        /// string -- the simplest mental model, and what most people reach
+        /// for first (see browser-hbr: a first-run user typed glob syntax
+        /// like `*ssw*` into the regex field, which silently compiled to
+        /// never-match). Listed first since it's the primary/expected field.
+        public var urlContains: String?
         /// `*.example.com` (subdomain-inclusive: matches example.com and any
         /// subdomain) or a bare `example.com` (matches that host only).
         public var domainGlob: String?
         /// Matched against the full URL string via NSRegularExpression. An
-        /// unparseable pattern is treated as a non-match, not a crash.
+        /// unparseable pattern is treated as a non-match, not a crash --
+        /// the rule editor validates this as-you-type instead, so it should
+        /// never reach a saved rule in practice.
         public var urlRegex: String?
         /// Bundle identifiers of the app the link was clicked in. Empty/nil
         /// source (sender PID unresolvable, or link opened with no
         /// attributable sender) never satisfies this field.
         public var sourceBundleIds: [String]?
 
-        public init(domainGlob: String? = nil, urlRegex: String? = nil, sourceBundleIds: [String]? = nil) {
+        public init(
+            urlContains: String? = nil,
+            domainGlob: String? = nil,
+            urlRegex: String? = nil,
+            sourceBundleIds: [String]? = nil
+        ) {
+            self.urlContains = urlContains
             self.domainGlob = domainGlob
             self.urlRegex = urlRegex
             self.sourceBundleIds = sourceBundleIds

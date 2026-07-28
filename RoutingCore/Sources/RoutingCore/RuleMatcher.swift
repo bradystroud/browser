@@ -32,6 +32,12 @@ public enum RuleMatcher {
     /// AND across every present (non-nil) field of `match`; absent fields
     /// are not evaluated at all.
     public static func matches(_ match: RoutingRule.Match, context: RoutingContext) -> Bool {
+        if let substring = match.urlContains {
+            guard context.url.range(of: substring, options: .caseInsensitive) != nil else {
+                return false
+            }
+        }
+
         if let glob = match.domainGlob {
             guard let host = host(of: context.url), matchesDomainGlob(glob, host: host) else {
                 return false

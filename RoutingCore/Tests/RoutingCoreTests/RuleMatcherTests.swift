@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import RoutingCore
 
@@ -33,11 +34,43 @@ struct DomainGlobTests {
     }
 }
 
+@Suite("URL contains matching")
+struct UrlContainsTests {
+    @Test("matches a substring anywhere in the URL")
+    func substringAnywhere() {
+        let match = RoutingRule.Match(urlContains: "ssw")
+        #expect(RuleMatcher.matches(match, context: RoutingContext(url: "https://mycompany.slack.com/archives/ssw-team/p123", sourceBundleId: nil)))
+        #expect(RuleMatcher.matches(match, context: RoutingContext(url: "https://ssw.com.au", sourceBundleId: nil)))
+        #expect(!RuleMatcher.matches(match, context: RoutingContext(url: "https://example.com", sourceBundleId: nil)))
+    }
+
+    @Test("matching is case-insensitive")
+    func caseInsensitive() {
+        let match = RoutingRule.Match(urlContains: "SSW")
+        #expect(RuleMatcher.matches(match, context: RoutingContext(url: "https://ssw.com.au", sourceBundleId: nil)))
+
+        let lowerMatch = RoutingRule.Match(urlContains: "ssw")
+        #expect(RuleMatcher.matches(lowerMatch, context: RoutingContext(url: "https://SSW.com.au", sourceBundleId: nil)))
+    }
+
+    @Test("glob syntax like *ssw* is taken literally, not as a wildcard -- the whole point of this field")
+    func globSyntaxIsLiteral() {
+        // If a caller passes the literal string "*ssw*" (e.g. a user who
+        // didn't realize this field isn't a glob), it's matched as that
+        // literal substring, which will almost never appear in a real URL --
+        // this documents the behavior, it's the editor's job (not the
+        // matcher's) to steer people away from typing glob syntax here.
+        let match = RoutingRule.Match(urlContains: "*ssw*")
+        #expect(!RuleMatcher.matches(match, context: RoutingContext(url: "https://ssw.com.au", sourceBundleId: nil)))
+    }
+}
+
 @Suite("Rule.Match AND semantics")
 struct MatchSemanticsTests {
     @Test("all present fields must match (AND)")
     func andAcrossFields() {
         let match = RoutingRule.Match(
+            urlContains: "sub",
             domainGlob: "*.example.com",
             urlRegex: "^https://",
             sourceBundleIds: ["com.tinyspeck.slackmacgap"]
@@ -46,6 +79,11 @@ struct MatchSemanticsTests {
         // Every field satisfied.
         #expect(RuleMatcher.matches(match, context: RoutingContext(
             url: "https://sub.example.com/x", sourceBundleId: "com.tinyspeck.slackmacgap"
+        )))
+
+        // urlContains fails.
+        #expect(!RuleMatcher.matches(match, context: RoutingContext(
+            url: "https://other.example.com/x", sourceBundleId: "com.tinyspeck.slackmacgap"
         )))
 
         // Domain fails.
@@ -91,6 +129,49 @@ struct MatchSemanticsTests {
     func invalidRegexIsNonMatch() {
         let match = RoutingRule.Match(urlRegex: "(unclosed")
         #expect(!RuleMatcher.matches(match, context: RoutingContext(url: "https://example.com", sourceBundleId: nil)))
+    }
+
+    @Test("an absent urlContains is vacuously true, like every other optional field")
+    func absentUrlContainsIsVacuous() {
+        let match = RoutingRule.Match(domainGlob: "*.example.com")
+        #expect(RuleMatcher.matches(match, context: RoutingContext(url: "https://example.com/anything", sourceBundleId: nil)))
+    }
+}
+
+@Suite("RoutingConfiguration migration/compat")
+struct MigrationCompatTests {
+    @Test("a routing.json written before urlContains existed still decodes, with urlContains nil")
+    func oldShapeWithoutUrlContainsDecodes() throws {
+        let oldShapeJSON = """
+        {
+          "rules": [
+            {
+              "id": "6BA7B810-9DAD-11D1-80B4-00C04FD430C8",
+              "match": { "domainGlob": "*.example.com" },
+              "action": { "profileId": "work" }
+            }
+          ],
+          "defaultProfileId": "default"
+        }
+        """
+        let data = Data(oldShapeJSON.utf8)
+        let decoded = try JSONDecoder().decode(RoutingConfiguration.self, from: data)
+
+        #expect(decoded.rules.count == 1)
+        #expect(decoded.rules[0].match.urlContains == nil)
+        #expect(decoded.rules[0].match.domainGlob == "*.example.com")
+        #expect(decoded.defaultProfileId == "default")
+
+        // And the decoded rule still matches exactly as it did before.
+        #expect(RuleMatcher.matches(decoded.rules[0].match, context: RoutingContext(url: "https://example.com", sourceBundleId: nil)))
+    }
+
+    @Test("a rule with urlContains round-trips through encode/decode")
+    func urlContainsRoundTrips() throws {
+        let rule = RoutingRule(match: .init(urlContains: "ssw"), action: .init(profileId: "work"))
+        let data = try JSONEncoder().encode(rule)
+        let decoded = try JSONDecoder().decode(RoutingRule.self, from: data)
+        #expect(decoded == rule)
     }
 }
 
