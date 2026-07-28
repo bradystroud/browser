@@ -175,6 +175,10 @@ final class MainMenuBuilder {
         let responsiveItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
         responsiveItem.submenu = responsiveDesignModeMenu()
         menu.addItem(responsiveItem)
+        menu.addItem(.separator())
+        // browser-7jz.1 -- targets AppDelegate (not BrowserWindowController),
+        // matching the Responsive Design Mode item just above.
+        menu.addItem(withTitle: "Enter Picture in Picture", action: #selector(AppDelegate.togglePictureInPicture(_:)), keyEquivalent: "")
         return menu
     }
 

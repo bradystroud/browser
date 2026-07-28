@@ -146,6 +146,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.openNewPrivateWindow()
     }
 
+    /// View > Enter Picture in Picture (browser-7jz.1) -- see
+    /// PictureInPictureScript's own doc comment for why this is a plain
+    /// fire-and-forget executeJavaScript(_:) call, not routed through
+    /// PageMessageDispatcher.
+    @objc func togglePictureInPicture(_ sender: Any?) {
+        WindowManager.shared.keyBrowserWindowController?.activeTab?.executeJavaScript(PictureInPictureScript.toggleSource)
+    }
+
     /// View > Responsive Design Mode > <device> -- overrides the key
     /// window's active tab viewport via CDP (browser-6hi.2); see
     /// BRWBrowser.h's -setResponsiveDesignModeWithWidth:... for why this
