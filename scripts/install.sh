@@ -20,6 +20,17 @@ for _ in $(seq 1 20); do
 done
 pkill -f "Browser.app/Contents/MacOS/Browser" 2>/dev/null || true
 sleep 1
+# A hung instance can ignore SIGTERM (pre-fix builds had a quit bug that did
+# exactly that) — escalate to SIGKILL and verify, or the subsequent `open`
+# will just re-activate the stale running process instead of the new bundle.
+if pgrep -f "Browser.app/Contents/MacOS/Browser" >/dev/null; then
+  pkill -9 -f "Browser.app/Contents/MacOS/Browser" 2>/dev/null || true
+  sleep 1
+fi
+if pgrep -f "Browser.app/Contents/MacOS/Browser" >/dev/null; then
+  echo "ERROR: a Browser process refuses to die; aborting install" >&2
+  exit 1
+fi
 
 rm -rf "$APP_DST"
 ditto "$APP_SRC" "$APP_DST"
