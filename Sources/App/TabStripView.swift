@@ -4,6 +4,12 @@ protocol TabStripViewDelegate: AnyObject {
     func tabStripView(_ tabStripView: TabStripView, didSelectTabAt index: Int)
     func tabStripView(_ tabStripView: TabStripView, didCloseTabAt index: Int)
     func tabStripViewDidClickNewTab(_ tabStripView: TabStripView)
+
+    /// Tab strip's context menu -- "Pin Tab"/"Unpin Tab" (see TabButtonView).
+    func tabStripView(_ tabStripView: TabStripView, didRequestPinToggleAt index: Int)
+
+    /// Tab strip's context menu -- "Close Other Tabs".
+    func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int)
 }
 
 /// Compact Safari-like tab strip: fixed-height row of TabButtonViews sized to
@@ -16,6 +22,7 @@ final class TabStripView: NSView {
     struct DisplayInfo {
         let title: String
         let favicon: NSImage?
+        let isPinned: Bool
     }
 
     private var infos: [DisplayInfo] = []
@@ -33,6 +40,10 @@ final class TabStripView: NSView {
 
     private static let minTabWidth: CGFloat = 80
     private static let maxTabWidth: CGFloat = 200
+    /// Pinned tabs render at this fixed, narrow width regardless of strip
+    /// width or tab count -- just enough for a centered favicon, no title,
+    /// no close button (Safari-style).
+    private static let pinnedTabWidth: CGFloat = 36
     private static let tabSpacing: CGFloat = 2
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 24
@@ -77,6 +88,14 @@ final class TabStripView: NSView {
         }
     }
 
+    /// ⌘W on a pinned active tab is a no-op (see BrowserWindowController.
+    /// closeTab(_:)) -- this gives the user visible feedback that the key
+    /// press registered instead of silently doing nothing.
+    func shakeTab(at index: Int) {
+        guard tabButtons.indices.contains(index) else { return }
+        tabButtons[index].shake()
+    }
+
     private func rebuildButtons() {
         for button in tabButtons {
             button.removeFromSuperview()
@@ -84,6 +103,7 @@ final class TabStripView: NSView {
         tabButtons = infos.enumerated().map { index, info in
             let button = TabButtonView(index: index, title: info.title)
             button.setFavicon(info.favicon)
+            button.isPinned = info.isPinned
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in
                 guard let self else { return }
@@ -92,6 +112,14 @@ final class TabStripView: NSView {
             button.onClose = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didCloseTabAt: index)
+            }
+            button.onPinToggle = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestPinToggleAt: index)
+            }
+            button.onCloseOthers = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestCloseOthersAt: index)
             }
             addSubview(button)
             return button
@@ -103,14 +131,25 @@ final class TabStripView: NSView {
         layoutTabs()
     }
 
+    /// Pinned tabs (always sorted to the front, see BrowserWindowController.
+    /// pinTab/unpinTab) get a fixed narrow width off the top; only unpinned
+    /// tabs share whatever width remains, same even-width-down-to-a-minimum
+    /// scheme as before pinned tabs existed.
     private func layoutTabs() {
         let available = max(0, bounds.width - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
-        let count = max(tabButtons.count, 1)
-        let evenWidth = tabButtons.isEmpty ? available : (available - Self.tabSpacing * CGFloat(count - 1)) / CGFloat(count)
-        let width = min(Self.maxTabWidth, max(Self.minTabWidth, evenWidth))
+        let totalCount = tabButtons.count
+        let pinnedCount = tabButtons.filter { $0.isPinned }.count
+        let unpinnedCount = totalCount - pinnedCount
+
+        let totalSpacing = totalCount > 1 ? Self.tabSpacing * CGFloat(totalCount - 1) : 0
+        let pinnedWidthTotal = CGFloat(pinnedCount) * Self.pinnedTabWidth
+        let remainingForUnpinned = max(0, available - totalSpacing - pinnedWidthTotal)
+        let evenUnpinnedWidth = unpinnedCount > 0 ? remainingForUnpinned / CGFloat(unpinnedCount) : 0
+        let unpinnedWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenUnpinnedWidth))
 
         var x = Self.sidePadding
         for button in tabButtons {
+            let width = button.isPinned ? Self.pinnedTabWidth : unpinnedWidth
             button.frame = NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8))
             x += width + Self.tabSpacing
         }

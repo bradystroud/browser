@@ -79,6 +79,14 @@ final class Tab: NSObject, EngineTabDelegate {
     private(set) var faviconImage: NSImage?
     private var faviconFetchKey: String?
 
+    /// Pinned tabs sort to a contiguous prefix at the front of the owning
+    /// window's `tabs` array (see BrowserWindowController.pinTab/unpinTab)
+    /// and render compact -- Safari-style: small fixed width, favicon-only,
+    /// no close button, and immune to ⌘W. Persisted via
+    /// SessionSnapshot.Tab.isPinned; pure UI/session state, no engine-side
+    /// counterpart.
+    var isPinned = false
+
     weak var delegate: TabDelegate?
 
     init(profileName: String, initialURL: String) {

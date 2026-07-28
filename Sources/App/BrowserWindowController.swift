@@ -101,13 +101,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             let tab = addTab(url: restoreTab.url, makeActive: false)
             tab.needsInitialOmniboxFocus = false
             tab.seedRestoredTitle(restoreTab.title)
+            tab.isPinned = restoreTab.isPinned
         }
-        let validIndex = tabs.indices.contains(activeIndex) ? activeIndex : 0
-        tabStripView.reload(
-            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
-            selectedIndex: validIndex
-        )
+        // Defensive: the pinned-tabs-are-a-contiguous-prefix invariant every
+        // other pin/unpin/index operation in this class relies on is only
+        // guaranteed for state this class itself produced -- a hand-edited
+        // or otherwise malformed session.json could have isPinned tabs out
+        // of prefix order. A stable sort (Swift's sort is stable) here costs
+        // nothing and guarantees the strip renders correctly from the first
+        // frame regardless. Tracked by object (not index) through the sort,
+        // since sorting can move the persisted activeIndex's tab elsewhere.
+        let requestedActiveTab = tabs.indices.contains(activeIndex) ? tabs[activeIndex] : nil
+        tabs.sort { $0.isPinned && !$1.isPinned }
+        let validIndex = requestedActiveTab.flatMap { tab in tabs.firstIndex { $0 === tab } } ?? 0
+        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: validIndex)
         activateTab(at: validIndex)
+    }
+
+    private var currentDisplayInfos: [TabStripView.DisplayInfo] {
+        tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned) }
     }
 
     // MARK: - View setup
@@ -213,7 +225,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabs.append(tab)
         let newIndex = tabs.count - 1
         tabStripView.reload(
-            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
+            tabs: currentDisplayInfos,
             selectedIndex: makeActive ? newIndex : (activeTabIndex ?? newIndex)
         )
         if makeActive {
@@ -295,10 +307,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             newActiveIndex = 0
         }
 
-        tabStripView.reload(
-            tabs: tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage) },
-            selectedIndex: newActiveIndex
-        )
+        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: newActiveIndex)
 
         if wasActive {
             activeTabIndex = nil
@@ -309,6 +318,57 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // The tabs.isEmpty/window-closing early return above doesn't need
         // this: closing the window fires onWindowClosed, which already
         // schedules a save (see WindowManager.registerAndShow).
+        WindowManager.shared.scheduleSessionSave()
+    }
+
+    /// Context menu's "Close Other Tabs": closes every unpinned tab except
+    /// the one at `keepIndex` (which may itself be pinned or unpinned).
+    /// Pinned tabs are never closed by this action -- matching Safari/
+    /// Chrome's treatment of pins as surviving a bulk "close others."
+    /// Iterates indices in reverse so removing tabs as we go never
+    /// invalidates an index not yet visited.
+    func closeOtherTabs(keeping keepIndex: Int) {
+        guard tabs.indices.contains(keepIndex) else { return }
+        let keepTab = tabs[keepIndex]
+        for index in tabs.indices.reversed() {
+            guard tabs[index] !== keepTab, !tabs[index].isPinned else { continue }
+            closeTab(at: index)
+        }
+    }
+
+    /// Pins the tab at `index`, moving it to the end of the pinned section
+    /// (Safari's placement for a newly pinned tab) -- a no-op if already
+    /// pinned or the index is out of range.
+    func pinTab(at index: Int) {
+        guard tabs.indices.contains(index), !tabs[index].isPinned else { return }
+        movePinState(at: index, toPinned: true)
+    }
+
+    /// Unpins the tab at `index`, moving it to the head of the unpinned
+    /// section (explicitly requested: "unpinning returns it to the unpinned
+    /// section head") -- a no-op if not pinned or the index is out of range.
+    func unpinTab(at index: Int) {
+        guard tabs.indices.contains(index), tabs[index].isPinned else { return }
+        movePinState(at: index, toPinned: false)
+    }
+
+    /// Moves the tab at `index` into (or out of) the pinned section,
+    /// preserving the pinned-tabs-are-a-contiguous-prefix invariant the rest
+    /// of this class relies on (⌘1-9 in BrowserWindow.performKeyEquivalent,
+    /// Ctrl+Tab cycling, and every tabs[index]-based method here all just
+    /// walk `tabs` in array order, with no separate "display order" to keep
+    /// in sync). Both directions reduce to the same move: "insert right
+    /// after however many pinned tabs remain" -- that's the end of the
+    /// pinned section when pinning, and the head of the unpinned section
+    /// (immediately after the last remaining pinned tab) when unpinning.
+    private func movePinState(at index: Int, toPinned: Bool) {
+        let activeTabObject = activeTab
+        let tab = tabs.remove(at: index)
+        tab.isPinned = toPinned
+        let insertionIndex = tabs.filter { $0.isPinned }.count
+        tabs.insert(tab, at: insertionIndex)
+        activeTabIndex = activeTabObject.flatMap { obj in tabs.firstIndex { $0 === obj } }
+        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: activeTabIndex ?? 0)
         WindowManager.shared.scheduleSessionSave()
     }
 
@@ -364,6 +424,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         newTab(nil)
     }
 
+    func tabStripView(_ tabStripView: TabStripView, didRequestPinToggleAt index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        if tabs[index].isPinned {
+            unpinTab(at: index)
+        } else {
+            pinTab(at: index)
+        }
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int) {
+        closeOtherTabs(keeping: index)
+    }
+
     // MARK: - Menu / keyboard actions (reached via the responder chain --
     // NSWindowController is automatically next-responder after its window).
 
@@ -374,8 +447,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         addTab(url: "about:blank", makeActive: true)
     }
 
+    /// ⌘W / File > Close Tab -- both this menu item's keyboard shortcut and
+    /// an explicit click share this one selector, so a pinned active tab
+    /// blocks both the same way: a brief shake instead of closing. This is
+    /// deliberately narrower than closeTab(at:) itself -- the tab strip's
+    /// context menu "Close Tab" calls that directly (see
+    /// tabStripView(_:didCloseTabAt:)), and does close a pinned tab, since
+    /// that's an explicit, deliberate action rather than a habitual ⌘W.
     @objc func closeTab(_ sender: Any?) {
         guard let index = activeTabIndex else { return }
+        guard !tabs[index].isPinned else {
+            tabStripView.shakeTab(at: index)
+            return
+        }
         closeTab(at: index)
     }
 

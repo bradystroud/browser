@@ -111,7 +111,7 @@ final class WindowManager {
     /// empty, unrestorable entry.
     private func currentSnapshot() -> SessionSnapshot {
         let windows: [SessionSnapshot.Window] = windowControllers.compactMap { controller in
-            let tabs = controller.tabs.map { SessionSnapshot.Tab(url: $0.urlString, title: $0.title) }
+            let tabs = controller.tabs.map { SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned) }
             guard !tabs.isEmpty, let frame = controller.window?.frame else { return nil }
             return SessionSnapshot.Window(
                 profileId: controller.profile.id,

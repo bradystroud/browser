@@ -16,6 +16,35 @@ struct SessionSnapshot: Codable {
     struct Tab: Codable {
         let url: String
         let title: String
+        /// Absent in a session.json written before pinned tabs (browser-
+        /// rhi.2) shipped -- decodeIfPresent below defaults a missing key to
+        /// false rather than failing to decode the whole file, so an old
+        /// session still loads (every tab just comes back unpinned).
+        let isPinned: Bool
+
+        init(url: String, title: String, isPinned: Bool = false) {
+            self.url = url
+            self.title = title
+            self.isPinned = isPinned
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case url, title, isPinned
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            url = try container.decode(String.self, forKey: .url)
+            title = try container.decode(String.self, forKey: .title)
+            isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(url, forKey: .url)
+            try container.encode(title, forKey: .title)
+            try container.encode(isPinned, forKey: .isPinned)
+        }
     }
 
     struct Window: Codable {
