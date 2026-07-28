@@ -88,6 +88,10 @@ set(BROWSER_SWIFT_SRCS
   Autofill/AddressStoreManager.swift
   Autofill/SaveAutofillPromptController.swift
   Autofill/PaymentAddressAutofillCoordinator.swift
+  Autofill/CardsPaneController.swift
+  Autofill/AddressFormSheetController.swift
+  Autofill/AddressesPaneController.swift
+  Autofill/AutofillPaneController.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift

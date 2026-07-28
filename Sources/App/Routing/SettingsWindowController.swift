@@ -7,10 +7,13 @@ import AppKit
 /// "Privacy" (per-profile ad/tracker blocking -- see
 /// PrivacyPaneController, browser-12m.5.1), "Start Page" (per-profile
 /// start-page customization -- see StartPageSettingsPaneController,
-/// browser-5kq.3/.4), and "Passwords" (per-profile saved-credential list,
-/// Touch-ID-gated reveal, delete -- see PasswordsPaneController,
-/// browser-ojh.1). This controller just owns the window and composes the
-/// panes; all the section-specific logic lives in their own controllers.
+/// browser-5kq.3/.4), and "Autofill" (per-profile saved passwords/cards/
+/// addresses as three inner sub-tabs, Touch-ID-gated reveal for the
+/// secret bits -- see AutofillPaneController, browser-ojh.1/.2; this used
+/// to be a standalone "Passwords" top-level tab before browser-ojh.2 added
+/// cards/addresses alongside it). This controller just owns the window and
+/// composes the panes; all the section-specific logic lives in their own
+/// controllers.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
@@ -18,7 +21,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let profilesPane = ProfilesPaneController()
     private let privacyPane = PrivacyPaneController()
     private let startPagePane = StartPageSettingsPaneController()
-    private let passwordsPane = PasswordsPaneController()
+    private let autofillPane = AutofillPaneController()
     private let tabView = NSTabView()
 
     private init() {
@@ -44,7 +47,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         profilesPane.reload()
         privacyPane.reload()
         startPagePane.reload()
-        passwordsPane.reload()
+        autofillPane.reload()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -79,15 +82,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         startPageItem.label = "Start Page"
         startPageItem.view = startPagePane.view
 
-        let passwordsItem = NSTabViewItem(identifier: "passwords")
-        passwordsItem.label = "Passwords"
-        passwordsItem.view = passwordsPane.view
+        let autofillItem = NSTabViewItem(identifier: "autofill")
+        autofillItem.label = "Autofill"
+        autofillItem.view = autofillPane.view
 
         tabView.addTabViewItem(routingItem)
         tabView.addTabViewItem(profilesItem)
         tabView.addTabViewItem(privacyItem)
         tabView.addTabViewItem(startPageItem)
-        tabView.addTabViewItem(passwordsItem)
+        tabView.addTabViewItem(autofillItem)
         contentView.addSubview(tabView)
     }
 
