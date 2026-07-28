@@ -33,6 +33,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
+    /// Per-tab page thumbnails for the Tab Overview grid (browser-rhi.3) --
+    /// see TabThumbnailCache's doc comment for why capture only ever
+    /// happens at deactivation time (captureThumbnail(for:), called from
+    /// activateTab below).
+    private let thumbnailCache = TabThumbnailCache()
+    /// One overview grid per window -- see TabOverviewController's doc
+    /// comment for why this isn't a global singleton the way
+    /// ShortcutsOverlayController is. `self` is fully initialized by the
+    /// time this first actually runs (lazy), even though it's referenced
+    /// in its own initializer.
+    private lazy var tabOverview = TabOverviewController(windowController: self)
     /// The tab + promptId a permission request is currently showing UI for,
     /// so a CEF-initiated dismiss (engineTabDidDismissPermissionRequest) for
     /// an unrelated/stale promptId doesn't tear down a newer prompt.
@@ -301,6 +312,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         dismissPermissionPromptIfShowing()
 
         if let currentIndex = activeTabIndex, tabs.indices.contains(currentIndex) {
+            captureThumbnail(for: tabs[currentIndex])
             tabs[currentIndex].hostView.removeFromSuperview()
         }
 
@@ -321,11 +333,42 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         updateWindowTitle(for: tab)
     }
 
+    /// Snapshots `tab`'s current on-screen appearance into thumbnailCache,
+    /// for the Tab Overview grid (browser-rhi.3). Must be called *before*
+    /// removing hostView from its superview -- NSView.cacheDisplay(in:to:)
+    /// needs the view still attached to a window to paint reliably; a
+    /// detached view's cached display is undefined/stale (see
+    /// TabThumbnailCache's own doc comment). This is the only place a
+    /// thumbnail is ever captured -- a tab that's never been deactivated
+    /// this session (including a lazy-restored background tab whose
+    /// CefBrowser was never created) simply has none yet, and the overview
+    /// falls back to a favicon+title placeholder for it.
+    private func captureThumbnail(for tab: Tab) {
+        let hostView = tab.hostView
+        guard hostView.bounds.width > 0, hostView.bounds.height > 0,
+              let rep = hostView.bitmapImageRepForCachingDisplay(in: hostView.bounds) else { return }
+        hostView.cacheDisplay(in: hostView.bounds, to: rep)
+        let image = NSImage(size: hostView.bounds.size)
+        image.addRepresentation(rep)
+        thumbnailCache.setImage(image, for: tab.id)
+    }
+
+    /// TabOverviewController's read-only window into thumbnailCache.
+    func thumbnailImage(forTabId tabId: UUID) -> NSImage? {
+        thumbnailCache.image(for: tabId)
+    }
+
+    /// ⇧⌘\ / View > Tab Overview -- toggles this window's overview grid.
+    @objc func showTabOverview(_ sender: Any?) {
+        tabOverview.toggle()
+    }
+
     func closeTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         let wasActive = index == activeTabIndex
 
         tabs[index].hostView.removeFromSuperview()
+        thumbnailCache.removeImage(for: tabs[index].id)
         tabs[index].close()
         tabs.remove(at: index)
 
@@ -1005,6 +1048,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func windowWillClose(_ notification: Notification) {
         autocomplete.dismiss()
         dismissPermissionPromptIfShowing()
+        tabOverview.dismiss()
         for tab in tabs {
             tab.close()
         }
