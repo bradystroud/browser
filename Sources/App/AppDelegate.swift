@@ -86,14 +86,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A route already queued here means this was a cold launch via a
         // routed link (see applicationWillFinishLaunching above) -- in that
         // case markReady() below opens the right profile's window for that
-        // link, and opening the usual --profile/--url default window on top
-        // of it would just be a spurious extra window.
+        // link, regardless of session restore (see below) -- a routed link
+        // click always means "open this," restored or not.
         let coldLaunchWasRouted = RoutingCoordinator.shared.hasPendingRoutes
         RoutingCoordinator.shared.markReady()
 
-        if !coldLaunchWasRouted {
-            let profile = ProfileManager.shared.profileOrCreate(named: CommandLineArgs.profileName())
-            WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
+        // Holding Shift at launch skips restore entirely -- the standard
+        // "hold a modifier to skip the usual startup behavior" convention
+        // (same mechanism macOS itself uses for login items). Checked here,
+        // early in the launch sequence, while the key is still very likely
+        // held from whatever launched the app moments ago.
+        let skipRestore = NSEvent.modifierFlags.contains(.shift)
+        let restoredAnyWindow = !skipRestore && WindowManager.shared.restoreSession()
+
+        // An explicit --profile/--url override always still opens its own
+        // window, restored session or not (see CommandLineArgs.
+        // hasExplicitProfileOrURLOverride's doc comment) -- only a plain
+        // launch (no override, no route) skips the usual default window
+        // when restore already provided one.
+        if coldLaunchWasRouted || !restoredAnyWindow || CommandLineArgs.hasExplicitProfileOrURLOverride() {
+            if !coldLaunchWasRouted {
+                let profile = ProfileManager.shared.profileOrCreate(named: CommandLineArgs.profileName())
+                WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
+            }
         }
     }
 

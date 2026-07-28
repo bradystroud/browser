@@ -53,4 +53,16 @@ enum CommandLineArgs {
         try? FileManager.default.createDirectory(at: profilesRoot, withIntermediateDirectories: true)
         return profilesRoot.path
     }
+
+    /// True when the launch explicitly asked for a particular profile/URL
+    /// (`--profile`/`--url`), as opposed to profileName()/initialURL() just
+    /// returning their defaults. Used by AppDelegate to decide whether the
+    /// usual default window should still open alongside a restored session --
+    /// an explicit override is a deliberate ask ("open this"), so it always
+    /// gets its own window even when restore already reopened yesterday's
+    /// tabs, the same way a routed link launch does.
+    static func hasExplicitProfileOrURLOverride() -> Bool {
+        let args = CommandLine.arguments
+        return args.contains("--profile") || args.contains("--url")
+    }
 }
