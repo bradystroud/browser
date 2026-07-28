@@ -1,0 +1,11 @@
+Target dependency graph (4 targets)
+Target 'AllIncludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'AutofillCoreTests-product' in project 'AutofillCore'
+➜ Dependency on target 'AutofillCoreTests-product' in project 'AutofillCore' via transitive dependency through 'AutofillCoreTests-test-runner'
+➜ Explicit dependency on target 'AutofillCore-product' in project 'AutofillCore'
+➜ Explicit dependency on target 'AutofillCore' in project 'AutofillCore'
+Target 'AutofillCore-product' in project 'AutofillCore'
+➜ Explicit dependency on target 'AutofillCore' in project 'AutofillCore'
+Target 'AutofillCoreTests-product' in project 'AutofillCore'
+➜ Explicit dependency on target 'AutofillCore' in project 'AutofillCore'
+Target 'AutofillCore' in project 'AutofillCore' (no dependencies)

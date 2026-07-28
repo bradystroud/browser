@@ -1,0 +1,49 @@
+{
+  "" : {
+    "diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AutofillCoreTests-primary.dia",
+    "emit-module-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AutofillCoreTests-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AutofillCoreTests-primary-emit-module.dia",
+    "pch" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AutofillCoreTests-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AutofillCoreTests-primary.swiftdeps"
+  },
+  "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/DerivedSources/test_entry_point.swift" : {
+    "const-values" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.swiftconstvalues",
+    "dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.d",
+    "diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.dia",
+    "index-unit-output-path" : "/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.o",
+    "llvm-bc" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.bc",
+    "object" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.o",
+    "swift-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point.swiftdeps",
+    "swiftmodule" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/test_entry_point~partial.swiftmodule"
+  },
+  "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/Tests/AutofillCoreTests/AddressStoreTests.swift" : {
+    "const-values" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.swiftconstvalues",
+    "dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.d",
+    "diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.dia",
+    "index-unit-output-path" : "/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.o",
+    "llvm-bc" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.bc",
+    "object" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.o",
+    "swift-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests.swiftdeps",
+    "swiftmodule" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/AddressStoreTests~partial.swiftmodule"
+  },
+  "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/Tests/AutofillCoreTests/CardStoreTests.swift" : {
+    "const-values" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.swiftconstvalues",
+    "dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.d",
+    "diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.dia",
+    "index-unit-output-path" : "/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.o",
+    "llvm-bc" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.bc",
+    "object" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.o",
+    "swift-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests.swiftdeps",
+    "swiftmodule" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/CardStoreTests~partial.swiftmodule"
+  },
+  "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/Tests/AutofillCoreTests/FieldClassifierTests.swift" : {
+    "const-values" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.swiftconstvalues",
+    "dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.d",
+    "diagnostics" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.dia",
+    "index-unit-output-path" : "/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.o",
+    "llvm-bc" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.bc",
+    "object" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.o",
+    "swift-dependencies" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests.swiftdeps",
+    "swiftmodule" : "/Users/bradystroud/Developer/bradystroud/browser/Packages/AutofillCore/.build/out/Intermediates.noindex/AutofillCore.build/Debug/AutofillCoreTests-p.build/Objects-normal/arm64/FieldClassifierTests~partial.swiftmodule"
+  }
+}
