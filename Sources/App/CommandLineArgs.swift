@@ -13,13 +13,16 @@ enum CommandLineArgs {
     }
 
     /// `--url <url>` launch argument override, for testing without UI
-    /// automation; defaults to "https://example.com".
+    /// automation; defaults to "about:blank" -- Tab's sentinel for "show the
+    /// internal start page" (browser-5kq.3), same as ⌘T new tabs, so the
+    /// plain-launch default window (no session to restore, no explicit
+    /// --url) gets the start page too.
     static func initialURL() -> String {
         let args = CommandLine.arguments
         if let index = args.firstIndex(of: "--url"), index + 1 < args.count {
             return args[index + 1]
         }
-        return "https://example.com"
+        return "about:blank"
     }
 
     /// `--test-no-activate` launch flag for contained, non-interactive quit

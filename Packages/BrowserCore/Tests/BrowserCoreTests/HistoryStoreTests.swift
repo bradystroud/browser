@@ -110,4 +110,41 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(filtered.count, 1)
         XCTAssertEqual(filtered.first?.url, "https://swift.org")
     }
+
+    func testTopFrecentRanksByFrecencyWithNoTextFilter() throws {
+        let now = Date()
+        for _ in 0..<5 {
+            try store.recordVisit(url: "https://frequent.example", title: "Frequent", at: now)
+        }
+        try store.recordVisit(url: "https://rare.example", title: "Rare", at: now)
+
+        let top = try store.topFrecent(now: now)
+        let urls = top.map(\.url)
+
+        XCTAssertEqual(urls.first, "https://frequent.example")
+        XCTAssertTrue(urls.contains("https://rare.example"), "topFrecent has no text filter -- every history entry is a candidate")
+    }
+
+    func testTopFrecentRespectsLimit() throws {
+        let now = Date()
+        for i in 0..<20 {
+            try store.recordVisit(url: "https://site\(i).example", title: "Site \(i)", at: now)
+        }
+
+        XCTAssertEqual(try store.topFrecent(limit: 8, now: now).count, 8)
+    }
+
+    func testTopFrecentOnEmptyHistoryReturnsEmpty() throws {
+        XCTAssertEqual(try store.topFrecent(), [])
+    }
+
+    func testTopFrecentRecentVisitOutranksOldVisitAtEqualCount() throws {
+        let now = Date()
+        let fortyDaysAgo = now.addingTimeInterval(-40 * 24 * 3600)
+        try store.recordVisit(url: "https://old.example", title: "Old", at: fortyDaysAgo)
+        try store.recordVisit(url: "https://new.example", title: "New", at: now)
+
+        let top = try store.topFrecent(now: now)
+        XCTAssertEqual(top.first?.url, "https://new.example")
+    }
 }

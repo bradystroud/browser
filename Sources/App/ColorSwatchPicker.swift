@@ -10,6 +10,13 @@ final class ColorSwatchPicker: NSView {
 
     var selectedHex: String { hexValues[selectedIndex] }
 
+    /// Fires after a swatch tap changes `selectedIndex`/`selectedHex` --
+    /// optional, so existing callers that just read `selectedHex` once
+    /// after a modal dismisses (NewProfilePrompt) need no changes. Added
+    /// for StartPageSettingsPaneController, which persists a new value
+    /// immediately on every change rather than only at dialog-dismiss time.
+    var onSelectionChanged: (() -> Void)?
+
     static let swatchDiameter: CGFloat = 24
     static let spacing: CGFloat = 8
 
@@ -49,6 +56,7 @@ final class ColorSwatchPicker: NSView {
         for (index, button) in buttons.enumerated() {
             button.isSelected = index == selectedIndex
         }
+        onSelectionChanged?()
     }
 }
 

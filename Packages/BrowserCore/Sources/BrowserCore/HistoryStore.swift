@@ -117,6 +117,46 @@ public final class HistoryStore {
         return scored.sorted { $0.score > $1.score }.prefix(limit).map { $0 }
     }
 
+    /// Top entries by frecency (visit count weighted by recency) -- for
+    /// surfaces like the start page's "Frequently Visited" section, where
+    /// (unlike autocomplete(query:)) there's no text filter: every history
+    /// entry is a candidate, ranked purely by frecency, highest first.
+    /// Shares autocomplete's own 500-row candidate cap (the most recently
+    /// visited 500 URLs) before ranking, rather than scoring the entire
+    /// table -- consistent with that method, and enough of a candidate
+    /// pool that a genuinely-frequent site is never the 501st most recent.
+    public func topFrecent(limit: Int = 8, now: Date = Date()) throws -> [HistoryEntry] {
+        let nowMs = Self.epochMs(now)
+
+        let rows: [(url: String, title: String, visitCount: Int, lastVisitTime: Int64)] = try database.perform { db in
+            let stmt = try db.prepare("""
+                SELECT url, title, visit_count, last_visit_time
+                FROM history_urls
+                ORDER BY last_visit_time DESC
+                LIMIT 500;
+                """)
+            var results: [(String, String, Int, Int64)] = []
+            while try stmt.step() {
+                results.append((stmt.text(0), stmt.text(1), stmt.int(2), stmt.int64(3)))
+            }
+            return results
+        }
+
+        let scored = rows.map { row -> (entry: HistoryEntry, score: Double) in
+            let ageMs = max(0, nowMs - row.lastVisitTime)
+            let score = Double(row.visitCount) * Self.recencyMultiplier(ageMs: ageMs)
+            let entry = HistoryEntry(
+                url: row.url,
+                title: row.title,
+                visitCount: row.visitCount,
+                lastVisitTime: Date(timeIntervalSince1970: Double(row.lastVisitTime) / 1000)
+            )
+            return (entry, score)
+        }
+
+        return scored.sorted { $0.score > $1.score }.prefix(limit).map { $0.entry }
+    }
+
     /// Rollup entries (one per URL) for the "Show All History" window,
     /// newest-first, optionally filtered by a substring in URL or title.
     public func entries(matching text: String? = nil, limit: Int = 500) throws -> [HistoryEntry] {
