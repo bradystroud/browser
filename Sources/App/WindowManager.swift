@@ -21,7 +21,12 @@ final class WindowManager {
     /// wires its close callback (dropping it from windowControllers and
     /// scheduling a session save so the persisted session reflects the
     /// closed window), activates the app, and shows it.
-    private func registerAndShow(_ controller: BrowserWindowController, restoring tabs: [SessionSnapshot.Tab] = [], activeIndex: Int = 0) {
+    private func registerAndShow(
+        _ controller: BrowserWindowController,
+        restoring tabs: [SessionSnapshot.Tab] = [],
+        groups: [SessionSnapshot.Group] = [],
+        activeIndex: Int = 0
+    ) {
         windowControllers.append(controller)
         controller.onWindowClosed = { [weak self, weak controller] in
             guard let self, let controller else { return }
@@ -43,7 +48,7 @@ final class WindowManager {
         if !CommandLineArgs.testNoActivate() {
             NSApp.activate(ignoringOtherApps: true)
         }
-        controller.show(restoring: tabs, activeIndex: activeIndex)
+        controller.show(restoring: tabs, groups: groups, activeIndex: activeIndex)
     }
 
     var keyBrowserWindowController: BrowserWindowController? {
@@ -111,13 +116,19 @@ final class WindowManager {
     /// empty, unrestorable entry.
     private func currentSnapshot() -> SessionSnapshot {
         let windows: [SessionSnapshot.Window] = windowControllers.compactMap { controller in
-            let tabs = controller.tabs.map { SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned) }
+            let tabs = controller.tabs.map {
+                SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
+            }
             guard !tabs.isEmpty, let frame = controller.window?.frame else { return nil }
+            let groups = controller.tabGroups.map {
+                SessionSnapshot.Group(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed)
+            }
             return SessionSnapshot.Window(
                 profileId: controller.profile.id,
                 frame: SessionSnapshot.WindowFrame(x: frame.origin.x, y: frame.origin.y, width: frame.width, height: frame.height),
                 tabs: tabs,
-                activeTabIndex: controller.activeTabIndex ?? 0
+                activeTabIndex: controller.activeTabIndex ?? 0,
+                groups: groups
             )
         }
         return SessionSnapshot(windows: windows)
@@ -163,7 +174,7 @@ final class WindowManager {
                 controller.window?.setFrame(
                     CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height), display: false)
             }
-            registerAndShow(controller, restoring: tabs, activeIndex: windowSnapshot.activeTabIndex)
+            registerAndShow(controller, restoring: tabs, groups: windowSnapshot.groups ?? [], activeIndex: windowSnapshot.activeTabIndex)
             restoredAny = true
         }
         return restoredAny

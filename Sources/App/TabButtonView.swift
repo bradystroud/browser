@@ -12,6 +12,22 @@ final class TabButtonView: NSView {
     var onPinToggle: (() -> Void)?
     /// Context menu's "Close Other Tabs".
     var onCloseOthers: (() -> Void)?
+    /// Context menu's "Move to Group > <existing group>" -- the chosen
+    /// group's id.
+    var onMoveToGroup: ((UUID) -> Void)?
+    /// Context menu's "Move to Group > New Group…".
+    var onMoveToNewGroup: (() -> Void)?
+    /// Context menu's "Remove from Group" (only shown when groupId != nil).
+    var onRemoveFromGroup: (() -> Void)?
+
+    /// Which group (if any) this tab currently belongs to -- gates whether
+    /// "Remove from Group" appears in the context menu. Set by
+    /// TabStripView.rebuildButtons from Tab.groupId; this view never
+    /// mutates it directly.
+    var groupId: UUID?
+    /// Every group in the owning window, for the "Move to Group >" submenu
+    /// -- set by TabStripView.rebuildButtons alongside groupId.
+    var availableGroups: [(id: UUID, name: String)] = []
 
     var isSelected = false {
         didSet {
@@ -167,12 +183,34 @@ final class TabButtonView: NSView {
     }
 
     /// Right-click/Control-click context menu -- built fresh each time (not
-    /// kept as a stored menu) so "Pin Tab"/"Unpin Tab" always reflects the
-    /// current isPinned state. Kept minimal per scope: Pin/Unpin, Close Tab,
-    /// Close Other Tabs -- no submenus, no icons.
+    /// kept as a stored menu) so "Pin Tab"/"Unpin Tab", the group submenu,
+    /// and "Remove from Group" all reflect current state. Kept minimal per
+    /// scope: Pin/Unpin, Move to Group > (existing groups…, New Group…),
+    /// Remove from Group (only if currently grouped), Close Tab, Close
+    /// Other Tabs -- no icons, no drag-reorder (see browser-rhi.1's notes).
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(pinToggleTapped), keyEquivalent: "").target = self
+
+        let moveToGroupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for group in availableGroups {
+            let item = NSMenuItem(title: group.name, action: #selector(moveToExistingGroupTapped(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = group.id
+            submenu.addItem(item)
+        }
+        if !availableGroups.isEmpty {
+            submenu.addItem(.separator())
+        }
+        submenu.addItem(withTitle: "New Group…", action: #selector(moveToNewGroupTapped), keyEquivalent: "").target = self
+        moveToGroupItem.submenu = submenu
+        menu.addItem(moveToGroupItem)
+
+        if groupId != nil {
+            menu.addItem(withTitle: "Remove from Group", action: #selector(removeFromGroupTapped), keyEquivalent: "").target = self
+        }
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Tab", action: #selector(closeTapped), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close Other Tabs", action: #selector(closeOthersTapped), keyEquivalent: "").target = self
@@ -189,6 +227,19 @@ final class TabButtonView: NSView {
 
     @objc private func closeOthersTapped() {
         onCloseOthers?()
+    }
+
+    @objc private func moveToExistingGroupTapped(_ sender: NSMenuItem) {
+        guard let groupId = sender.representedObject as? UUID else { return }
+        onMoveToGroup?(groupId)
+    }
+
+    @objc private func moveToNewGroupTapped() {
+        onMoveToNewGroup?()
+    }
+
+    @objc private func removeFromGroupTapped() {
+        onRemoveFromGroup?()
     }
 
     /// Brief shake to signal a keypress registered but was intentionally a

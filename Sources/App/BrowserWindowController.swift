@@ -11,6 +11,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     let profile: Profile
     private(set) var tabs: [Tab] = []
     private(set) var activeTabIndex: Int?
+    /// Every tab group in this window, in section order (see the ordering
+    /// invariant documented on `tabs` at moveTab(at:toGroup:)). Pure UI/
+    /// session state -- persisted via SessionSnapshot.Group, no engine-side
+    /// counterpart. See TabGroup.swift for why membership/order live in
+    /// `tabs` (via Tab.groupId) rather than here.
+    private(set) var tabGroups: [TabGroup] = []
 
     /// Set by WindowManager so it can drop this controller from its list.
     var onWindowClosed: (() -> Void)?
@@ -73,17 +79,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// exercised for real), just invisible and focus-neutral on the actual
     /// display.
     ///
-    /// `restoring`/`activeIndex`, when non-empty, recreate a session-restored
-    /// window's tabs instead of the usual single `initialURL` tab -- see
-    /// WindowManager.restoreSession. All restored tabs are added inactive
-    /// first and only the designated active one is then explicitly
-    /// activated, so inactive tabs' CefBrowsers stay lazily uncreated until
-    /// the user actually clicks over to one (Tab.createBrowserIfNeeded is a
-    /// no-op until then) -- restoring 20 background tabs doesn't spin up 20
-    /// CefBrowsers at launch. Each also skips the "new tab focuses omnibox"
-    /// UX (Tab.needsInitialOmniboxFocus) -- that's for a user deliberately
-    /// opening a new tab, not an automatic relaunch.
-    func show(restoring restoreTabs: [SessionSnapshot.Tab] = [], activeIndex: Int = 0) {
+    /// `restoring`/`groups`/`activeIndex`, when non-empty, recreate a
+    /// session-restored window's tabs (and tab groups) instead of the usual
+    /// single `initialURL` tab -- see WindowManager.restoreSession. All
+    /// restored tabs are added inactive first and only the designated active
+    /// one is then explicitly activated, so inactive tabs' CefBrowsers stay
+    /// lazily uncreated until the user actually clicks over to one
+    /// (Tab.createBrowserIfNeeded is a no-op until then) -- restoring 20
+    /// background tabs doesn't spin up 20 CefBrowsers at launch. Each also
+    /// skips the "new tab focuses omnibox" UX (Tab.needsInitialOmniboxFocus)
+    /// -- that's for a user deliberately opening a new tab, not an automatic
+    /// relaunch.
+    func show(restoring restoreTabs: [SessionSnapshot.Tab] = [], groups restoreGroups: [SessionSnapshot.Group] = [], activeIndex: Int = 0) {
         if CommandLineArgs.testNoActivate() {
             window?.setFrameOrigin(NSPoint(x: -3000, y: -3000))
             window?.orderBack(nil)
@@ -97,29 +104,49 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             return
         }
 
+        tabGroups = restoreGroups.map { TabGroup(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed) }
+
         for restoreTab in restoreTabs {
             let tab = addTab(url: restoreTab.url, makeActive: false)
             tab.needsInitialOmniboxFocus = false
             tab.seedRestoredTitle(restoreTab.title)
             tab.isPinned = restoreTab.isPinned
+            tab.groupId = restoreTab.groupId
         }
-        // Defensive: the pinned-tabs-are-a-contiguous-prefix invariant every
-        // other pin/unpin/index operation in this class relies on is only
-        // guaranteed for state this class itself produced -- a hand-edited
-        // or otherwise malformed session.json could have isPinned tabs out
-        // of prefix order. A stable sort (Swift's sort is stable) here costs
-        // nothing and guarantees the strip renders correctly from the first
-        // frame regardless. Tracked by object (not index) through the sort,
-        // since sorting can move the persisted activeIndex's tab elsewhere.
+        // Defensive: the [pinned][group sections][loose] ordering invariant
+        // every other pin/unpin/group/index operation in this class relies
+        // on is only guaranteed for state this class itself produced -- a
+        // hand-edited or otherwise malformed session.json could have tabs
+        // out of section order. A stable sort (Swift's sort is stable) here
+        // costs nothing and guarantees the strip renders correctly from the
+        // first frame regardless. Tracked by object (not index) through the
+        // sort, since sorting can move the persisted activeIndex's tab
+        // elsewhere.
         let requestedActiveTab = tabs.indices.contains(activeIndex) ? tabs[activeIndex] : nil
-        tabs.sort { $0.isPinned && !$1.isPinned }
+        let groupOrder = Dictionary(uniqueKeysWithValues: tabGroups.enumerated().map { ($1.id, $0) })
+        tabs.sort { sectionKey(for: $0, groupOrder: groupOrder) < sectionKey(for: $1, groupOrder: groupOrder) }
         let validIndex = requestedActiveTab.flatMap { tab in tabs.firstIndex { $0 === tab } } ?? 0
-        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: validIndex)
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: validIndex)
         activateTab(at: validIndex)
     }
 
+    /// Sort key for show(restoring:)'s defensive reorder: 0 = pinned,
+    /// 1...N = grouped (by the group's position in tabGroups, so multiple
+    /// groups' sections land in the right relative order too), N+1 = loose/
+    /// ungrouped. Ties (same section) preserve original relative order,
+    /// since Swift's sort is stable.
+    private func sectionKey(for tab: Tab, groupOrder: [UUID: Int]) -> Int {
+        if tab.isPinned { return 0 }
+        if let groupId = tab.groupId, let position = groupOrder[groupId] { return 1 + position }
+        return groupOrder.count + 1
+    }
+
     private var currentDisplayInfos: [TabStripView.DisplayInfo] {
-        tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned) }
+        tabs.map { TabStripView.DisplayInfo(title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned, groupId: $0.groupId) }
+    }
+
+    private var currentGroupDisplayInfos: [TabStripView.GroupDisplayInfo] {
+        tabGroups.map { TabStripView.GroupDisplayInfo(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed) }
     }
 
     // MARK: - View setup
@@ -226,6 +253,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let newIndex = tabs.count - 1
         tabStripView.reload(
             tabs: currentDisplayInfos,
+            groups: currentGroupDisplayInfos,
             selectedIndex: makeActive ? newIndex : (activeTabIndex ?? newIndex)
         )
         if makeActive {
@@ -307,7 +335,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             newActiveIndex = 0
         }
 
-        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: newActiveIndex)
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: newActiveIndex)
 
         if wasActive {
             activeTabIndex = nil
@@ -338,9 +366,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     /// Pins the tab at `index`, moving it to the end of the pinned section
     /// (Safari's placement for a newly pinned tab) -- a no-op if already
-    /// pinned or the index is out of range.
+    /// pinned or the index is out of range. Pinning always leaves any group
+    /// first (see moveTab(at:toGroup:)'s doc comment on why pin and group
+    /// are mutually exclusive).
     func pinTab(at index: Int) {
         guard tabs.indices.contains(index), !tabs[index].isPinned else { return }
+        tabs[index].groupId = nil
         movePinState(at: index, toPinned: true)
     }
 
@@ -353,23 +384,199 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     /// Moves the tab at `index` into (or out of) the pinned section,
-    /// preserving the pinned-tabs-are-a-contiguous-prefix invariant the rest
-    /// of this class relies on (⌘1-9 in BrowserWindow.performKeyEquivalent,
-    /// Ctrl+Tab cycling, and every tabs[index]-based method here all just
-    /// walk `tabs` in array order, with no separate "display order" to keep
-    /// in sync). Both directions reduce to the same move: "insert right
-    /// after however many pinned tabs remain" -- that's the end of the
-    /// pinned section when pinning, and the head of the unpinned section
-    /// (immediately after the last remaining pinned tab) when unpinning.
+    /// preserving the [pinned][group sections][loose] ordering invariant the
+    /// rest of this class relies on (⌘1-9/Ctrl+Tab cycling and every
+    /// tabs[index]-based method here all just walk `tabs` in array order,
+    /// with no separate "display order" to keep in sync). Both directions
+    /// reduce to the same move: "insert right after however many pinned
+    /// tabs remain" -- that's the end of the pinned section when pinning,
+    /// and the head of everything-else when unpinning (a tab is never both
+    /// pinned and grouped, so "everything else" from the unpinned side is
+    /// unambiguous).
     private func movePinState(at index: Int, toPinned: Bool) {
         let activeTabObject = activeTab
         let tab = tabs.remove(at: index)
         tab.isPinned = toPinned
         let insertionIndex = tabs.filter { $0.isPinned }.count
         tabs.insert(tab, at: insertionIndex)
+        reloadAfterReorder(activeTabObject: activeTabObject)
+    }
+
+    /// Common tail of every operation that removes-and-reinserts a tab
+    /// elsewhere in `tabs` (movePinState, moveTab(at:toGroup:), ungroupAll):
+    /// recomputes activeTabIndex by object identity (the move may have
+    /// shifted it), does a full strip reload, and persists.
+    private func reloadAfterReorder(activeTabObject: Tab?) {
         activeTabIndex = activeTabObject.flatMap { obj in tabs.firstIndex { $0 === obj } }
-        tabStripView.reload(tabs: currentDisplayInfos, selectedIndex: activeTabIndex ?? 0)
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: activeTabIndex ?? 0)
         WindowManager.shared.scheduleSessionSave()
+    }
+
+    // MARK: - Tab groups (browser-rhi.1)
+
+    /// Indices into `tabs`, in order, of every tab NOT hidden by a collapsed
+    /// group -- every pinned/loose tab, plus every tab in an expanded group,
+    /// but none in a collapsed one. ⌘1-9 (BrowserWindow.performKeyEquivalent,
+    /// via selectVisibleTab(atPosition:)) and Ctrl+Tab cycling
+    /// (selectNextTab/selectPreviousTab) both operate over this sequence --
+    /// collapsed groups' tabs are skipped, not merely visually hidden.
+    var visibleTabIndices: [Int] {
+        tabs.indices.filter { index in
+            guard let groupId = tabs[index].groupId else { return true }
+            return !(tabGroups.first { $0.id == groupId }?.isCollapsed ?? false)
+        }
+    }
+
+    /// ⌘1-9 -- called from BrowserWindow.performKeyEquivalent with a
+    /// 0-indexed position among *visible* tabs (collapsed groups' tabs don't
+    /// count), matching selectNextTab/selectPreviousTab's cycling sequence.
+    func selectVisibleTab(atPosition position: Int) {
+        let visible = visibleTabIndices
+        guard visible.indices.contains(position) else { return }
+        selectTab(at: visible[position])
+    }
+
+    /// Moves the tab at `index` to belong to `groupId` (nil ungroups it,
+    /// landing in the loose section) -- the tab-groups analog of
+    /// movePinState. Pinning and grouping are mutually exclusive (the
+    /// ordering invariant is [pinned][group sections][loose], so a tab can't
+    /// be in both), so joining a group always unpins first. A new member
+    /// joins the end of its group's section (mirroring pinTab's "a new pin
+    /// joins the end of its section"); leaving a group moves to the head of
+    /// the loose section (mirroring unpinTab's "unpinning returns to the
+    /// head of its section").
+    func moveTab(at index: Int, toGroup groupId: UUID?) {
+        guard tabs.indices.contains(index) else { return }
+        let activeTabObject = activeTab
+        let tab = tabs.remove(at: index)
+        tab.isPinned = false
+        tab.groupId = groupId
+
+        guard let groupId, let groupPosition = tabGroups.firstIndex(where: { $0.id == groupId }) else {
+            // Ungrouping (or a groupId that's vanished, defensively treated
+            // the same way rather than silently dropping the tab): head of
+            // the loose section, right after every pinned tab and every
+            // still-grouped tab.
+            tab.groupId = nil
+            let insertionIndex = tabs.filter { $0.isPinned || $0.groupId != nil }.count
+            tabs.insert(tab, at: insertionIndex)
+            reloadAfterReorder(activeTabObject: activeTabObject)
+            return
+        }
+
+        // End of the target group's section: every pinned tab, plus every
+        // tab in a group at or before this one in tabGroups order, plus
+        // this group's own remaining members (the tab being moved was
+        // already removed above, so this count excludes it).
+        let precedingGroupIds = Set(tabGroups[..<groupPosition].map { $0.id })
+        let precedingCount = tabs.filter { $0.isPinned || ($0.groupId.map(precedingGroupIds.contains) ?? false) }.count
+        let thisGroupCount = tabs.filter { $0.groupId == groupId }.count
+        tabs.insert(tab, at: precedingCount + thisGroupCount)
+        reloadAfterReorder(activeTabObject: activeTabObject)
+    }
+
+    /// Tab context menu > "Move to Group > New Group…": prompts for a
+    /// name/color, creates the group at the end of tabGroups (its section
+    /// lands after every existing group, before loose tabs), then moves the
+    /// tab into it.
+    func moveTabToNewGroup(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        guard let result = TabGroupPrompt.run(currentName: "", currentColorHex: nextUnusedGroupColor(), isNew: true) else { return }
+        let group = TabGroup(name: result.name, colorHex: result.colorHex)
+        tabGroups.append(group)
+        moveTab(at: index, toGroup: group.id)
+    }
+
+    /// Mirrors ProfileManager.nextUnusedColor(), scoped to this window's own
+    /// groups rather than the global profile list.
+    private func nextUnusedGroupColor() -> String {
+        let used = Set(tabGroups.map { $0.colorHex })
+        return ProfileColorPalette.hexValues.first { !used.contains($0) }
+            ?? ProfileColorPalette.hexValues[tabGroups.count % ProfileColorPalette.hexValues.count]
+    }
+
+    /// Group header click: toggle collapsed/expanded. If the active tab is a
+    /// member of the group being collapsed, it would otherwise become
+    /// selected-but-invisible -- reassign to the nearest still-visible tab
+    /// instead.
+    func toggleGroupCollapse(groupId: UUID) {
+        guard let position = tabGroups.firstIndex(where: { $0.id == groupId }) else { return }
+        tabGroups[position].isCollapsed.toggle()
+
+        if tabGroups[position].isCollapsed, let active = activeTabIndex, tabs.indices.contains(active), tabs[active].groupId == groupId {
+            let visible = visibleTabIndices
+            let fallback = visible.first(where: { $0 > active }) ?? visible.last(where: { $0 < active }) ?? visible.first
+            if let fallback {
+                selectTab(at: fallback)
+            }
+        }
+
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: activeTabIndex ?? 0)
+        WindowManager.shared.scheduleSessionSave()
+    }
+
+    /// Group header context menu > "Rename" or "Change Color" -- both open
+    /// the same combined name+color prompt (see TabGroupPrompt, mirroring
+    /// NewProfilePrompt's create/edit reuse), since it already lets you
+    /// change either from one dialog.
+    func renameOrRecolorGroup(groupId: UUID) {
+        guard let position = tabGroups.firstIndex(where: { $0.id == groupId }) else { return }
+        guard let result = TabGroupPrompt.run(currentName: tabGroups[position].name, currentColorHex: tabGroups[position].colorHex, isNew: false) else { return }
+        tabGroups[position].name = result.name
+        tabGroups[position].colorHex = result.colorHex
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: activeTabIndex ?? 0)
+        WindowManager.shared.scheduleSessionSave()
+    }
+
+    /// Group header context menu > "Ungroup All": every member tab becomes
+    /// loose (unlabeled), relocated as a contiguous block to the head of the
+    /// loose section (immediately after every remaining group) -- keeps the
+    /// [pinned][groups][loose] invariant intact rather than leaving a gap
+    /// where this group's section used to be. The group definition itself is
+    /// removed, since an empty group has nothing left to render.
+    func ungroupAll(groupId: UUID) {
+        guard let groupPosition = tabGroups.firstIndex(where: { $0.id == groupId }) else { return }
+        let activeTabObject = activeTab
+        let memberTabs = tabs.filter { $0.groupId == groupId }
+        tabGroups.remove(at: groupPosition)
+
+        guard !memberTabs.isEmpty else {
+            reloadAfterReorder(activeTabObject: activeTabObject)
+            return
+        }
+        tabs.removeAll { $0.groupId == groupId }
+        for tab in memberTabs { tab.groupId = nil }
+        let insertionIndex = tabs.filter { $0.isPinned || $0.groupId != nil }.count
+        tabs.insert(contentsOf: memberTabs, at: insertionIndex)
+        reloadAfterReorder(activeTabObject: activeTabObject)
+    }
+
+    /// Group header context menu > "Close Group": closes every tab currently
+    /// in the group, confirming first if there are more than 3 (this can't
+    /// be undone). The group definition is dropped once its tabs are gone.
+    /// Reuses closeTab(at:) per tab (same window-closes-when-empty handling
+    /// as Close Other Tabs), iterating in reverse so removing tabs mid-loop
+    /// never invalidates an index not yet visited.
+    func closeGroup(groupId: UUID) {
+        let memberIndices = tabs.indices.filter { tabs[$0].groupId == groupId }
+        guard !memberIndices.isEmpty else {
+            tabGroups.removeAll { $0.id == groupId }
+            return
+        }
+        if memberIndices.count > 3 {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Close \(memberIndices.count) Tabs?"
+            alert.informativeText = "This will close every tab in this group. This can't be undone."
+            alert.addButton(withTitle: "Close Tabs")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        for index in memberIndices.reversed() {
+            closeTab(at: index)
+        }
+        tabGroups.removeAll { $0.id == groupId }
+        tabStripView.reload(tabs: currentDisplayInfos, groups: currentGroupDisplayInfos, selectedIndex: activeTabIndex ?? 0)
     }
 
     private func refreshToolbar(for tab: Tab) {
@@ -437,6 +644,38 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         closeOtherTabs(keeping: index)
     }
 
+    func tabStripView(_ tabStripView: TabStripView, didRequestMoveToGroupAt index: Int, groupId: UUID) {
+        moveTab(at: index, toGroup: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestMoveToNewGroupAt index: Int) {
+        moveTabToNewGroup(at: index)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestRemoveFromGroupAt index: Int) {
+        moveTab(at: index, toGroup: nil)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestToggleCollapseForGroup groupId: UUID) {
+        toggleGroupCollapse(groupId: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestRenameForGroup groupId: UUID) {
+        renameOrRecolorGroup(groupId: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestChangeColorForGroup groupId: UUID) {
+        renameOrRecolorGroup(groupId: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestUngroupAllForGroup groupId: UUID) {
+        ungroupAll(groupId: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didRequestCloseGroup groupId: UUID) {
+        closeGroup(groupId: groupId)
+    }
+
     // MARK: - Menu / keyboard actions (reached via the responder chain --
     // NSWindowController is automatically next-responder after its window).
 
@@ -463,14 +702,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         closeTab(at: index)
     }
 
+    /// Ctrl+Tab -- cycles over *visible* tabs only (browser-rhi.1: a
+    /// collapsed tab group's members are skipped, not merely hidden; see
+    /// visibleTabIndices), matching ⌘1-9's same "visible tabs as one
+    /// sequence" rule (selectVisibleTab(atPosition:)).
     @objc func selectNextTab(_ sender: Any?) {
-        guard let current = activeTabIndex, !tabs.isEmpty else { return }
-        selectTab(at: (current + 1) % tabs.count)
+        let visible = visibleTabIndices
+        guard let current = activeTabIndex, let position = visible.firstIndex(of: current), !visible.isEmpty else { return }
+        selectTab(at: visible[(position + 1) % visible.count])
     }
 
     @objc func selectPreviousTab(_ sender: Any?) {
-        guard let current = activeTabIndex, !tabs.isEmpty else { return }
-        selectTab(at: (current - 1 + tabs.count) % tabs.count)
+        let visible = visibleTabIndices
+        guard let current = activeTabIndex, let position = visible.firstIndex(of: current), !visible.isEmpty else { return }
+        selectTab(at: visible[(position - 1 + visible.count) % visible.count])
     }
 
     @objc func goBackAction(_ sender: Any?) {

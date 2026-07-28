@@ -10,12 +10,43 @@ protocol TabStripViewDelegate: AnyObject {
 
     /// Tab strip's context menu -- "Close Other Tabs".
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int)
+
+    /// Tab context menu -- "Move to Group > <existing group>".
+    func tabStripView(_ tabStripView: TabStripView, didRequestMoveToGroupAt index: Int, groupId: UUID)
+
+    /// Tab context menu -- "Move to Group > New Group…".
+    func tabStripView(_ tabStripView: TabStripView, didRequestMoveToNewGroupAt index: Int)
+
+    /// Tab context menu -- "Remove from Group".
+    func tabStripView(_ tabStripView: TabStripView, didRequestRemoveFromGroupAt index: Int)
+
+    /// Group header click -- toggle collapsed/expanded.
+    func tabStripView(_ tabStripView: TabStripView, didRequestToggleCollapseForGroup groupId: UUID)
+
+    /// Group header context menu -- "Rename".
+    func tabStripView(_ tabStripView: TabStripView, didRequestRenameForGroup groupId: UUID)
+
+    /// Group header context menu -- "Change Color".
+    func tabStripView(_ tabStripView: TabStripView, didRequestChangeColorForGroup groupId: UUID)
+
+    /// Group header context menu -- "Ungroup All".
+    func tabStripView(_ tabStripView: TabStripView, didRequestUngroupAllForGroup groupId: UUID)
+
+    /// Group header context menu -- "Close Group".
+    func tabStripView(_ tabStripView: TabStripView, didRequestCloseGroup groupId: UUID)
 }
 
-/// Compact Safari-like tab strip: fixed-height row of TabButtonViews sized to
-/// share the available width (down to a minimum, then they just get crowded
-/// rather than scrolling -- fine for M1's tab counts), plus a trailing "+"
-/// button.
+/// Compact Safari-like tab strip: fixed-height row of TabButtonViews (plus
+/// TabGroupHeaderViews for tab groups) sized to share the available width
+/// (down to a minimum, then they just get crowded rather than scrolling --
+/// fine for this app's tab counts), plus a trailing "+" button.
+///
+/// Rendering order left to right: pinned tabs, then each tab group's header
+/// (+ its member tabs if expanded) in group order, then loose (unpinned,
+/// ungrouped) tabs -- see BrowserWindowController's ordering invariant on
+/// `tabs`, which `infos`/`groups` below always already reflect by the time
+/// they reach this view (this view never reorders anything itself, only
+/// renders the order it's given).
 final class TabStripView: NSView {
     weak var delegate: TabStripViewDelegate?
 
@@ -23,11 +54,29 @@ final class TabStripView: NSView {
         let title: String
         let favicon: NSImage?
         let isPinned: Bool
+        let groupId: UUID?
+    }
+
+    struct GroupDisplayInfo {
+        let id: UUID
+        let name: String
+        let colorHex: String
+        let isCollapsed: Bool
+    }
+
+    /// One visual slot in the strip, in left-to-right render order -- a tab
+    /// button or a group header. Built fresh by rebuildButtons every reload;
+    /// laid out by walking this single ordered list once, rather than
+    /// re-deriving render order from separately-tracked button/header arrays.
+    private enum StripItem {
+        case tab(TabButtonView)
+        case groupHeader(TabGroupHeaderView)
     }
 
     private var infos: [DisplayInfo] = []
+    private var groups: [GroupDisplayInfo] = []
     private var selectedIndex = 0
-    private var tabButtons: [TabButtonView] = []
+    private var stripItems: [StripItem] = []
 
     private let newTabButton: NSButton = {
         let button = NSButton()
@@ -44,6 +93,11 @@ final class TabStripView: NSView {
     /// width or tab count -- just enough for a centered favicon, no title,
     /// no close button (Safari-style).
     private static let pinnedTabWidth: CGFloat = 36
+    /// Group headers render at one of these two fixed widths (not part of
+    /// the flexible even-width pool tab buttons share) -- expanded shows the
+    /// name, collapsed just a color dot + count badge.
+    private static let groupHeaderWidth: CGFloat = 110
+    private static let collapsedGroupHeaderWidth: CGFloat = 50
     private static let tabSpacing: CGFloat = 2
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 24
@@ -60,31 +114,31 @@ final class TabStripView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    func reload(tabs: [DisplayInfo], selectedIndex: Int) {
+    func reload(tabs: [DisplayInfo], groups: [GroupDisplayInfo], selectedIndex: Int) {
         infos = tabs
+        self.groups = groups
         self.selectedIndex = selectedIndex
         rebuildButtons()
         needsLayout = true
     }
 
     /// Cheaper than a full reload: use when only a tab's title/loading state
-    /// changed, not the tab count or selection.
+    /// changed, not the tab count, grouping, or selection.
     func updateTitle(at index: Int, title: String) {
-        guard tabButtons.indices.contains(index) else { return }
-        tabButtons[index].setTitle(title)
+        tabButton(forTabIndex: index)?.setTitle(title)
     }
 
     /// Cheaper than a full reload -- see updateTitle. `nil` reverts to the
     /// generic glyph.
     func updateFavicon(at index: Int, image: NSImage?) {
-        guard tabButtons.indices.contains(index) else { return }
-        tabButtons[index].setFavicon(image)
+        tabButton(forTabIndex: index)?.setFavicon(image)
     }
 
     func updateSelection(_ index: Int) {
         selectedIndex = index
-        for (i, button) in tabButtons.enumerated() {
-            button.isSelected = i == index
+        for item in stripItems {
+            guard case .tab(let button) = item else { continue }
+            button.isSelected = button.index == index
         }
     }
 
@@ -92,18 +146,41 @@ final class TabStripView: NSView {
     /// closeTab(_:)) -- this gives the user visible feedback that the key
     /// press registered instead of silently doing nothing.
     func shakeTab(at index: Int) {
-        guard tabButtons.indices.contains(index) else { return }
-        tabButtons[index].shake()
+        tabButton(forTabIndex: index)?.shake()
+    }
+
+    /// Looks up a tab button by its real index into BrowserWindowController.
+    /// tabs (TabButtonView.index) -- not a position in `stripItems`, which
+    /// interleaves group headers and skips collapsed groups' member buttons
+    /// entirely, so it no longer lines up 1:1 with tab indices the way the
+    /// old flat tabButtons array did before groups existed.
+    private func tabButton(forTabIndex index: Int) -> TabButtonView? {
+        for item in stripItems {
+            if case .tab(let button) = item, button.index == index {
+                return button
+            }
+        }
+        return nil
     }
 
     private func rebuildButtons() {
-        for button in tabButtons {
-            button.removeFromSuperview()
+        for item in stripItems {
+            switch item {
+            case .tab(let button): button.removeFromSuperview()
+            case .groupHeader(let header): header.removeFromSuperview()
+            }
         }
-        tabButtons = infos.enumerated().map { index, info in
+        stripItems = []
+
+        let indexed = Array(infos.enumerated())
+        let availableGroups = groups.map { (id: $0.id, name: $0.name) }
+
+        func makeButton(_ index: Int, _ info: DisplayInfo) -> TabButtonView {
             let button = TabButtonView(index: index, title: info.title)
             button.setFavicon(info.favicon)
             button.isPinned = info.isPinned
+            button.groupId = info.groupId
+            button.availableGroups = availableGroups
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in
                 guard let self else { return }
@@ -121,8 +198,71 @@ final class TabStripView: NSView {
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestCloseOthersAt: index)
             }
-            addSubview(button)
+            button.onMoveToGroup = { [weak self] groupId in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestMoveToGroupAt: index, groupId: groupId)
+            }
+            button.onMoveToNewGroup = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestMoveToNewGroupAt: index)
+            }
+            button.onRemoveFromGroup = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestRemoveFromGroupAt: index)
+            }
             return button
+        }
+
+        // Pinned tabs first.
+        for (index, info) in indexed where info.isPinned {
+            let button = makeButton(index, info)
+            addSubview(button)
+            stripItems.append(.tab(button))
+        }
+
+        // Then each group's section, in order: header, then its member
+        // tabs (only if expanded).
+        for group in groups {
+            let header = TabGroupHeaderView(groupId: group.id, name: group.name, colorHex: group.colorHex)
+            header.isCollapsed = group.isCollapsed
+            let members = indexed.filter { !$0.element.isPinned && $0.element.groupId == group.id }
+            header.memberCount = members.count
+            header.onToggleCollapse = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestToggleCollapseForGroup: group.id)
+            }
+            header.onRename = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestRenameForGroup: group.id)
+            }
+            header.onChangeColor = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestChangeColorForGroup: group.id)
+            }
+            header.onUngroupAll = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestUngroupAllForGroup: group.id)
+            }
+            header.onCloseGroup = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestCloseGroup: group.id)
+            }
+            addSubview(header)
+            stripItems.append(.groupHeader(header))
+
+            guard !group.isCollapsed else { continue }
+            for (index, info) in members {
+                let button = makeButton(index, info)
+                addSubview(button)
+                stripItems.append(.tab(button))
+            }
+        }
+
+        // Then loose (unpinned, ungrouped) tabs.
+        for (index, info) in indexed where !info.isPinned && info.groupId == nil {
+            let button = makeButton(index, info)
+            addSubview(button)
+            stripItems.append(.tab(button))
         }
     }
 
@@ -131,26 +271,47 @@ final class TabStripView: NSView {
         layoutTabs()
     }
 
-    /// Pinned tabs (always sorted to the front, see BrowserWindowController.
-    /// pinTab/unpinTab) get a fixed narrow width off the top; only unpinned
-    /// tabs share whatever width remains, same even-width-down-to-a-minimum
-    /// scheme as before pinned tabs existed.
+    /// Walks `stripItems` once, left to right, in the same render order
+    /// rebuildButtons already established. Pinned tabs and group headers get
+    /// fixed widths off the top; every other tab button (loose, or a member
+    /// of an expanded group) shares whatever width remains, same
+    /// even-width-down-to-a-minimum scheme as before groups existed.
     private func layoutTabs() {
         let available = max(0, bounds.width - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
-        let totalCount = tabButtons.count
-        let pinnedCount = tabButtons.filter { $0.isPinned }.count
-        let unpinnedCount = totalCount - pinnedCount
+        let itemCount = stripItems.count
+        let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
 
-        let totalSpacing = totalCount > 1 ? Self.tabSpacing * CGFloat(totalCount - 1) : 0
-        let pinnedWidthTotal = CGFloat(pinnedCount) * Self.pinnedTabWidth
-        let remainingForUnpinned = max(0, available - totalSpacing - pinnedWidthTotal)
-        let evenUnpinnedWidth = unpinnedCount > 0 ? remainingForUnpinned / CGFloat(unpinnedCount) : 0
-        let unpinnedWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenUnpinnedWidth))
+        var fixedWidthTotal: CGFloat = 0
+        var flexibleTabCount = 0
+        for item in stripItems {
+            switch item {
+            case .tab(let button):
+                if button.isPinned {
+                    fixedWidthTotal += Self.pinnedTabWidth
+                } else {
+                    flexibleTabCount += 1
+                }
+            case .groupHeader(let header):
+                fixedWidthTotal += header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
+            }
+        }
+        let remainingForFlexible = max(0, available - totalSpacing - fixedWidthTotal)
+        let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
+        let flexibleWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenFlexibleWidth))
 
         var x = Self.sidePadding
-        for button in tabButtons {
-            let width = button.isPinned ? Self.pinnedTabWidth : unpinnedWidth
-            button.frame = NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8))
+        for item in stripItems {
+            let width: CGFloat
+            let view: NSView
+            switch item {
+            case .tab(let button):
+                width = button.isPinned ? Self.pinnedTabWidth : flexibleWidth
+                view = button
+            case .groupHeader(let header):
+                width = header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
+                view = header
+            }
+            view.frame = NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8))
             x += width + Self.tabSpacing
         }
 

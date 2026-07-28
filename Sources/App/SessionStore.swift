@@ -21,15 +21,22 @@ struct SessionSnapshot: Codable {
         /// false rather than failing to decode the whole file, so an old
         /// session still loads (every tab just comes back unpinned).
         let isPinned: Bool
+        /// Absent (nil) for an ungrouped tab, or one from a session.json
+        /// written before tab groups (browser-rhi.1) shipped --
+        /// decodeIfPresent already tolerates a missing key for an Optional
+        /// with no extra fallback needed, unlike isPinned's Bool above
+        /// (which has no "absent" state of its own).
+        let groupId: UUID?
 
-        init(url: String, title: String, isPinned: Bool = false) {
+        init(url: String, title: String, isPinned: Bool = false, groupId: UUID? = nil) {
             self.url = url
             self.title = title
             self.isPinned = isPinned
+            self.groupId = groupId
         }
 
         private enum CodingKeys: String, CodingKey {
-            case url, title, isPinned
+            case url, title, isPinned, groupId
         }
 
         init(from decoder: Decoder) throws {
@@ -37,6 +44,7 @@ struct SessionSnapshot: Codable {
             url = try container.decode(String.self, forKey: .url)
             title = try container.decode(String.self, forKey: .title)
             isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+            groupId = try container.decodeIfPresent(UUID.self, forKey: .groupId)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -44,7 +52,20 @@ struct SessionSnapshot: Codable {
             try container.encode(url, forKey: .url)
             try container.encode(title, forKey: .title)
             try container.encode(isPinned, forKey: .isPinned)
+            try container.encodeIfPresent(groupId, forKey: .groupId)
         }
+    }
+
+    /// A persisted tab group -- see TabGroup for the live in-memory type this
+    /// mirrors. A brand-new type (no pre-existing session.json ever had
+    /// groups), so plain synthesized Codable is fine here; the tolerance
+    /// concern is entirely on Window.groups below (an old file has no
+    /// `groups` key at all) and Tab.groupId above.
+    struct Group: Codable {
+        let id: UUID
+        let name: String
+        let colorHex: String
+        let isCollapsed: Bool
     }
 
     struct Window: Codable {
@@ -52,6 +73,12 @@ struct SessionSnapshot: Codable {
         let frame: WindowFrame?
         let tabs: [Tab]
         let activeTabIndex: Int
+        /// Absent in a session.json written before tab groups (browser-
+        /// rhi.1) shipped -- nil (not an empty array) is the natural
+        /// "missing key" decode for an Optional property under synthesized
+        /// Codable, the same mechanism `frame` above already relies on. Read
+        /// as `groups ?? []` at every use site (see WindowManager).
+        let groups: [Group]?
     }
 
     var windows: [Window]
