@@ -26,6 +26,10 @@ final class BrowserWindow: NSWindow {
         // comment for why it's kicked off here rather than in AppDelegate or
         // BrowserWindowController (browser-ojh.1).
         PasswordManagerCoordinator.shared.activate()
+        // Same reasoning, for card/address autofill (browser-ojh.2).
+        PaymentAddressAutofillCoordinator.shared.activate()
+        // Same reasoning, for the per-tab audio indicator (browser-rhi.4).
+        TabAudioCoordinator.shared.activate()
     }
 
     required init?(coder: NSCoder) {

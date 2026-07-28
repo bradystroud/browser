@@ -56,6 +56,7 @@ set(BROWSER_SWIFT_SRCS
   ShortcutsOverlayPanelFactory.swift
   TabCyclingController.swift
   FaviconLoader.swift
+  PageMessageDispatcher.swift
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
   Routing/RoutingRulesStore.swift
@@ -82,6 +83,11 @@ set(BROWSER_SWIFT_SRCS
   Passwords/SavePasswordPromptController.swift
   Passwords/PasswordManagerCoordinator.swift
   Passwords/PasswordsPaneController.swift
+  Autofill/PaymentAddressDetectionScript.swift
+  Autofill/AutofillFillScript.swift
+  Autofill/AddressStoreManager.swift
+  Autofill/SaveAutofillPromptController.swift
+  Autofill/PaymentAddressAutofillCoordinator.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift
@@ -101,6 +107,8 @@ set(BROWSER_SWIFT_SRCS
   TabOverview/TabOverviewView.swift
   TabOverview/TabOverviewController.swift
   DevTools/ResponsiveDesignMode.swift
+  Audio/AudioStateScript.swift
+  Audio/TabAudioCoordinator.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 

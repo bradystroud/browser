@@ -133,6 +133,45 @@ final class Tab: NSObject, EngineTabDelegate {
     /// fresh on every navigation and on session restore's first real load.
     private(set) var themeColorHex: String?
 
+    /// True while this tab's audio output is muted (browser-rhi.4) -- a
+    /// direct wrapper over CefBrowserHost::SetAudioMuted/IsAudioMuted (a
+    /// real one-call mute, confirmed present in this project's pinned CEF
+    /// 150.0.14 headers; no JS workaround needed for muting itself). Not
+    /// persisted across app restarts -- like Chrome/Safari, a fresh launch
+    /// always starts every tab unmuted, matching CEF's own default.
+    private(set) var isMuted = false
+
+    /// True while this tab's page is believed to be actively playing audio
+    /// (browser-rhi.4) -- CEF exposes no native "audible" callback (unlike
+    /// SetAudioMuted/IsAudioMuted above), so this is derived from JS
+    /// (AudioStateScript.swift, injected on document-start) reporting via a
+    /// marker attribute polled through getPageSource(completion:) -- see
+    /// TabAudioCoordinator, the same pattern ReaderModeController already
+    /// established for its own "is this page readerable" signal. Cleared on
+    /// every navigation (see engineTabDidStartMainFrameLoad below) since a
+    /// brand-new document has no media elements yet until proven otherwise.
+    private(set) var isAudible = false
+
+    /// Toggles isMuted and immediately applies it to the engine -- the only
+    /// place SetAudioMuted is ever called, so isMuted can never drift from
+    /// what the engine actually has (no separate "read it back to confirm"
+    /// step needed).
+    func toggleMuted() {
+        isMuted.toggle()
+        browser?.setAudioMuted(isMuted)
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    /// Called by TabAudioCoordinator's poll once per tick with whatever the
+    /// injected script's marker attribute currently says -- a no-op unless
+    /// the value actually changed, so the tab strip isn't asked to redraw
+    /// every tick for a steady-state tab.
+    func updateAudibleState(_ audible: Bool) {
+        guard audible != isAudible else { return }
+        isAudible = audible
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
     /// Bumped on every navigation so a stale getPageSource(completion:)
     /// result from a page that's since been navigated away from can't
     /// clobber a newer page's (possibly nil) theme color -- same guard
@@ -354,6 +393,19 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDidStartMainFrameLoad() {
         guard !isShowingStartPage else { return }
         executeJavaScript(PasswordDetectionScript.source)
+        // Separate script, separate cefQuery message types (browser-ojh.2)
+        // -- injected alongside, not merged into, PasswordDetectionScript,
+        // so the two features' detection logic stay independently
+        // readable/testable even though they share the same delivery
+        // mechanism.
+        executeJavaScript(PaymentAddressDetectionScript.source)
+        // Separate script again, same reasoning (browser-rhi.4) -- reports
+        // through TabAudioCoordinator's poll (getPageSource + marker
+        // attribute), not the cefQuery channel the two scripts above use,
+        // since this signal is coarse/polling-tolerant and doesn't need a
+        // dedicated channel of its own -- see TabAudioCoordinator's doc
+        // comment for why.
+        executeJavaScript(AudioStateScript.source)
     }
 
     func engineTabDidCommitNavigation(_ url: String) {
@@ -363,6 +415,12 @@ final class Tab: NSObject, EngineTabDelegate {
         guard !isShowingStartPage else { return }
         maybeLoadFavicon()
         refreshThemeColor()
+        // A brand-new document has no media elements yet until the poll
+        // (or a real play event) proves otherwise -- same "clear
+        // immediately on navigate-away" reasoning as themeColorHex's own
+        // reset in refreshThemeColor(), so a background tab's stale
+        // "playing" indicator can't survive a navigation to a silent page.
+        updateAudibleState(false)
         delegate?.tab(self, didCommitNavigationTo: url)
     }
 

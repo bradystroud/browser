@@ -1,7 +1,5 @@
 import AppKit
 
-private struct PageMessageTypeEnvelope: Decodable { let type: String }
-
 private struct PasswordFormSubmitPayload: Decodable {
     let origin: String
     let username: String
@@ -12,35 +10,27 @@ private struct PasswordFieldsPresentPayload: Decodable {
     let present: Bool
 }
 
-/// App-wide singleton that wires every tab's generic page-message channel
-/// (Tab.onPageMessage) to the password manager, and owns the one
-/// save-password popover shown at a time across the whole app.
+/// App-wide singleton that registers with PageMessageDispatcher for the
+/// password-manager's page-message types, and owns the one save-password
+/// popover shown at a time across the whole app.
 ///
-/// Why a polling singleton rather than wiring this at Tab creation: Tab
-/// instances are only ever constructed in BrowserWindowController.swift
-/// (`Tab(profileName:initialURL:)`), which stays off-limits for this task
-/// (hot with concurrent Tab Groups/other work) -- so there's no push
-/// notification for "a new tab was created" available without touching it.
-/// Instead this polls `WindowManager.shared.windowControllers.flatMap { $0.tabs }`
-/// every 0.5s and wires any tab it hasn't seen yet, tracked via a
-/// weak-referencing NSHashTable so a closed tab's Tab object can still be
-/// deallocated normally. Same reasoning ReaderModeController documents for
-/// polling `activeTab` instead of getting a push notification -- see that
-/// class's own doc comment.
-///
-/// Deliberately polls *every* tab, not just each window's activeTab: a
-/// background tab's password form can still be submitted (e.g. a redirect
-/// finishing while another tab has focus), and only wiring the active tab
-/// would silently drop that page's cefQuery forever (CEF has no retry --
-/// an un-answered query just hangs). Whether to actually *show* the save
-/// prompt for a message from a currently-inactive tab is a separate
-/// decision, made in handleFormSubmit(_:tab:) below -- v1 skips prompting
-/// in that case rather than queuing (see that method's own doc comment).
+/// Only owns its own lightweight per-window icon-refresh poll now -- tab
+/// discovery/wiring moved to PageMessageDispatcher once card/address
+/// autofill (browser-ojh.2) became a second consumer of tabs' page
+/// messages (see that class's own doc comment for why two independent
+/// pollers wiring the same Tab.onPageMessage closure would silently race).
+/// The icon-refresh poll still needs to exist here, separately: "does the
+/// active tab have a saved credential for its current origin" isn't
+/// something a page message tells this coordinator about on its own (it
+/// depends on navigation, not just form-field events), so it's re-checked
+/// every tick the same way ReaderModeController re-checks its own Reader
+/// button's visibility every tick -- see that class's own doc comment for
+/// why polling is the right call here with BrowserWindowController
+/// off-limits.
 final class PasswordManagerCoordinator: NSObject {
     static let shared = PasswordManagerCoordinator()
 
     private var pollTimer: Timer?
-    private var wiredTabs = NSHashTable<Tab>.weakObjects()
     private let savePrompt = SavePasswordPromptController()
     private var anchorViews = NSMapTable<NSView, NSView>.weakToWeakObjects()
 
@@ -86,29 +76,25 @@ final class PasswordManagerCoordinator: NSObject {
     /// browser window created in the process starts this ticking, with no
     /// separate explicit call site needed anywhere else.
     func activate() {
-        guard pollTimer == nil else { return }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            self?.poll()
+        PageMessageDispatcher.shared.activate()
+        if pollTimer == nil {
+            PageMessageDispatcher.shared.register(types: ["passwordFormSubmit", "passwordFieldsPresent"]) { [weak self] type, request, requestId, tab in
+                self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+            }
+            pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                self?.poll()
+            }
         }
     }
 
     private func poll() {
         for controller in WindowManager.shared.windowControllers {
-            for tab in controller.tabs where !wiredTabs.contains(tab) {
-                wiredTabs.add(tab)
-                tab.onPageMessage = { [weak self, weak tab] request, requestId in
-                    guard let self, let tab else { return }
-                    self.handlePageMessage(request, requestId: requestId, tab: tab)
-                }
-            }
             updateKeyButton(for: controller)
         }
     }
 
-    private func handlePageMessage(_ request: String, requestId: Int64, tab: Tab) {
-        guard let data = request.data(using: .utf8),
-              let envelope = try? JSONDecoder().decode(PageMessageTypeEnvelope.self, from: data)
-        else {
+    private func handlePageMessage(type: String, request: String, requestId: Int64, tab: Tab) {
+        guard let data = request.data(using: .utf8) else {
             tab.respondToPageMessage(requestId: requestId, success: false, response: "")
             return
         }
@@ -119,7 +105,7 @@ final class PasswordManagerCoordinator: NSObject {
         // after, fire-and-forget from the page's perspective).
         tab.respondToPageMessage(requestId: requestId, success: true, response: "{}")
 
-        switch envelope.type {
+        switch type {
         case "passwordFormSubmit":
             guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data) else { return }
             handleFormSubmit(payload, tab: tab)
