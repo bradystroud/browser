@@ -76,6 +76,22 @@ enum CommandLineArgs {
         return dir
     }
 
+    /// `--engine cef|webkit` launch argument; defaults to "cef" so nothing
+    /// changes for a normal launch unless explicitly asked (browser-n50).
+    /// Any unrecognized or missing value also falls back to cef, matching
+    /// this codebase's existing "invalid input is the safe default"
+    /// convention (see RuleMatcher/BlockingSettings). See
+    /// Engine/WebKitEngineAdapter.swift's `ActiveEngine` for where this
+    /// actually picks the conformer.
+    static func engineChoice() -> EngineChoice {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--engine"), index + 1 < args.count else { return .cef }
+        switch args[index + 1] {
+        case "webkit": return .webkit
+        default: return .cef
+        }
+    }
+
     /// True when the launch explicitly asked for a particular profile/URL
     /// (`--profile`/`--url`), as opposed to profileName()/initialURL() just
     /// returning their defaults. Used by AppDelegate to decide whether the

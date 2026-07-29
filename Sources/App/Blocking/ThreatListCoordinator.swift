@@ -34,7 +34,7 @@ final class ThreatListCoordinator {
     /// always has a settings entry for every profile that currently
     /// exists.
     func start() {
-        BRWThreatList.setInterstitialPageBuilder { host, originalURL in
+        ActiveEngine.setThreatInterstitialBuilder { host, originalURL in
             ThreatWarningPageRenderer.dataURL(host: host, originalURL: originalURL)
         }
         pushSnapshot()
@@ -62,19 +62,20 @@ final class ThreatListCoordinator {
     private func pushSnapshot() {
         let domains = threatList.allDomains()
 
-        var bridgeSettings: [String: BRWProfileThreatSettings] = [:]
+        var engineSettings: [String: EngineProfileThreatSettings] = [:]
         for profile in ProfileManager.shared.profiles {
             let settings = ThreatWarningSettingsStore.load(forProfileName: profile.name)
-            bridgeSettings[profile.name] = BRWProfileThreatSettings(enabled: settings.isEnabled)
+            engineSettings[profile.name] = EngineProfileThreatSettings(enabled: settings.isEnabled)
         }
         // "private" is the fixed profile_name every private-browsing
-        // window's BRWClientHandler is constructed with (see BRWBrowser.mm's
-        // -initPrivateWithHostView:initialURL:) -- there's no real Profile
-        // to load ThreatWarningSettings for, but a private window still
-        // gets the warning (per browser-12m.1's private-window scope:
-        // "Private windows: enabled too").
-        bridgeSettings["private"] = BRWProfileThreatSettings(enabled: true)
+        // window's engine-side handler is constructed with (see the CEF
+        // adapter's -initPrivateWithHostView:initialURL: for the CEF
+        // specifics) -- there's no real Profile to load ThreatWarningSettings
+        // for, but a private window still gets the warning (per
+        // browser-12m.1's private-window scope: "Private windows: enabled
+        // too").
+        engineSettings["private"] = EngineProfileThreatSettings(enabled: true)
 
-        BRWThreatList.update(withThreatDomains: domains, profileSettings: bridgeSettings)
+        ActiveEngine.updateThreatBlocking(domains: domains, profileSettings: engineSettings)
     }
 }

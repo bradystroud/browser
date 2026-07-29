@@ -51,24 +51,24 @@ final class ContentBlockerCoordinator {
     private func pushSnapshot() {
         let domains = blockList.allDomains()
 
-        var bridgeSettings: [String: BRWProfileBlockingSettings] = [:]
+        var engineSettings: [String: EngineProfileBlockingSettings] = [:]
         for profile in ProfileManager.shared.profiles {
             let settings = BlockingSettingsStore.load(forProfileName: profile.name)
-            bridgeSettings[profile.name] = BRWProfileBlockingSettings(
+            engineSettings[profile.name] = EngineProfileBlockingSettings(
                 enabled: settings.isEnabled,
                 allowlistedHosts: settings.allowlistedHosts
             )
         }
         // "private" is the fixed profile_name every private-browsing window's
-        // BRWClientHandler is constructed with (see BRWBrowser.mm's
-        // -initPrivateWithHostView:initialURL:) -- there's no real Profile to
-        // load a BlockingSettings for, but without an entry here
-        // BRWContentBlockerShouldBlock finds no snapshot for that name and
-        // silently never blocks anything for private windows. Always-enabled,
-        // no per-profile allowlist: a private window has no settings UI of
-        // its own to manage one from.
-        bridgeSettings["private"] = BRWProfileBlockingSettings(enabled: true, allowlistedHosts: [])
+        // engine-side handler is constructed with (see the CEF adapter's
+        // -initPrivateWithHostView:initialURL: for the CEF specifics) --
+        // there's no real Profile to load a BlockingSettings for, but
+        // without an entry here the engine finds no snapshot for that name
+        // and silently never blocks anything for private windows.
+        // Always-enabled, no per-profile allowlist: a private window has no
+        // settings UI of its own to manage one from.
+        engineSettings["private"] = EngineProfileBlockingSettings(enabled: true, allowlistedHosts: [])
 
-        BRWContentBlocker.update(withBlockedDomains: domains, profileSettings: bridgeSettings)
+        ActiveEngine.updateContentBlocking(domains: domains, profileSettings: engineSettings)
     }
 }
