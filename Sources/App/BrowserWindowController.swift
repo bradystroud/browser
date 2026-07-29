@@ -78,6 +78,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
+    /// The content blocker's toolbar shield (browser-12m.5.1.1) -- lives
+    /// inside omniboxContainerView's leading edge, mirroring reloadButton's
+    /// placement on the trailing edge. Title shows the active tab's
+    /// blockedRequestCount when non-zero, icon-only otherwise.
+    private let contentBlockerButton = NSButton()
+    private let contentBlockerPopover = ContentBlockerToolbarController()
     /// Per-tab page thumbnails for the Tab Overview grid (browser-rhi.3) --
     /// see TabThumbnailCache's doc comment for why capture only ever
     /// happens at deactivation time (captureThumbnail(for:), called from
@@ -348,6 +354,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         omniboxField.delegate = self
         omniboxContainerView.addSubview(omniboxField)
 
+        // browser-12m.5.1.1 -- hidden until refreshContentBlockerButton(for:)
+        // has something to show (see that method's own doc comment).
+        contentBlockerButton.isBordered = false
+        contentBlockerButton.imagePosition = .imageLeading
+        contentBlockerButton.font = .systemFont(ofSize: 11)
+        contentBlockerButton.contentTintColor = .secondaryLabelColor
+        contentBlockerButton.target = self
+        contentBlockerButton.action = #selector(toggleContentBlockerPopover(_:))
+        contentBlockerButton.isHidden = true
+        omniboxContainerView.addSubview(contentBlockerButton)
+
         reloadButton.isBordered = false
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
         reloadButton.contentTintColor = .secondaryLabelColor
@@ -397,9 +414,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             x: width - reloadSize - innerMargin, y: (Self.omniboxPillHeight - reloadSize) / 2,
             width: reloadSize, height: reloadSize
         )
-        omniboxField.frame = NSRect(
+        // Only occupies real width once it actually has something to show
+        // (see refreshContentBlockerButton) -- otherwise 0-width so the
+        // field's leading edge doesn't leave an empty gap on an ordinary
+        // page with nothing blocked.
+        let blockerWidth = contentBlockerButton.isHidden ? 0 : contentBlockerButton.frame.width
+        contentBlockerButton.frame = NSRect(
             x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2,
-            width: max(0, width - innerMargin * 2 - reloadSize - 4), height: 20
+            width: blockerWidth, height: 20
+        )
+        let fieldX = innerMargin + blockerWidth + (blockerWidth > 0 ? 4 : 0)
+        omniboxField.frame = NSRect(
+            x: fieldX, y: (Self.omniboxPillHeight - 20) / 2,
+            width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: 20
         )
     }
 
@@ -815,6 +842,33 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             omniboxField.stringValue = isOmniboxFocused ? tab.urlString : Self.domainOnlyDisplay(for: tab.urlString)
         }
         updateChromeTint(for: tab)
+        refreshContentBlockerButton(for: tab)
+    }
+
+    /// browser-12m.5.1.1 -- hidden entirely on a page with nothing blocked
+    /// yet (matches Safari's own convention: no icon shown until there's
+    /// something to say), otherwise a shield glyph + the blocked count.
+    private func refreshContentBlockerButton(for tab: Tab) {
+        let count = tab.blockedRequestCount
+        guard count > 0 else {
+            contentBlockerButton.isHidden = true
+            layoutOmniboxInnerContent()
+            return
+        }
+        contentBlockerButton.isHidden = false
+        contentBlockerButton.image = NSImage(systemSymbolName: "shield.fill", accessibilityDescription: "Trackers blocked")
+        contentBlockerButton.title = " \(count)"
+        contentBlockerButton.sizeToFit()
+        layoutOmniboxInnerContent()
+    }
+
+    /// View > (click) the content blocker shield -- browser-12m.5.1.1.
+    @objc private func toggleContentBlockerPopover(_ sender: Any?) {
+        guard let tab = activeTab, let host = URL(string: tab.urlString)?.host else { return }
+        contentBlockerPopover.toggle(
+            anchorView: contentBlockerButton, profileName: profile.name, host: host,
+            blockedCount: tab.blockedRequestCount, isPrivate: isPrivate
+        )
     }
 
     /// Blends this window's profile accent (always, as a subtle baseline)

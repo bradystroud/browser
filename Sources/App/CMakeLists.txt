@@ -102,6 +102,7 @@ set(BROWSER_SWIFT_SRCS
   Blocking/ThreatWarningSettingsStore.swift
   Blocking/ThreatListCoordinator.swift
   Blocking/PrivacyPaneController.swift
+  Blocking/ContentBlockerToolbarController.swift
   StartPage/StartPageSettings.swift
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
