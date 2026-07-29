@@ -1,14 +1,20 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// The full "Import from Safari…" window (browser-ymx): profiles,
-/// favourites, and history, not just the plain bookmarks-only Safari import
-/// (BookmarkImportCoordinator.importFromSafari, still reachable via its own
-/// menu item and left untouched -- this is a separate, bigger flow, not a
-/// replacement for it). Detected Safari profiles are shown with a checkbox,
-/// per-profile counts, and a destination popup (create a new Browser
-/// profile, or merge into an existing one); Import writes bookmarks/
-/// favourites through the existing BookmarkImporter and history through
-/// HistoryStore.importVisits(_:), then shows a final summary.
+/// favourites, history, and passwords, not just the plain bookmarks-only
+/// Safari import (BookmarkImportCoordinator.importFromSafari, still
+/// reachable via its own menu item and left untouched -- this is a
+/// separate, bigger flow, not a replacement for it). Detected Safari
+/// profiles are shown with a checkbox, per-profile counts, and a
+/// destination popup (create a new Browser profile, or merge into an
+/// existing one); Import writes bookmarks/favourites through the existing
+/// BookmarkImporter and history through HistoryStore.importVisits(_:), then
+/// shows a final summary. Passwords are a separate section below the
+/// table: a single CSV file (Chrome or Safari export) chosen once, not tied
+/// to any detected Safari profile row -- see passwordEntries' own doc
+/// comment for why, and docs/ai-tasks/password-import-notes.md for the full
+/// investigation (including what's deliberately NOT built here).
 ///
 /// Deliberately fully synchronous (scan, then import, both on the main
 /// thread) -- matching every other BrowserCore-touching coordinator in this
@@ -37,15 +43,40 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     /// an earlier row in this same import).
     private var existingProfiles: [Profile] = []
 
+    /// Passwords are CSV-only, for both Chrome and Safari (browser-ymx) --
+    /// neither's saved passwords can be read directly the way Safari's
+    /// bookmarks/history can: Chrome's are AES-encrypted with a key in a
+    /// Keychain item another app owns (see docs/ai-tasks/
+    /// password-import-notes.md for why that's investigated but
+    /// deliberately not built here), and Safari's are further restricted
+    /// by keychain ACLs to Safari/AuthenticationServices only, with no
+    /// programmatic path at all. So this is a single, independent CSV
+    /// chosen once -- not tied to any detected Safari profile row above.
+    private var passwordEntries: [PasswordCSVEntry] = []
+    private var chosenPasswordFileURL: URL?
+    /// Same 0-is-create-new/1...N-is-merge-into-existingProfiles[index-1]
+    /// convention as Row.destinationIndex above, but independent of it --
+    /// defaults to merging into the first existing profile (index 1) when
+    /// one exists, since a password CSV isn't "a new identity" the way a
+    /// detected Safari profile is.
+    private var passwordDestinationIndex = 0
+
     private let tableView = NSTableView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let importButton = NSButton(title: "Import", target: nil, action: nil)
 
+    private let passwordsSectionLabel = NSTextField(labelWithString: "Passwords")
+    private let passwordsCaptionLabel = NSTextField(wrappingLabelWithString: "")
+    private let choosePasswordFileButton = NSButton(title: "Choose CSV File…", target: nil, action: nil)
+    private let passwordFileStatusLabel = NSTextField(labelWithString: "No file chosen")
+    private let passwordDestinationPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let overwritePasswordsCheckbox = NSButton(checkboxWithTitle: "Overwrite existing entries", target: nil, action: nil)
+
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -87,46 +118,68 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         // synchronous scan below blocks this same thread.
         window?.contentView?.displayIfNeeded()
 
+        // Refreshed before the scan, and before either branch below calls
+        // tableView.reloadData()/rebuildPasswordDestinationPopup() -- both
+        // read `existingProfiles` synchronously while rebuilding their
+        // cell/menu content, so this must already hold this run's value
+        // rather than being set afterward (an earlier version of this
+        // function set it after reloadData() had already fired, which
+        // rendered the popups with a stale list from the previous run).
+        existingProfiles = ProfileManager.shared.profiles
+        rebuildPasswordDestinationPopup()
+
         do {
             let result = try SafariImportScanner.scan()
             scanResult = result
-            existingProfiles = ProfileManager.shared.profiles
             rows = result.profiles.map { Row(profile: $0) }
             tableView.reloadData()
-            statusLabel.stringValue = ""
             summaryLabel.stringValue = "\(result.bookmarkCount) bookmark\(result.bookmarkCount == 1 ? "" : "s"), "
                 + "\(result.favoriteCount) favourite\(result.favoriteCount == 1 ? "" : "s") -- shared across every Safari profile."
-            importButton.isEnabled = !rows.isEmpty
         } catch {
-            close()
+            // Deliberately does NOT close the window (unlike the plain
+            // bookmarks-only Safari import, which has nothing else to
+            // offer once this fails): the Passwords section below needs
+            // no Safari file access at all -- it's a manually-chosen CSV
+            // -- so an FDA denial shouldn't take that path down with it.
             // Same dialog, same System Settings deep link, same "use
-            // Safari's own export instead" fallback advice as the existing
-            // bookmarks-only Safari import already shows for this exact
-            // failure mode.
+            // Safari's own export instead" fallback advice as the plain
+            // bookmarks-only import shows for this exact failure mode.
+            rows = []
+            summaryLabel.stringValue = "Couldn't read Safari's bookmarks/history directly -- see the dialog for how to fix that. Passwords can still be imported below."
             BookmarkImportCoordinator.shared.presentSafariReadFailureAlert()
         }
+        statusLabel.stringValue = ""
+        updateImportButtonEnabled()
         progressIndicator.stopAnimation(nil)
+    }
+
+    private func updateImportButtonEnabled() {
+        importButton.isEnabled = rows.contains { $0.isSelected } || !passwordEntries.isEmpty
     }
 
     // MARK: - Import
 
     @objc private func performImport() {
-        guard let scanResult else { return }
         let selectedRows = rows.filter { $0.isSelected }
-        guard !selectedRows.isEmpty else { return }
+        guard !selectedRows.isEmpty || !passwordEntries.isEmpty else { return }
 
         importButton.isEnabled = false
         statusLabel.stringValue = "Importing…"
         progressIndicator.startAnimation(nil)
         window?.contentView?.displayIfNeeded()
 
-        let favoriteURLs = SafariImportScanner.favoriteURLs(in: scanResult.sharedBookmarks)
+        // nil only if the Safari scan itself failed (FDA denied) -- in
+        // that case selectedRows is necessarily empty (see runScan's own
+        // catch block), so this loop just doesn't run; passwords below
+        // are entirely independent of this succeeding.
+        let favoriteURLs = scanResult.map { SafariImportScanner.favoriteURLs(in: $0.sharedBookmarks) } ?? []
         var totalBookmarks = 0
         var totalFavorites = 0
         var totalHistory = 0
         var importedProfileCount = 0
 
         for row in selectedRows {
+            guard let scanResult else { break }
             let profile = resolveDestinationProfile(for: row)
             let stores = ProfileDataStoreManager.shared.stores(for: profile)
             let favoritesFolderId = FavoritesFolder.id(in: stores.bookmarks)
@@ -158,18 +211,73 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             importedProfileCount += 1
         }
 
+        // Passwords: a single independent CSV, not tied to any Safari
+        // profile row above -- see passwordEntries' own doc comment.
+        var totalPasswords = 0
+        let passwordFileToOfferDeleting = chosenPasswordFileURL
+        if !passwordEntries.isEmpty {
+            let destination = resolvePasswordDestinationProfile()
+            let result = PasswordImportCoordinator.importEntries(
+                passwordEntries,
+                into: destination,
+                overwriteExisting: overwritePasswordsCheckbox.state == .on
+            )
+            totalPasswords = result.importedCount
+            if importedProfileCount == 0 { importedProfileCount = 1 }
+            // SECURITY: drop the parsed plaintext entries the moment this
+            // pass over them is done -- see this property's own doc
+            // comment and PasswordImportCoordinator's for the same rule.
+            passwordEntries = []
+        }
+
         progressIndicator.stopAnimation(nil)
         statusLabel.stringValue = ""
         cleanUpTempDirectory()
         close()
 
+        var summary = "Imported \(totalBookmarks) bookmark\(totalBookmarks == 1 ? "" : "s"), "
+            + "\(totalFavorites) favourite\(totalFavorites == 1 ? "" : "s"), "
+            + "\(totalHistory) history entr\(totalHistory == 1 ? "y" : "ies")"
+        if passwordFileToOfferDeleting != nil {
+            summary += ", \(totalPasswords) password\(totalPasswords == 1 ? "" : "s")"
+        }
+        summary += " into \(importedProfileCount) profile\(importedProfileCount == 1 ? "" : "s")."
+
         let alert = NSAlert()
         alert.messageText = "Import Complete"
-        alert.informativeText = "Imported \(totalBookmarks) bookmark\(totalBookmarks == 1 ? "" : "s"), "
-            + "\(totalFavorites) favourite\(totalFavorites == 1 ? "" : "s"), "
-            + "\(totalHistory) history entr\(totalHistory == 1 ? "y" : "ies") "
-            + "into \(importedProfileCount) profile\(importedProfileCount == 1 ? "" : "s")."
+        alert.informativeText = summary
         alert.runModal()
+
+        if let csvURL = passwordFileToOfferDeleting {
+            offerToDeletePasswordCSV(at: csvURL)
+        }
+    }
+
+    /// Brady's own explicit requirement: after a successful password
+    /// import, offer to remove the plaintext CSV, defaulting to yes, and
+    /// regardless of the answer, the file has already been shown as
+    /// plaintext in this window's own caption before the user ever chose
+    /// it (see passwordsCaptionLabel's text in setUpViews()).
+    private func offerToDeletePasswordCSV(at url: URL) {
+        let alert = NSAlert()
+        alert.messageText = "Delete the Password File?"
+        alert.informativeText = "\(url.lastPathComponent) contains your passwords in plain text. "
+            + "Now that they're imported, it's safer to delete it."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Keep It")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        PasswordImportCoordinator.securelyDelete(fileAt: url)
+    }
+
+    private func resolvePasswordDestinationProfile() -> Profile {
+        guard passwordDestinationIndex > 0 else {
+            return ProfileManager.shared.createProfile(name: "Imported Passwords", colorHex: ProfileManager.shared.nextUnusedColor())
+        }
+        let index = passwordDestinationIndex - 1
+        guard existingProfiles.indices.contains(index) else {
+            return ProfileManager.shared.profiles.first ?? ProfileManager.shared.createProfile(name: "Imported Passwords", colorHex: ProfileManager.shared.nextUnusedColor())
+        }
+        return existingProfiles[index]
     }
 
     private func resolveDestinationProfile(for row: Row) -> Profile {
@@ -225,9 +333,54 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         importButton.autoresizingMask = [.minXMargin, .maxYMargin]
         contentView.addSubview(importButton)
 
-        let scrollY = bottomRowY + bottomRowHeight + 8
+        // Passwords section -- a fixed-height strip directly above the
+        // bottom bar, below the Safari-profiles table. Independent of that
+        // table: see passwordEntries' own doc comment for why (CSV-only,
+        // not tied to any detected Safari profile).
+        let passwordsSectionY = bottomRowY + bottomRowHeight + 8
+        let passwordsSectionHeight: CGFloat = 140
+        let contentWidth = contentView.bounds.width - margin * 2
+
+        passwordsSectionLabel.font = .boldSystemFont(ofSize: 12)
+        passwordsSectionLabel.frame = NSRect(x: margin, y: passwordsSectionY + passwordsSectionHeight - 18, width: contentWidth, height: 16)
+        passwordsSectionLabel.autoresizingMask = [.width, .maxYMargin]
+        contentView.addSubview(passwordsSectionLabel)
+
+        passwordsCaptionLabel.font = .systemFont(ofSize: 11)
+        passwordsCaptionLabel.textColor = .secondaryLabelColor
+        passwordsCaptionLabel.stringValue = "Safari and Chrome both protect saved passwords from direct reading -- neither is included in the scan above. "
+            + "Export a CSV (Safari: Passwords app → ⋯ → Export All Passwords…; Chrome: chrome://password-manager/settings → Export passwords), then choose it here. "
+            + "The exported file contains your passwords in plain text."
+        passwordsCaptionLabel.frame = NSRect(x: margin, y: passwordsSectionY + 62, width: contentWidth, height: 44)
+        passwordsCaptionLabel.autoresizingMask = [.width, .maxYMargin]
+        contentView.addSubview(passwordsCaptionLabel)
+
+        choosePasswordFileButton.target = self
+        choosePasswordFileButton.action = #selector(choosePasswordFile)
+        choosePasswordFileButton.frame = NSRect(x: margin, y: passwordsSectionY + 32, width: 150, height: 24)
+        choosePasswordFileButton.autoresizingMask = [.maxYMargin]
+        contentView.addSubview(choosePasswordFileButton)
+
+        passwordFileStatusLabel.font = .systemFont(ofSize: 11)
+        passwordFileStatusLabel.textColor = .secondaryLabelColor
+        passwordFileStatusLabel.lineBreakMode = .byTruncatingMiddle
+        passwordFileStatusLabel.frame = NSRect(x: margin + 160, y: passwordsSectionY + 36, width: contentWidth - 160, height: 16)
+        passwordFileStatusLabel.autoresizingMask = [.width, .maxYMargin]
+        contentView.addSubview(passwordFileStatusLabel)
+
+        passwordDestinationPopup.target = self
+        passwordDestinationPopup.action = #selector(passwordDestinationChanged(_:))
+        passwordDestinationPopup.frame = NSRect(x: margin, y: passwordsSectionY, width: 220, height: 24)
+        passwordDestinationPopup.autoresizingMask = [.maxYMargin]
+        contentView.addSubview(passwordDestinationPopup)
+
+        overwritePasswordsCheckbox.frame = NSRect(x: margin + 230, y: passwordsSectionY + 4, width: contentWidth - 230, height: 18)
+        overwritePasswordsCheckbox.autoresizingMask = [.width, .maxYMargin]
+        contentView.addSubview(overwritePasswordsCheckbox)
+
+        let scrollY = passwordsSectionY + passwordsSectionHeight + 8
         let scrollHeight = contentView.bounds.height - scrollY - margin - 24
-        let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollY, width: contentView.bounds.width - margin * 2, height: scrollHeight))
+        let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollY, width: contentWidth, height: scrollHeight))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .bezelBorder
@@ -251,6 +404,56 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         tableView.rowHeight = 40
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
+    }
+
+    private func rebuildPasswordDestinationPopup() {
+        passwordDestinationPopup.removeAllItems()
+        passwordDestinationPopup.addItem(withTitle: "Create New Profile")
+        for profile in existingProfiles {
+            passwordDestinationPopup.addItem(withTitle: "Merge into \u{201C}\(profile.name)\u{201D}")
+        }
+        // Default to the first existing profile rather than "create new"
+        // when one exists -- see passwordDestinationIndex's own doc
+        // comment for why.
+        passwordDestinationIndex = existingProfiles.isEmpty ? 0 : 1
+        passwordDestinationPopup.selectItem(at: passwordDestinationIndex)
+    }
+
+    @objc private func passwordDestinationChanged(_ sender: NSPopUpButton) {
+        passwordDestinationIndex = sender.indexOfSelectedItem
+    }
+
+    @objc private func choosePasswordFile(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Choose a password CSV export (Safari's Passwords app, or Chrome's chrome://password-manager/settings)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        guard let text = try? String(contentsOf: url) else {
+            passwordFileStatusLabel.stringValue = "Couldn't read \(url.lastPathComponent) as text."
+            return
+        }
+        do {
+            let entries = try PasswordCSVParser.parse(csv: text)
+            guard !entries.isEmpty else {
+                passwordFileStatusLabel.stringValue = "\(url.lastPathComponent) — no passwords found."
+                passwordEntries = []
+                chosenPasswordFileURL = nil
+                updateImportButtonEnabled()
+                return
+            }
+            passwordEntries = entries
+            chosenPasswordFileURL = url
+            passwordFileStatusLabel.stringValue = "\(url.lastPathComponent) — \(entries.count) password\(entries.count == 1 ? "" : "s") found."
+        } catch {
+            passwordFileStatusLabel.stringValue = "\(url.lastPathComponent) doesn't look like a recognized password export."
+            passwordEntries = []
+            chosenPasswordFileURL = nil
+        }
+        updateImportButtonEnabled()
     }
 
     // MARK: - NSTableViewDataSource / Delegate
@@ -302,6 +505,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     @objc private func toggleSelected(_ sender: NSButton) {
         guard rows.indices.contains(sender.tag) else { return }
         rows[sender.tag].isSelected = sender.state == .on
+        updateImportButtonEnabled()
     }
 
     @objc private func destinationChanged(_ sender: NSPopUpButton) {
@@ -314,5 +518,12 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     func windowWillClose(_ notification: Notification) {
         cleanUpTempDirectory()
         scanResult = nil
+        // SECURITY: don't let parsed plaintext passwords linger in memory
+        // once the window most recently offered to import them is gone --
+        // same "hold only as long as needed" rule as everywhere else this
+        // feature touches a password value.
+        passwordEntries = []
+        chosenPasswordFileURL = nil
+        passwordFileStatusLabel.stringValue = "No file chosen"
     }
 }

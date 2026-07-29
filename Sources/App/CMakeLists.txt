@@ -36,6 +36,7 @@ set(BROWSER_SWIFT_SRCS
   BrowserWindowController.swift
   ColorSwatchPicker.swift
   CommandLineArgs.swift
+  AppPreferencesStore.swift
   GeneralPaneController.swift
   GlassBackgroundView.swift
   MainMenuBuilder.swift
@@ -115,6 +116,7 @@ set(BROWSER_SWIFT_SRCS
   Import/BookmarkImportCoordinator.swift
   Import/SafariImportScanner.swift
   Import/SafariImportWindowController.swift
+  Import/PasswordImportCoordinator.swift
   TabOverview/TabThumbnailCache.swift
   TabOverview/TabOverviewCellView.swift
   TabOverview/TabOverviewView.swift
@@ -164,6 +166,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistoryReader.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariProfileDiscovery.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/PasswordCSVParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteError.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/Statement.swift
