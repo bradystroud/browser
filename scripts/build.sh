@@ -12,8 +12,49 @@ if [[ ! -d "${ROOT_DIR}/third_party/cef" ]] || [[ -z "$(ls -A "${ROOT_DIR}/third
   "${ROOT_DIR}/scripts/fetch-cef.sh"
 fi
 
+# Two ./scripts/build.sh runs against this same shared build/ dir race on
+# Xcode's own build-system database (XCBuildData/build.db) -- not a code
+# problem, but "unable to attach DB ... database is locked" reads exactly
+# like one, and has repeatedly cost agents real time chasing a phantom break
+# (browser-7qw). macOS ships no flock(1) (unlike Linux), so this is a plain
+# mkdir-based lock -- mkdir on a not-yet-existing path is atomic on a POSIX
+# filesystem, the standard portable substitute. Deliberately scoped to just
+# this script's own build/ dir, independent of ${CONFIG}: a Debug build and
+# a Release build against the same build/ dir share the same build.db, so
+# they'd race just as much as two Debug builds would. scripts/release.sh's
+# own build-release/ is a different, already-isolated directory (browser-
+# rkn) and is untouched by this lock.
+LOCK_DIR="${BUILD_DIR}/.build-lock"
+acquire_build_lock() {
+  mkdir -p "${BUILD_DIR}"
+  local printed_wait_message=0
+  while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
+    local holder_pid=""
+    if [[ -f "${LOCK_DIR}/pid" ]]; then
+      holder_pid="$(cat "${LOCK_DIR}/pid" 2>/dev/null || true)"
+    fi
+    # A killed/crashed build (e.g. -9) never reaches the trap below and
+    # would otherwise wedge every future build against this dir forever --
+    # reclaim the lock once its recorded holder process is confirmed gone.
+    if [[ -n "${holder_pid}" ]] && ! kill -0 "${holder_pid}" 2>/dev/null; then
+      echo "== Stale build lock from dead process ${holder_pid} -- reclaiming =="
+      rm -rf "${LOCK_DIR}"
+      continue
+    fi
+    if [[ "${printed_wait_message}" -eq 0 ]]; then
+      echo "== Waiting for another build to finish (shared ${BUILD_DIR}, held by pid ${holder_pid:-unknown})... =="
+      printed_wait_message=1
+    fi
+    sleep 2
+  done
+  echo $$ > "${LOCK_DIR}/pid"
+  # Released on any exit -- success, error (set -e), or signal -- so a
+  # failed or interrupted build never leaves the next one waiting forever.
+  trap 'rm -rf "${LOCK_DIR}"' EXIT
+}
+acquire_build_lock
+
 echo "== Configuring (CMake + Xcode generator) =="
-mkdir -p "${BUILD_DIR}"
 cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -G Xcode
 
 echo "== Building (${CONFIG}) =="
