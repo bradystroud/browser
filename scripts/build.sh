@@ -27,7 +27,33 @@ if [[ ! -d "${APP_PATH}" ]]; then
   exit 1
 fi
 
-echo "== Signing (inside-out, ad-hoc by default; see scripts/sign.sh) =="
+# Auto-detect a real Developer ID identity so the daily local build (and thus
+# scripts/install.sh's daily-driver /Applications install) gets genuine
+# Keychain-backed cookie/credential encryption instead of always falling
+# back to ad-hoc + --use-mock-keychain (browser-35t) -- an explicit
+# CODESIGN_IDENTITY (ad-hoc included, e.g. for a from-scratch clone with no
+# cert yet) always wins over this and is left untouched. Only "Developer ID
+# Application:" identities qualify -- this app is Developer-ID-distributed
+# only (see AGENTS.md), never signed for the App Store.
+if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then
+  DETECTED_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
+    | grep '"Developer ID Application:' | head -1 | sed -E 's/.*"(.*)".*/\1/')"
+  if [[ -n "${DETECTED_IDENTITY}" ]]; then
+    echo "== Detected Developer ID identity: ${DETECTED_IDENTITY} =="
+    export CODESIGN_IDENTITY="${DETECTED_IDENTITY}"
+  fi
+fi
+
+# Same marker key scripts/release.sh plants before signing with a real
+# identity -- see BRWCefApp.mm's OnBeforeCommandLineProcessing, the only
+# reader. Guarded the same way: a no-op for the ad-hoc default.
+if [[ -n "${CODESIGN_IDENTITY:-}" && "${CODESIGN_IDENTITY}" != "-" ]]; then
+  INFO_PLIST="${APP_PATH}/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Delete :BRWDisableMockKeychain" "${INFO_PLIST}" 2>/dev/null || true
+  /usr/libexec/PlistBuddy -c "Add :BRWDisableMockKeychain bool true" "${INFO_PLIST}"
+fi
+
+echo "== Signing (inside-out; identity: ${CODESIGN_IDENTITY:--}; see scripts/sign.sh) =="
 "${ROOT_DIR}/scripts/sign.sh" "${APP_PATH}" "${MANIFEST}"
 
 cat <<EOF
