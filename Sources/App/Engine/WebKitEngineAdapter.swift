@@ -99,7 +99,13 @@ enum WebKitEngine: BrowserEngine {
         return true
     }
 
-    static func createTab(profileName: String, hostView: NSView, initialURL: String) -> EngineTab {
+    // profileId (browser-ojw) isn't threaded any further into WebKitTab
+    // here -- see docs/ai-tasks/profile-id-cache-directory-notes.md for why
+    // this engine's own per-profile WKWebsiteDataStore lookup
+    // (ProfileDataStoreKey.identifier(forProfileId:) below, macOS 14+ only)
+    // is still fed `profileName` rather than this now-available `profileId`,
+    // a related but separate gap left for whoever owns this file next.
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
         let tab = WebKitTab(profileName: profileName, hostView: hostView, initialURL: initialURL)
         register(tab, profileName: profileName)
         return tab
