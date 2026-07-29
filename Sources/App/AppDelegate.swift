@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // click always means "open this," restored or not.
         let coldLaunchWasRouted = RoutingCoordinator.shared.hasPendingRoutes
         RoutingCoordinator.shared.markReady()
+        CLIServer.shared.start() // browser-82d: the `browser` CLI's control socket -- see CLI/CLIServer.swift.
 
         // Holding Shift at launch skips restore entirely -- the standard
         // "hold a modifier to skip the usual startup behavior" convention

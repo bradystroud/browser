@@ -129,6 +129,7 @@ set(BROWSER_SWIFT_SRCS
   Notifications/WebPushCoordinator.swift
   Audio/AudioStateScript.swift
   Audio/TabAudioCoordinator.swift
+  CLI/CLIServer.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -232,6 +233,24 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   )
 source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})
 
+# BrowserCLIProtocol's socket-path convention + wire message types
+# (../../Packages/BrowserCLIProtocol/Sources/BrowserCLIProtocol) are pure
+# Swift/Foundation with no AppKit dependency, so they're also packaged
+# standalone as Packages/BrowserCLIProtocol/ at the repo root for a fast,
+# isolated `swift test`, and shared with the standalone `browser-cli` SwiftPM
+# package (a real path dependency there, unlike this CMake target) -- see
+# docs/ai-tasks/browser-cli-notes.md (browser-82d). Same reasoning as
+# BROWSER_ROUTING_CORE_SRCS/BROWSER_BROWSER_CORE_SRCS/BROWSER_BLOCKLIST_CORE_SRCS/
+# BROWSER_AUTOFILL_CORE_SRCS/BROWSER_WEBENGINE_CORE_SRCS above: rather than
+# linking that package from this Xcode-generator CMake target, these same
+# source files are compiled directly into the Browser executable here too --
+# one copy of the logic, two ways to build it (three, counting browser-cli).
+set(BROWSER_CLI_PROTOCOL_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCLIProtocol/Sources/BrowserCLIProtocol/CLISocketPath.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCLIProtocol/Sources/BrowserCLIProtocol/CLIMessages.swift
+  )
+source_group(BrowserCLIProtocol FILES ${BROWSER_CLI_PROTOCOL_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
@@ -240,6 +259,7 @@ set(BROWSER_SRCS
   ${BROWSER_BROWSER_CORE_SRCS}
   ${BROWSER_AUTOFILL_CORE_SRCS}
   ${BROWSER_WEBENGINE_CORE_SRCS}
+  ${BROWSER_CLI_PROTOCOL_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
