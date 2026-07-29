@@ -149,14 +149,25 @@ final class TabGroupHeaderView: NSView {
 
         let labelX = margin + dotSize + 6
         var trailingReserved = chevronSize + 6
+        // Vertically centered as their own row alongside the dot/chevron
+        // above (browser-0y1) -- see TabButtonView.layout()'s own comment
+        // for why a fixed label height centered in bounds.height is needed
+        // instead of a full-height frame (which top-aligns the text).
+        let labelHeight: CGFloat = 16
         if isCollapsed {
             let badgeWidth: CGFloat = 18
-            countBadgeLabel.frame = NSRect(x: bounds.width - chevronSize - badgeWidth - 8, y: 0, width: badgeWidth, height: bounds.height)
+            countBadgeLabel.frame = NSRect(
+                x: bounds.width - chevronSize - badgeWidth - 8, y: (bounds.height - labelHeight) / 2,
+                width: badgeWidth, height: labelHeight
+            )
             trailingReserved += badgeWidth + 2
         } else {
             countBadgeLabel.frame = .zero
         }
-        nameLabel.frame = NSRect(x: labelX, y: 0, width: max(0, bounds.width - labelX - trailingReserved), height: bounds.height)
+        nameLabel.frame = NSRect(
+            x: labelX, y: (bounds.height - labelHeight) / 2,
+            width: max(0, bounds.width - labelX - trailingReserved), height: labelHeight
+        )
     }
 
     override func mouseDown(with event: NSEvent) {

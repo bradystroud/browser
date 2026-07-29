@@ -62,6 +62,7 @@ set(BROWSER_SWIFT_SRCS
   PageMessageDispatcher.swift
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
+  Engine/WebKitEngineAdapter.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
@@ -110,6 +111,7 @@ set(BROWSER_SWIFT_SRCS
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
   StartPage/StartPageSettingsPaneController.swift
+  StartPage/StartPageSettingsCoordinator.swift
   Import/BookmarkImportCoordinator.swift
   Import/SafariImportScanner.swift
   Import/SafariImportWindowController.swift
@@ -210,6 +212,23 @@ set(BROWSER_AUTOFILL_CORE_SRCS
   )
 source_group(AutofillCore FILES ${BROWSER_AUTOFILL_CORE_SRCS})
 
+# WebEngineCore's WKContentRuleList-JSON builder + profile/data-store UUID
+# derivation (../../Packages/WebEngineCore/Sources/WebEngineCore) are pure
+# Swift/Foundation with no WebKit/AppKit dependency, so they're also
+# packaged standalone as Packages/WebEngineCore/ at the repo root for a
+# fast, isolated `swift test` (browser-n50) -- see
+# docs/ai-tasks/webkit-engine-adapter-notes.md. Same reasoning as
+# BROWSER_ROUTING_CORE_SRCS/BROWSER_BROWSER_CORE_SRCS/BROWSER_BLOCKLIST_CORE_SRCS/
+# BROWSER_AUTOFILL_CORE_SRCS above: rather than linking that package from
+# this Xcode-generator CMake target, these same source files are compiled
+# directly into the Browser executable here too -- one copy of the logic,
+# two ways to build it.
+set(BROWSER_WEBENGINE_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentRuleListBuilder.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ProfileDataStoreKey.swift
+  )
+source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
@@ -217,6 +236,7 @@ set(BROWSER_SRCS
   ${BROWSER_BLOCKLIST_CORE_SRCS}
   ${BROWSER_BROWSER_CORE_SRCS}
   ${BROWSER_AUTOFILL_CORE_SRCS}
+  ${BROWSER_WEBENGINE_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
@@ -256,7 +276,10 @@ SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
 add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
 # sqlite3 -- BrowserCore's stores link against the system library (via
 # Swift's built-in SQLite3 module import, no header search path needed).
-target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3)
+# WebKit -- not part of CEF_STANDARD_LIBS (see third_party/cef's own
+# cef_variables.cmake), needed only for Engine/WebKitEngineAdapter.swift's
+# `import WebKit` (browser-n50); everything else already links AppKit/Cocoa.
+target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3 "-framework WebKit")
 set_target_properties(${CEF_TARGET} PROPERTIES
   MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
   XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/BrowserApp-Bridging-Header.h"

@@ -46,7 +46,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let reloadButton = NSButton()
-    private let omniboxField = NSTextField()
+    private let omniboxField = OmniboxField()
     /// The omnibox floating pill (browser-qpy): hudWindow material,
     /// withinWindow blending -- differentiates it from the
     /// underWindowBackground chrome it floats on top of (see
@@ -62,6 +62,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// the pill to show the full editable URL; false shows a narrow,
     /// domain-only pill (see Self.domainOnlyDisplay(for:)).
     private var isOmniboxFocused = false
+    /// The pending revert from a transient "Copied to Clipboard" display
+    /// (browser-0y1, Brady's ask -- see showCopiedFeedback(for:)) --
+    /// cancelled and replaced on every ⌘⇧C press so rapid repeats restart
+    /// the same 0.8s countdown instead of stacking reverts.
+    private var copiedFeedbackWorkItem: DispatchWorkItem?
     private static let omniboxPillHeight: CGFloat = 30
     private static let omniboxCollapsedWidth: CGFloat = 280
     /// Minimum breathing room between the expanded pill and whatever sits
@@ -280,7 +285,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func setUpViews() {
         guard let window, let contentView = window.contentView else { return }
         let tabStripHeight: CGFloat = 32
-        let toolbarHeight: CGFloat = 36
+        // Was 36 -- left only 3pt above/below the 30pt-tall omnibox pill,
+        // which read as "almost touching the content" (Brady's report,
+        // browser-0y1) even before the chrome-order flip changed what
+        // technically sits directly below it. 44 gives the pill visible,
+        // symmetric breathing room (7pt each side), closer to Safari's own
+        // proportions. Everything else in this method/setUpToolbarContents/
+        // omniboxFrame derives from this one constant (via
+        // toolbarView.bounds.height), so nothing else needs updating.
+        let toolbarHeight: CGFloat = 44
         let chromeHeight = tabStripHeight + toolbarHeight
 
         // Hidden titlebar + full-size content view (browser-qpy): the
@@ -423,6 +436,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         omniboxField.target = self
         omniboxField.action = #selector(omniboxSubmitted)
         omniboxField.delegate = self
+        // "Move Tab to Profile" (browser-0y1) -- appended to the field's
+        // own standard cut/copy/paste context menu, not a replacement for
+        // it. Kept as a closure set here rather than a full delegate
+        // protocol, matching OmniboxField's own doc comment.
+        omniboxField.onBuildContextMenu = { [weak self] menu in
+            guard let self else { return }
+            menu.addItem(.separator())
+            menu.addItem(self.moveToProfileMenuItem())
+        }
         // Real content lives in contentContainer, not omniboxContainerView
         // itself (browser-0y1) -- see GlassBackgroundView.contentContainer's
         // own doc comment for why a plain sibling subview of the glass view
@@ -616,6 +638,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "New Profile…", action: #selector(newProfileFromPillMenu), keyEquivalent: "").target = self
+        // Second entry point for the same command as the omnibox's own
+        // context menu (browser-0y1, Brady's ask -- "two natural entry
+        // points").
+        menu.addItem(.separator())
+        menu.addItem(moveToProfileMenuItem())
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
     }
 
@@ -632,6 +659,55 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// here.
     @objc private func newProfileFromPillMenu() {
         (NSApp.delegate as? AppDelegate)?.newProfilePrompt(nil)
+    }
+
+    /// "Move Tab to Profile ▸ <other profiles>" (browser-0y1, Brady's ask)
+    /// -- shared by the omnibox's own right-click context menu
+    /// (OmniboxField.onBuildContextMenu) and the profile pill's menu
+    /// above, its two natural entry points. Excludes this window's own
+    /// profile (nothing to move to). Built fresh each time, same reasoning
+    /// as profilePillTapped(_:)/TabButtonView's own context menu. Disabled
+    /// (not omitted) when there's no other profile to offer, so the
+    /// command stays discoverable even with only one profile.
+    private func moveToProfileMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Move Tab to Profile", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let others = ProfileManager.shared.profiles.filter { $0.id != profile.id }
+        for candidate in others {
+            let candidateItem = NSMenuItem(title: candidate.name, action: #selector(moveActiveTabToProfileMenuItem(_:)), keyEquivalent: "")
+            candidateItem.target = self
+            candidateItem.representedObject = candidate
+            candidateItem.image = Self.dotImage(colorHex: candidate.colorHex, diameter: 10)
+            submenu.addItem(candidateItem)
+        }
+        item.submenu = submenu
+        item.isEnabled = !others.isEmpty
+        return item
+    }
+
+    @objc private func moveActiveTabToProfileMenuItem(_ sender: NSMenuItem) {
+        guard let destination = sender.representedObject as? Profile else { return }
+        moveActiveTab(toProfile: destination)
+    }
+
+    /// Moves the active tab to a different profile -- always via a new tab
+    /// in that profile's window (opening one if none exists yet), reusing
+    /// RoutingCoordinator's own "find or create a window for this profile"
+    /// path rather than a parallel implementation, per the task's own
+    /// note: a moved tab should land exactly where a routed link would. A
+    /// move, not a copy -- the source tab (and, if it was this window's
+    /// last tab, the window itself) closes afterwards; closeTab(at:)
+    /// already handles that case, no special-casing needed here.
+    ///
+    /// SECURITY/PRIVACY: deliberately carries only the URL, never cookies
+    /// or session state -- the destination profile's own sign-in state (or
+    /// lack of one) is exactly the point of profile isolation. A future
+    /// change attempting to carry session state across profiles would
+    /// defeat that; don't add one.
+    private func moveActiveTab(toProfile destination: Profile) {
+        guard let tab = activeTab, let sourceIndex = activeTabIndex else { return }
+        RoutingCoordinator.shared.openURL(tab.urlString, in: destination)
+        closeTab(at: sourceIndex)
     }
 
     /// Expands/collapses the pill and swaps the field's displayed text
@@ -662,17 +738,61 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     @discardableResult
     func addTab(url: String, makeActive: Bool) -> Tab {
+        insertTab(url: url, makeActive: makeActive, at: tabs.count, focusOmnibox: makeActive)
+    }
+
+    /// Opens `url` as a new tab immediately after `openerIndex` -- standard
+    /// "a link click opens a new tab next to this one" placement, the
+    /// target for target="_blank" links and window.open() calls that CEF's
+    /// OnBeforePopup would otherwise satisfy with a whole separate native
+    /// window (see BRWClientHandler.mm and Tab.engineTabDidRequestNewTab).
+    /// Falls back to the pinned/grouped section boundary when the opener is
+    /// pinned or grouped, so a plain (unpinned, ungrouped) new tab never
+    /// lands inside either section -- see the [pinned][group sections]
+    /// [loose] ordering invariant documented on `tabs` elsewhere in this file
+    /// (movePinState/moveTab(at:toGroup:)). Unlike addTab(url:makeActive:)
+    /// above, never focuses the omnibox: this tab already has real content
+    /// to load, not a blank page waiting for a typed URL.
+    @discardableResult
+    func openTabForLinkClick(url: String, afterIndex openerIndex: Int, foreground: Bool) -> Tab {
+        insertTab(url: url, makeActive: foreground, at: insertionIndex(afterOpenerAt: openerIndex), focusOmnibox: false)
+    }
+
+    private func insertionIndex(afterOpenerAt openerIndex: Int) -> Int {
+        guard tabs.indices.contains(openerIndex) else { return tabs.count }
+        let opener = tabs[openerIndex]
+        if opener.isPinned {
+            return tabs.filter { $0.isPinned }.count
+        }
+        if let groupId = opener.groupId, let lastInGroup = tabs.lastIndex(where: { $0.groupId == groupId }) {
+            return lastInGroup + 1
+        }
+        return openerIndex + 1
+    }
+
+    @discardableResult
+    private func insertTab(url: String, makeActive: Bool, at index: Int, focusOmnibox: Bool) -> Tab {
+        // Captured before inserting: an insertion at or before the current
+        // active index (possible when a background tab -- not the visible
+        // one -- is the opener) would otherwise silently shift which tab
+        // activeTabIndex points at. Recomputing by object identity afterward
+        // is the same guard reloadAfterReorder uses for the same reason.
+        let activeTabObject = activeTab
         let tab = Tab(profileName: profile.name, initialURL: url, isPrivate: isPrivate)
         tab.delegate = self
-        tabs.append(tab)
-        let newIndex = tabs.count - 1
+        let clampedIndex = min(max(index, 0), tabs.count)
+        tabs.insert(tab, at: clampedIndex)
+        if makeActive {
+            activateTab(at: clampedIndex)
+        } else {
+            activeTabIndex = activeTabObject.flatMap { obj in tabs.firstIndex { $0 === obj } }
+        }
         tabStripView.reload(
             tabs: currentDisplayInfos,
             groups: currentGroupDisplayInfos,
-            selectedIndex: makeActive ? newIndex : (activeTabIndex ?? newIndex)
+            selectedIndex: activeTabIndex ?? clampedIndex
         )
-        if makeActive {
-            activateTab(at: newIndex)
+        if makeActive && focusOmnibox {
             // New tabs (Cmd+T, the tab strip's "+" button, and a new
             // window's first tab via show()) land in the omnibox with its
             // text selected, ready to type a URL -- standard browser
@@ -1267,6 +1387,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(tab.urlString, forType: .string)
+        showCopiedFeedback(for: tab)
+    }
+
+    /// Transient "Copied to Clipboard" swap in the collapsed omnibox pill
+    /// (browser-0y1, Brady's ask -- ⌘⇧C gave no visible confirmation
+    /// before). Skipped entirely while the field is focused/being edited
+    /// so this can never clobber an in-progress edit -- the copy above
+    /// still happens either way, just silently in that case. Reverts to
+    /// whatever collapsedOmniboxDisplay(for:) says *at the time the timer
+    /// fires* (not a captured value), so it always restores to the
+    /// current display-mode preference and the tab that's active by
+    /// then -- correct even if the preference or active tab changed in the
+    /// meantime (e.g. a tab switch's own refreshToolbar(for:) already
+    /// overwrote this, in which case this just harmlessly reapplies the
+    /// same value). Rapid repeat presses cancel and restart the same
+    /// timer rather than stacking reverts.
+    private func showCopiedFeedback(for tab: Tab) {
+        guard !isOmniboxFocused else { return }
+        copiedFeedbackWorkItem?.cancel()
+        omniboxField.stringValue = "Copied to Clipboard"
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, let currentTab = self.activeTab, !self.isOmniboxFocused else { return }
+            self.omniboxField.stringValue = Self.collapsedOmniboxDisplay(for: currentTab)
+        }
+        copiedFeedbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: workItem)
     }
 
     /// ⌘/ (always) or bare "?" (when native chrome has focus, see
@@ -1534,6 +1680,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // so this only tears down the UI, never answers the request -- see
         // PermissionPromptController.dismiss(invokingDecision:)'s doc comment.
         permissionPrompt.dismiss(invokingDecision: false)
+    }
+
+    /// A target="_blank" link or window.open() call this tab's page made,
+    /// translated by Tab.engineTabDidRequestNewTab (see that method for the
+    /// Cmd/Cmd+Shift/Shift modifier-key overrides) into "open as a new tab
+    /// in this window." Lands immediately after the opener -- see
+    /// openTabForLinkClick's own doc comment for the pinned/grouped-section
+    /// fallback.
+    func tab(_ tab: Tab, didRequestNewTabForURL url: String, foreground: Bool) {
+        guard let openerIndex = tabs.firstIndex(where: { $0 === tab }) else {
+            addTab(url: url, makeActive: foreground)
+            return
+        }
+        openTabForLinkClick(url: url, afterIndex: openerIndex, foreground: foreground)
+    }
+
+    /// Same trigger as above, resolved to "open as a genuine new native
+    /// window" instead -- always via this app's own window-creation code
+    /// (WindowManager), never CEF's raw default popup window, which
+    /// wouldn't be Swift-owned (no toolbar/tab strip/session-restore/quit-
+    /// sequencing integration).
+    func tab(_ tab: Tab, didRequestNewWindowForURL url: String) {
+        WindowManager.shared.openNewWindow(profile: profile, initialURL: url, isPrivate: isPrivate)
     }
 
     private func dismissPermissionPromptIfShowing() {

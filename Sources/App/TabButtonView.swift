@@ -254,7 +254,18 @@ final class TabButtonView: NSView {
         faviconView.frame = iconFrame
         audioButton.frame = iconFrame
         let titleX = faviconLeading + faviconSize + 6
-        titleLabel.frame = NSRect(x: titleX, y: 0, width: max(0, bounds.width - closeSize - titleX - 8), height: bounds.height)
+        // Vertically centered as its own row alongside the favicon above
+        // (browser-0y1, Brady's ask) -- a plain NSTextField label renders
+        // its text top-aligned within whatever frame it's given, so a
+        // frame spanning the full tab height (the old behavior) left the
+        // title sitting at the top instead of centered. A fixed label
+        // height matching the font's own line height, centered the same
+        // way faviconView/audioButton already are, fixes that.
+        let titleHeight: CGFloat = 16
+        titleLabel.frame = NSRect(
+            x: titleX, y: (bounds.height - titleHeight) / 2,
+            width: max(0, bounds.width - closeSize - titleX - 8), height: titleHeight
+        )
     }
 
     override func updateTrackingAreas() {

@@ -60,8 +60,12 @@ final class RoutingCoordinator {
     }
 
     /// Opens `url` as a new tab in the frontmost existing window of
-    /// `profile`, or a new window for that profile if none is currently open.
-    private func openURL(_ url: String, in profile: Profile) {
+    /// `profile`, or a new window for that profile if none is currently
+    /// open. Not private: BrowserWindowController's "Move Tab to Profile"
+    /// (browser-0y1) reuses this exact path rather than a parallel
+    /// implementation, per that task's own note -- a moved tab should land
+    /// exactly where a routed link would.
+    func openURL(_ url: String, in profile: Profile) {
         if let controller = WindowManager.shared.frontmostWindowController(forProfileId: profile.id) {
             controller.addTab(url: url, makeActive: true)
             controller.window?.makeKeyAndOrderFront(nil)
