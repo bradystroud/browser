@@ -51,7 +51,24 @@ final class CLIMessagesTests: XCTestCase {
         XCTAssertEqual(response.error, "no running instance found")
     }
 
-    func testSocketPathIsNestedUnderGivenDirectory() {
-        XCTAssertEqual(CLISocketPath.path(inDirectory: "/tmp/scratch"), "/tmp/scratch/cli.sock")
+    func testSocketPathIsDeterministic() {
+        XCTAssertEqual(CLISocketPath.path(inDirectory: "/tmp/scratch"), CLISocketPath.path(inDirectory: "/tmp/scratch"))
+    }
+
+    func testSocketPathDiffersForDifferentDirectories() {
+        XCTAssertNotEqual(CLISocketPath.path(inDirectory: "/tmp/scratch-a"), CLISocketPath.path(inDirectory: "/tmp/scratch-b"))
+    }
+
+    /// The whole reason this isn't just `<directory>/cli.sock` (see
+    /// CLISocketPath's own doc comment): sockaddr_un.sun_path is 104 bytes
+    /// on macOS, and a real --profiles-root can plausibly be longer than
+    /// that on its own (an agent's own scratch-directory path did exactly
+    /// this during manual testing). The generated path itself must always
+    /// stay comfortably short, regardless of how long the input directory
+    /// is.
+    func testSocketPathStaysShortEvenForALongDirectory() {
+        let longDirectory = "/private/tmp/claude-501/-some-very-long-session-identifier-dir/ff2935c2-2cf0-4314-8d3d-2ede03b435b9/scratchpad/cli-e2e-profiles"
+        XCTAssertGreaterThan(longDirectory.utf8.count, 104)
+        XCTAssertLessThan(CLISocketPath.path(inDirectory: longDirectory).utf8.count, 104)
     }
 }
