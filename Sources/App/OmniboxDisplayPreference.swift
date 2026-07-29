@@ -33,13 +33,15 @@ enum OmniboxDisplayPreference {
 
     static var current: OmniboxDisplayMode {
         get {
-            guard let raw = UserDefaults.standard.string(forKey: key), let mode = OmniboxDisplayMode(rawValue: raw) else {
+            // AppPreferencesStore.current, not .standard directly (browser-
+            // xrq) -- see that type's own doc comment for why.
+            guard let raw = AppPreferencesStore.current.string(forKey: key), let mode = OmniboxDisplayMode(rawValue: raw) else {
                 return .domainOnly
             }
             return mode
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+            AppPreferencesStore.current.set(newValue.rawValue, forKey: key)
             NotificationCenter.default.post(name: .omniboxDisplayPreferenceDidChange, object: nil)
         }
     }

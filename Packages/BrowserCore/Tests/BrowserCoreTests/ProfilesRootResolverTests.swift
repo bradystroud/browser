@@ -67,4 +67,33 @@ final class ProfilesRootResolverTests: XCTestCase {
             "/tmp/scratch"
         )
     }
+
+    // MARK: - testPreferencesSuiteName (browser-xrq)
+
+    func testSuiteNameIsDeterministicForTheSamePath() {
+        XCTAssertEqual(
+            ProfilesRootResolver.testPreferencesSuiteName(profilesRootOverride: "/tmp/scratch-1"),
+            ProfilesRootResolver.testPreferencesSuiteName(profilesRootOverride: "/tmp/scratch-1")
+        )
+    }
+
+    func testSuiteNameDiffersForDifferentPaths() {
+        XCTAssertNotEqual(
+            ProfilesRootResolver.testPreferencesSuiteName(profilesRootOverride: "/tmp/scratch-1"),
+            ProfilesRootResolver.testPreferencesSuiteName(profilesRootOverride: "/tmp/scratch-2")
+        )
+    }
+
+    /// A raw filesystem path has characters ("/", " ", "-") that aren't safe
+    /// in a UserDefaults suite name / CFPreferences domain -- every non-
+    /// alphanumeric character from the path itself must be replaced, not
+    /// just slashes. (The reverse-DNS-style prefix's own dots are expected
+    /// and fine -- this only checks the path-derived suffix.)
+    func testSuiteNameSanitizesNonAlphanumericCharacters() {
+        let suite = ProfilesRootResolver.testPreferencesSuiteName(profilesRootOverride: "/tmp/scratch dir-1")
+        let suffix = suite.replacingOccurrences(of: "dev.stroud.browser.testprefs.", with: "")
+        XCTAssertFalse(suffix.contains("/"))
+        XCTAssertFalse(suffix.contains(" "))
+        XCTAssertFalse(suffix.contains("-"))
+    }
 }

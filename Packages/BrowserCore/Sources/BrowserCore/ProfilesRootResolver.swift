@@ -59,4 +59,24 @@ public enum ProfilesRootResolver {
         }
         return (appSupportDirectory as NSString).appendingPathComponent("Browser")
     }
+
+    /// A stable, CFPreferences-safe `UserDefaults(suiteName:)` value derived
+    /// from an explicit `--profiles-root <path>` override (browser-xrq) --
+    /// `UserDefaults.standard` is process-wide and, unlike session.json/
+    /// profiles.json above, isn't scoped by `--profiles-root` at all, so an
+    /// agent's "isolated" test launch writing a preference (e.g. Omnibox
+    /// display mode, Reader font size) through `.standard` would silently
+    /// change Brady's real settings too. Deterministic -- not hash-seed-
+    /// randomized like Swift's default `String.hashValue` -- so the same
+    /// `--profiles-root` path always resolves to the same suite across
+    /// separate launches, the same way a given path always resolves to the
+    /// same `session.json` above (letting a preference set in one launch
+    /// against a scratch directory still read back in a later launch against
+    /// that same directory, not just within a single process's lifetime).
+    public static func testPreferencesSuiteName(profilesRootOverride: String) -> String {
+        let sanitized = String(profilesRootOverride.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : "_"
+        })
+        return "dev.stroud.browser.testprefs.\(sanitized)"
+    }
 }

@@ -28,13 +28,15 @@ enum ReaderFontSizePreference {
 
     static var current: ReaderFontSize {
         get {
-            guard let raw = UserDefaults.standard.string(forKey: key), let size = ReaderFontSize(rawValue: raw) else {
+            // AppPreferencesStore.current, not .standard directly (browser-
+            // xrq) -- see that type's own doc comment for why.
+            guard let raw = AppPreferencesStore.current.string(forKey: key), let size = ReaderFontSize(rawValue: raw) else {
                 return .medium
             }
             return size
         }
         set {
-            UserDefaults.standard.set(newValue.rawValue, forKey: key)
+            AppPreferencesStore.current.set(newValue.rawValue, forKey: key)
         }
     }
 }
