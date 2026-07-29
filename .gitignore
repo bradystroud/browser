@@ -13,3 +13,4 @@ RoutingCore/.build/
 *.db
 .beads-credential-key
 .beads/proxieddb/
+scripts/.window-id
