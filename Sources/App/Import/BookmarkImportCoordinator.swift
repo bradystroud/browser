@@ -140,7 +140,11 @@ final class BookmarkImportCoordinator: NSObject {
         )
     }
 
-    private func presentSafariReadFailureAlert() {
+    /// Not private -- reused as-is by SafariImportWindowController's full
+    /// import flow (browser-ymx) for the identical FDA-denial case: same
+    /// dialog, same System Settings deep link, same HTML-export fallback
+    /// advice, regardless of which entry point hit the TCC wall.
+    func presentSafariReadFailureAlert() {
         let alert = NSAlert()
         alert.messageText = "Can't Read Safari's Bookmarks Directly"
         alert.informativeText = """

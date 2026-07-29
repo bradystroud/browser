@@ -134,6 +134,18 @@ final class MainMenuBuilder {
         )
         importSafariItem.target = BookmarkImportCoordinator.shared
         menu.addItem(importSafariItem)
+
+        // The bigger browser-ymx flow (profiles + favourites + history, a
+        // real window rather than a one-shot menu action) -- a separate
+        // entry point from the two plain-bookmarks ones above, which keep
+        // working exactly as they did before this was added.
+        let importFullSafariItem = NSMenuItem(
+            title: "Import from Safari…",
+            action: #selector(SafariImportWindowController.show(_:)),
+            keyEquivalent: ""
+        )
+        importFullSafariItem.target = SafariImportWindowController.shared
+        menu.addItem(importFullSafariItem)
         return menu
     }
 

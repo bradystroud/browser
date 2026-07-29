@@ -40,6 +40,7 @@ set(BROWSER_SWIFT_SRCS
   GlassBackgroundView.swift
   MainMenuBuilder.swift
   NewProfilePrompt.swift
+  OmniboxField.swift
   NSColor+Hex.swift
   OmniboxDisplayPreference.swift
   Profile.swift
@@ -110,6 +111,8 @@ set(BROWSER_SWIFT_SRCS
   StartPage/FavoritesFolder.swift
   StartPage/StartPageSettingsPaneController.swift
   Import/BookmarkImportCoordinator.swift
+  Import/SafariImportScanner.swift
+  Import/SafariImportWindowController.swift
   TabOverview/TabThumbnailCache.swift
   TabOverview/TabOverviewCellView.swift
   TabOverview/TabOverviewView.swift
@@ -157,6 +160,8 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistoryReader.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariProfileDiscovery.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteError.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/Statement.swift
