@@ -4,17 +4,30 @@ import AppKit
 /// SettingsWindowController, which hosts this alongside ProfilesPaneController
 /// in an NSTabView). An ordered table of rules (first match wins, see
 /// RuleMatcher), add/edit/delete, up/down reordering, a default-profile
-/// picker for links no rule matches, and a "Make Default Browser…" button.
-/// Every mutation saves immediately via RoutingRulesStore -- there is no
-/// separate "Apply" step; only "Make Default Browser…" has an explicit
-/// action, since that one triggers a system confirmation dialog rather than
-/// just writing local state.
+/// picker for links no rule matches, a "Test" affordance (browser-ymx: paste
+/// a URL, optionally pick a source app, see which rule -- if any -- would
+/// match and which profile it resolves to), and a "Make Default Browser…"
+/// button. Every mutation saves immediately via RoutingRulesStore -- there
+/// is no separate "Apply" step; only "Make Default Browser…" has an
+/// explicit action, since that one triggers a system confirmation dialog
+/// rather than just writing local state.
 final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let tableView = NSTableView()
     private let defaultProfilePopup = NSPopUpButton()
     private var profileChangeObserver: NSObjectProtocol?
+
+    /// "Test" affordance (browser-ymx): Brady pastes a URL (and optionally
+    /// picks a source app) and sees which rule would match, or that none
+    /// would -- twice now, a rule has silently not matched and it cost him
+    /// real time tracking down why. Evaluates via
+    /// RuleMatcher.evaluate(context:rules:defaultProfileId:), the same
+    /// shared entry point the `browser route-test` CLI command uses, so
+    /// this pane and the CLI can never disagree about which rule matched.
+    private let testURLField = NSTextField(string: "")
+    private let testSourceAppPopup = NSPopUpButton()
+    private let testResultLabel = NSTextField(wrappingLabelWithString: "")
 
     override init() {
         super.init()
@@ -108,7 +121,53 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         headerLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(headerLabel)
 
-        let scrollViewY = buttonRowY + buttonRowHeight
+        // Test affordance -- a fixed-height strip between the add/edit/
+        // reorder button row and the rules table, so it's visible without
+        // scrolling regardless of how many rules exist.
+        let testRowHeight: CGFloat = 24
+        let testResultHeight: CGFloat = 32
+        let testSectionY = buttonRowY + buttonRowHeight + rowGap
+        let testButtonWidth: CGFloat = 60
+        let testSourceWidth: CGFloat = 150
+
+        testURLField.placeholderString = "Paste a URL to test…"
+        testURLField.frame = NSRect(
+            x: margin,
+            y: testSectionY + testResultHeight + 4,
+            width: view.bounds.width - margin * 2 - testSourceWidth - testButtonWidth - 8,
+            height: testRowHeight
+        )
+        testURLField.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(testURLField)
+
+        testSourceAppPopup.frame = NSRect(
+            x: view.bounds.width - margin - testSourceWidth - testButtonWidth - 4,
+            y: testSectionY + testResultHeight + 4,
+            width: testSourceWidth,
+            height: testRowHeight
+        )
+        testSourceAppPopup.autoresizingMask = [.minXMargin, .minYMargin]
+        view.addSubview(testSourceAppPopup)
+
+        let testButton = NSButton(title: "Test", target: self, action: #selector(runTest))
+        testButton.frame = NSRect(
+            x: view.bounds.width - margin - testButtonWidth,
+            y: testSectionY + testResultHeight + 4,
+            width: testButtonWidth,
+            height: testRowHeight
+        )
+        testButton.autoresizingMask = [.minXMargin, .minYMargin]
+        view.addSubview(testButton)
+
+        testResultLabel.font = .systemFont(ofSize: 11)
+        testResultLabel.textColor = .secondaryLabelColor
+        testResultLabel.frame = NSRect(x: margin, y: testSectionY, width: view.bounds.width - margin * 2, height: testResultHeight)
+        testResultLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(testResultLabel)
+
+        reloadTestSourceAppPopup()
+
+        let scrollViewY = testSectionY + testResultHeight + testRowHeight + 4 + rowGap
         let scrollView = NSScrollView(frame: NSRect(
             x: margin,
             y: scrollViewY,
@@ -222,6 +281,66 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
     @objc private func defaultProfileChanged() {
         guard let profile = defaultProfilePopup.selectedItem?.representedObject as? Profile else { return }
         RoutingRulesStore.shared.setDefaultProfileId(profile.id)
+    }
+
+    private func reloadTestSourceAppPopup() {
+        testSourceAppPopup.removeAllItems()
+        testSourceAppPopup.menu?.addItem(NSMenuItem(title: "(no source app)", action: nil, keyEquivalent: ""))
+        for entry in RunningApplicationPicker.currentEntries() {
+            let item = NSMenuItem(title: entry.displayName, action: nil, keyEquivalent: "")
+            item.representedObject = entry.bundleIdentifier
+            testSourceAppPopup.menu?.addItem(item)
+        }
+    }
+
+    /// Evaluates the pasted URL against the exact same
+    /// RuleMatcher.evaluate(context:rules:defaultProfileId:) entry point
+    /// RoutingCoordinator.route(url:sourceBundleId:) and the `browser
+    /// route-test` CLI command both use -- see testURLField's own doc
+    /// comment for why sharing this one function matters. Applies tracking-
+    /// param stripping first if that preference is on, matching what a real
+    /// routed link would see before it's ever matched; deliberately does
+    /// NOT perform a live un-shortening network call here (this stays pure
+    /// and synchronous), just a note that one would happen for a link that
+    /// looks shortened.
+    @objc private func runTest() {
+        let rawURL = testURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawURL.isEmpty else {
+            testResultLabel.stringValue = ""
+            tableView.deselectAll(nil)
+            return
+        }
+
+        let url = LinkHandlingPreferences.stripTrackingParams ? TrackingParamStripper.strip(rawURL) : rawURL
+        let sourceBundleId = testSourceAppPopup.selectedItem?.representedObject as? String
+
+        let store = RoutingRulesStore.shared
+        let context = RoutingContext(url: url, sourceBundleId: sourceBundleId)
+        let evaluation = RuleMatcher.evaluate(context: context, rules: store.rules, defaultProfileId: store.defaultProfileId)
+
+        var lines: [String] = []
+        if url != rawURL {
+            lines.append("Tracking parameters stripped before matching: \(url)")
+        }
+        if LinkHandlingPreferences.unshortenLinks, URLUnshortener.isLikelyShortened(url) {
+            lines.append("This looks like a shortened link -- opening it for real would follow it to its destination first, which may change which rule matches.")
+        }
+
+        switch evaluation {
+        case .matched(let rule, let profileId):
+            let profileName = ProfileManager.shared.profile(id: profileId)?.name ?? "(unknown profile)"
+            lines.append("Matched rule: \(matchSummary(for: rule.match)) → opens in \u{201C}\(profileName)\u{201D}")
+            if let index = store.rules.firstIndex(where: { $0.id == rule.id }) {
+                tableView.selectRowIndexes([index], byExtendingSelection: false)
+                tableView.scrollRowToVisible(index)
+            }
+        case .noMatch(let defaultProfileId):
+            let profileName = ProfileManager.shared.profile(id: defaultProfileId)?.name ?? "(unknown profile)"
+            lines.append("No rule matched → default profile \u{201C}\(profileName)\u{201D}")
+            tableView.deselectAll(nil)
+        }
+
+        testResultLabel.stringValue = lines.joined(separator: "\n")
     }
 
     // MARK: - NSTableViewDataSource / Delegate

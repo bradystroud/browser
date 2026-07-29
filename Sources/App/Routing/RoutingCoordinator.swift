@@ -39,12 +39,40 @@ final class RoutingCoordinator {
     /// `sourceBundleId` is nil when the sender PID couldn't be resolved (see
     /// SourceAppResolver) -- that's treated as "no source" for matching
     /// purposes, per docs/research/2026-07-27-link-routing-macos.md.
+    ///
+    /// Tracking-param stripping (LinkHandlingPreferences.stripTrackingParams,
+    /// on by default) and un-shortening (LinkHandlingPreferences.
+    /// unshortenLinks, off by default) both happen here, before matching --
+    /// a rule written against a bare URL should keep matching regardless of
+    /// whatever ?utm_source=... a shared link happened to be decorated
+    /// with, and un-shortening a t.co/bit.ly link is what makes a domain-
+    /// based rule match at all for a link shared in Slack (browser-ymx).
     func route(url: String, sourceBundleId: String?) {
         guard isReady else {
             pendingRoutes.append((url, sourceBundleId))
             return
         }
 
+        let stripped = LinkHandlingPreferences.stripTrackingParams
+            ? TrackingParamStripper.strip(url)
+            : url
+
+        guard LinkHandlingPreferences.unshortenLinks, URLUnshortener.isLikelyShortened(stripped) else {
+            routeCleaned(url: stripped, sourceBundleId: sourceBundleId)
+            return
+        }
+        URLUnshortener.resolve(stripped) { [weak self] resolved in
+            // Strip again: the real destination behind a shortened link
+            // commonly carries its own tracking params that the shortened
+            // form never showed.
+            let cleaned = LinkHandlingPreferences.stripTrackingParams
+                ? TrackingParamStripper.strip(resolved)
+                : resolved
+            self?.routeCleaned(url: cleaned, sourceBundleId: sourceBundleId)
+        }
+    }
+
+    private func routeCleaned(url: String, sourceBundleId: String?) {
         let store = RoutingRulesStore.shared
         let context = RoutingContext(url: url, sourceBundleId: sourceBundleId)
         let profileId = RuleMatcher.resolveProfileId(

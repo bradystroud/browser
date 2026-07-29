@@ -21,6 +21,12 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     private let threatWarningCheckbox = NSButton(checkboxWithTitle: "Warn about dangerous sites (phishing/malware)", target: nil, action: nil)
     private let allowlistTableView = NSTableView()
 
+    /// Global (not per-profile) settings, per browser-ymx -- see
+    /// LinkHandlingPreferences' own doc comment for why these live outside
+    /// the profile-scoped content below.
+    private let stripTrackingParamsCheckbox = NSButton(checkboxWithTitle: "Strip tracking parameters from links (utm_*, fbclid, gclid, …)", target: nil, action: nil)
+    private let unshortenLinksCheckbox = NSButton(checkboxWithTitle: "Follow shortened links (t.co, bit.ly, …) before opening", target: nil, action: nil)
+
     private var selectedProfile: Profile?
     private var allowlistedHosts: [String] = []
     private var profileChangeObserver: NSObjectProtocol?
@@ -41,6 +47,9 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     /// the current selection if it still exists, then reloads that
     /// profile's settings into the checkbox and allowlist table.
     func reload() {
+        stripTrackingParamsCheckbox.state = LinkHandlingPreferences.stripTrackingParams ? .on : .off
+        unshortenLinksCheckbox.state = LinkHandlingPreferences.unshortenLinks ? .on : .off
+
         let profiles = ProfileManager.shared.profiles
         profilePopup.removeAllItems()
         for profile in profiles {
@@ -78,6 +87,36 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         )
         headerLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(headerLabel)
+
+        // Link Handling -- global, not per-profile (browser-ymx), so it
+        // sits above the profile-scoped content below rather than inside
+        // it. Anchored to the top like headerLabel, not bottom-up like the
+        // rest of this pane, since its height is fixed and everything
+        // below just needs to know where its bottom edge landed
+        // (linkHandlingSectionBottom).
+        let linkHandlingHeaderY = view.bounds.height - margin - headerHeight - rowGap - 16
+        let linkHandlingHeaderLabel = NSTextField(labelWithString: "Link Handling")
+        linkHandlingHeaderLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        linkHandlingHeaderLabel.textColor = .secondaryLabelColor
+        linkHandlingHeaderLabel.frame = NSRect(x: margin, y: linkHandlingHeaderY, width: view.bounds.width - margin * 2, height: 16)
+        linkHandlingHeaderLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(linkHandlingHeaderLabel)
+
+        let stripCheckboxY = linkHandlingHeaderY - 4 - checkboxRowHeight
+        stripTrackingParamsCheckbox.target = self
+        stripTrackingParamsCheckbox.action = #selector(stripTrackingParamsToggled)
+        stripTrackingParamsCheckbox.frame = NSRect(x: margin, y: stripCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
+        stripTrackingParamsCheckbox.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(stripTrackingParamsCheckbox)
+
+        let unshortenCheckboxY = stripCheckboxY - 2 - checkboxRowHeight
+        unshortenLinksCheckbox.target = self
+        unshortenLinksCheckbox.action = #selector(unshortenLinksToggled)
+        unshortenLinksCheckbox.frame = NSRect(x: margin, y: unshortenCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
+        unshortenLinksCheckbox.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(unshortenLinksCheckbox)
+
+        let linkHandlingSectionBottom = unshortenCheckboxY - rowGap
 
         // Bottom-up from here, mirroring the other panes' layout style.
         let addHostButton = NSButton(title: "Add Allowed Site…", target: self, action: #selector(addAllowlistHost))
@@ -132,7 +171,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
             width: view.bounds.width - margin * 2,
             height: 0  // computed below once we know the header's bottom edge.
         ))
-        let scrollTop = view.bounds.height - margin - headerHeight - rowGap
+        let scrollTop = linkHandlingSectionBottom
         let scrollBottom = allowlistLabelY + 16 + rowGap
         scrollView.frame = NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom))
         scrollView.autoresizingMask = [.width, .height]
@@ -196,6 +235,14 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     @objc private func threatWarningToggled() {
         saveThreatWarningSettings()
+    }
+
+    @objc private func stripTrackingParamsToggled() {
+        LinkHandlingPreferences.stripTrackingParams = stripTrackingParamsCheckbox.state == .on
+    }
+
+    @objc private func unshortenLinksToggled() {
+        LinkHandlingPreferences.unshortenLinks = unshortenLinksCheckbox.state == .on
     }
 
     @objc private func addAllowlistHost() {

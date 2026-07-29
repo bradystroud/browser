@@ -72,6 +72,8 @@ set(BROWSER_SWIFT_SRCS
   Routing/RoutingRulesPaneController.swift
   Routing/RoutingRuleEditor.swift
   Routing/RunningApplicationPicker.swift
+  Routing/LinkHandlingPreferences.swift
+  Routing/URLUnshortener.swift
   ProfilesPaneController.swift
   Furniture/ProfileDataStores.swift
   Furniture/OmniboxAutocompleteController.swift
@@ -144,6 +146,8 @@ source_group(App FILES ${BROWSER_SWIFT_SRCS})
 set(BROWSER_ROUTING_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RoutingRule.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RuleMatcher.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamList.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamStripper.swift
   )
 source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 
