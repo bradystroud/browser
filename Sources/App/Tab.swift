@@ -382,18 +382,6 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidChangeURL(_ url: String) {
-        // The gear button's plain `<a href="#browser-settings">` link is a
-        // same-document fragment click -- no real navigation/request, just
-        // an address-bar-style report of the new (fragment-suffixed) URL --
-        // so it's caught here rather than needing a JS-to-Swift bridge
-        // message channel (none exists yet) or CEF request interception.
-        // Returns without touching engineURLString/isShowingStartPage: this
-        // never happened as far as the rest of the tab's state is
-        // concerned.
-        if isShowingStartPage, url == engineURLString + StartPageRenderer.settingsFragment {
-            SettingsWindowController.shared.showStartPageTab()
-            return
-        }
         if url != engineURLString {
             isShowingStartPage = false
         }
