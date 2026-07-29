@@ -10,7 +10,7 @@ final class RouteTestEngineTests: XCTestCase {
 
     func testNoRulesFallsBackToDefaultProfile() throws {
         let configuration = RoutingConfiguration(rules: [], defaultProfileId: "default-id")
-        let result = try RouteTestEngine.run(url: "https://example.com", fromApp: nil, configuration: configuration, profiles: profiles)
+        let result = try RouteTestEngine.run(url: "https://example.com", effectiveURL: "https://example.com", fromApp: nil, configuration: configuration, profiles: profiles)
         XCTAssertNil(result.matchedRuleIndex)
         XCTAssertEqual(result.profileName, "default")
     }
@@ -18,7 +18,8 @@ final class RouteTestEngineTests: XCTestCase {
     func testMatchingRuleReportsOneBasedIndexAndSummary() throws {
         let rule = RoutingRule(match: .init(domainGlob: "*.ssw.com.au"), action: .init(profileId: "work-id"))
         let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
-        let result = try RouteTestEngine.run(url: "https://rules.ssw.com.au/x", fromApp: nil, configuration: configuration, profiles: profiles)
+        let url = "https://rules.ssw.com.au/x"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
         XCTAssertEqual(result.matchedRuleIndex, 1)
         XCTAssertEqual(result.profileName, "work")
         XCTAssertEqual(result.matchedRuleSummary, "domainGlob=*.ssw.com.au")
@@ -28,7 +29,8 @@ final class RouteTestEngineTests: XCTestCase {
         let first = RoutingRule(match: .init(urlContains: "example"), action: .init(profileId: "work-id"))
         let second = RoutingRule(match: .init(urlContains: "example"), action: .init(profileId: "default-id"))
         let configuration = RoutingConfiguration(rules: [first, second], defaultProfileId: "default-id")
-        let result = try RouteTestEngine.run(url: "https://example.com", fromApp: nil, configuration: configuration, profiles: profiles)
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
         XCTAssertEqual(result.matchedRuleIndex, 1)
         XCTAssertEqual(result.profileName, "work")
     }
@@ -36,18 +38,36 @@ final class RouteTestEngineTests: XCTestCase {
     func testSourceBundleIdRuleRespectsFromApp() throws {
         let rule = RoutingRule(match: .init(sourceBundleIds: ["com.apple.mail"]), action: .init(profileId: "work-id"))
         let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
+        let url = "https://example.com"
 
-        let matched = try RouteTestEngine.run(url: "https://example.com", fromApp: "com.apple.mail", configuration: configuration, profiles: profiles)
+        let matched = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: "com.apple.mail", configuration: configuration, profiles: profiles)
         XCTAssertEqual(matched.profileName, "work")
 
-        let unmatched = try RouteTestEngine.run(url: "https://example.com", fromApp: "com.apple.Safari", configuration: configuration, profiles: profiles)
+        let unmatched = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: "com.apple.Safari", configuration: configuration, profiles: profiles)
         XCTAssertEqual(unmatched.profileName, "default")
         XCTAssertNil(unmatched.matchedRuleIndex)
     }
 
     func testNoProfilesThrows() {
         let configuration = RoutingConfiguration(rules: [], defaultProfileId: "default-id")
-        XCTAssertThrowsError(try RouteTestEngine.run(url: "https://example.com", fromApp: nil, configuration: configuration, profiles: []))
+        XCTAssertThrowsError(try RouteTestEngine.run(url: "https://example.com", effectiveURL: "https://example.com", fromApp: nil, configuration: configuration, profiles: []))
+    }
+
+    /// The matching itself is always done against `effectiveURL`, not `url`
+    /// -- a rule written against a bare domain must still match when the
+    /// caller passes a tracking-param-stripped `effectiveURL` that differs
+    /// from the original `url` reported back.
+    func testMatchingUsesEffectiveURLNotOriginalURL() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "ssw.com.au"), action: .init(profileId: "work-id"))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
+        let decorated = "https://ssw.com.au/?utm_source=newsletter"
+        let stripped = "https://ssw.com.au/"
+
+        let result = try RouteTestEngine.run(url: decorated, effectiveURL: stripped, fromApp: nil, configuration: configuration, profiles: profiles)
+        XCTAssertEqual(result.url, decorated)
+        XCTAssertEqual(result.effectiveURL, stripped)
+        XCTAssertEqual(result.profileName, "work")
+        XCTAssertEqual(result.matchedRuleIndex, 1)
     }
 
     func testRoutingConfigurationStoreFallsBackWhenFileMissing() {

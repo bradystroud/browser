@@ -6,7 +6,14 @@ import RoutingCore
 /// so both the text and `--json` output paths render the same computed
 /// result.
 public struct RouteTestOutput: Codable, Equatable {
+    /// Exactly the URL given on the command line.
     public let url: String
+    /// `url` after tracking-param stripping, if that preference is on (the
+    /// default) -- equal to `url` when nothing was stripped, or when the
+    /// preference is off. This, not `url`, is what's actually matched
+    /// against, matching what a real routed link goes through before
+    /// `RuleMatcher` ever sees it (see `Sources/App/Routing/RoutingCoordinator.swift`).
+    public let effectiveURL: String
     public let fromApp: String?
     /// 1-based position in the rule list, matching how the Routing Rules
     /// pane displays them to a human -- nil means no rule matched and the
@@ -16,8 +23,9 @@ public struct RouteTestOutput: Codable, Equatable {
     public let profileId: String
     public let profileName: String
 
-    public init(url: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String) {
+    public init(url: String, effectiveURL: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String) {
         self.url = url
+        self.effectiveURL = effectiveURL
         self.fromApp = fromApp
         self.matchedRuleIndex = matchedRuleIndex
         self.matchedRuleSummary = matchedRuleSummary
@@ -38,35 +46,57 @@ public enum RouteTestError: Error, CustomStringConvertible {
 }
 
 /// The actual "what would this URL route to" computation -- pulled out of
-/// the `route-test` command's I/O (reading routing.json/profiles.json) so
-/// it's testable against in-memory fixtures with zero filesystem access,
-/// same "pure logic, testable in isolation" shape as `RuleMatcher` itself.
+/// the `route-test` command's I/O (reading routing.json/profiles.json/the
+/// tracking-param-stripping preference) so it's testable against in-memory
+/// fixtures with zero filesystem access, same "pure logic, testable in
+/// isolation" shape as `RuleMatcher` itself.
+///
+/// Built on `RuleMatcher.evaluate(context:rules:defaultProfileId:)`, the
+/// shared entry point the Routing Rules pane's own "Test" affordance also
+/// calls (see that function's doc comment) -- deliberately not a
+/// hand-rolled re-derivation of first-match-wins here, so this command can
+/// never silently disagree with the in-app diagnostic about which rule
+/// matched.
 public enum RouteTestEngine {
+    /// `effectiveURL` is `url` with tracking-param stripping already
+    /// applied by the caller (a live preference read, so not something this
+    /// pure function does itself) -- pass the same value as `url` if
+    /// stripping doesn't apply.
     public static func run(
         url: String,
+        effectiveURL: String,
         fromApp: String?,
         configuration: RoutingConfiguration,
         profiles: [ProfileRecord]
     ) throws -> RouteTestOutput {
         guard !profiles.isEmpty else { throw RouteTestError.noProfilesFound }
 
-        let context = RoutingContext(url: url, sourceBundleId: fromApp)
-        let matchedIndex = configuration.rules.firstIndex { RuleMatcher.matches($0.match, context: context) }
-        let profileId = RuleMatcher.resolveProfileId(
-            for: context,
-            rules: configuration.rules,
-            defaultProfileId: configuration.defaultProfileId
-        )
-        let profileName = profiles.first { $0.id == profileId }?.name ?? "(unknown profile id \(profileId))"
+        let context = RoutingContext(url: effectiveURL, sourceBundleId: fromApp)
+        let evaluation = RuleMatcher.evaluate(context: context, rules: configuration.rules, defaultProfileId: configuration.defaultProfileId)
+        let profileName = profiles.first { $0.id == evaluation.profileId }?.name ?? "(unknown profile id \(evaluation.profileId))"
 
-        return RouteTestOutput(
-            url: url,
-            fromApp: fromApp,
-            matchedRuleIndex: matchedIndex.map { $0 + 1 },
-            matchedRuleSummary: matchedIndex.map { summarize(configuration.rules[$0].match) },
-            profileId: profileId,
-            profileName: profileName
-        )
+        switch evaluation {
+        case .matched(let rule, let profileId):
+            return RouteTestOutput(
+                url: url,
+                effectiveURL: effectiveURL,
+                fromApp: fromApp,
+                matchedRuleIndex: configuration.rules.firstIndex(of: rule).map { $0 + 1 },
+                matchedRuleSummary: summarize(rule.match),
+                profileId: profileId,
+                profileName: profileName
+            )
+        case .noMatch(let defaultProfileId):
+            return RouteTestOutput(
+                url: url,
+                effectiveURL: effectiveURL,
+                fromApp: fromApp,
+                matchedRuleIndex: nil,
+                matchedRuleSummary: nil,
+                profileId: defaultProfileId,
+                profileName: profileName
+            )
+        }
     }
 
     /// A short human-readable description of whichever fields a matched

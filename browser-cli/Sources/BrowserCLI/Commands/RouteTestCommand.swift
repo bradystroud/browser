@@ -1,4 +1,5 @@
 import Foundation
+import RoutingCore
 
 /// `browser route-test <url> [--from-app <bundle-id>]` -- pure RoutingCore,
 /// no running app needed (reads routing.json/profiles.json directly). Great
@@ -15,11 +16,23 @@ public enum RouteTestCommand {
         let profiles = ProfileRecordStore.load(directory: directory)
         let configuration = RoutingConfigurationStore.load(directory: directory, profiles: profiles)
 
+        // Matches what a real routed link goes through before RuleMatcher
+        // ever sees it (see RoutingCoordinator.route) -- otherwise a rule
+        // written against a bare URL could report "no match" here while a
+        // real click on a tracking-param-decorated link matches fine, the
+        // exact kind of CLI/real-behavior disagreement worth avoiding.
+        // Un-shortening is deliberately not replicated (see
+        // LinkHandlingPreferencesReader's own doc comment).
+        let effectiveURL = LinkHandlingPreferencesReader.stripTrackingParams(arguments: CommandLine.arguments)
+            ? TrackingParamStripper.strip(url)
+            : url
+
         do {
-            let result = try RouteTestEngine.run(url: url, fromApp: fromApp, configuration: configuration, profiles: profiles)
+            let result = try RouteTestEngine.run(url: url, effectiveURL: effectiveURL, fromApp: fromApp, configuration: configuration, profiles: profiles)
             return Output.emit(result, json: args.jsonOutput) { output in
                 let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- default profile"
-                return "\(output.url) -> profile '\(output.profileName)' [\(ruleNote)]"
+                let strippedNote = output.effectiveURL == output.url ? "" : " [tracking params stripped -> \(output.effectiveURL)]"
+                return "\(output.url) -> profile '\(output.profileName)' [\(ruleNote)]\(strippedNote)"
             }
         } catch {
             return Output.emitError("\(error)", json: args.jsonOutput)
