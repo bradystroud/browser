@@ -152,6 +152,15 @@ final class Tab: NSObject, EngineTabDelegate {
     /// brand-new document has no media elements yet until proven otherwise.
     private(set) var isAudible = false
 
+    /// Number of requests the ad/tracker content blocker has cancelled for
+    /// this tab's current page (browser-12m.5.1.1) -- the toolbar badge's
+    /// count. Reset to 0 on every navigation (see
+    /// engineTabDidStartMainFrameLoad below), same "fresh page, fresh
+    /// count" convention as isAudible just above; incremented on the main
+    /// thread already (see BRWBrowser.h's -browserDidBlockRequest), so no
+    /// extra synchronization is needed here.
+    private(set) var blockedRequestCount = 0
+
     /// Toggles isMuted and immediately applies it to the engine -- the only
     /// place SetAudioMuted is ever called, so isMuted can never drift from
     /// what the engine actually has (no separate "read it back to confirm"
@@ -313,6 +322,11 @@ final class Tab: NSObject, EngineTabDelegate {
         onFindResult?(matchCount, activeMatchOrdinal, isFinalUpdate)
     }
 
+    func engineTabDidBlockRequest() {
+        blockedRequestCount += 1
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
     /// Set by whichever feature controller wants this tab's raw page
     /// messages (browser-ojh.1's password-manager form-detection script is
     /// the first user) -- a plain closure property for the same reason as
@@ -413,6 +427,14 @@ final class Tab: NSObject, EngineTabDelegate {
     /// tab picks up -- see that class's own doc comment for why *that* part,
     /// unlike injection, does need to be window-scoped.
     func engineTabDidStartMainFrameLoad() {
+        // A brand-new document hasn't had anything blocked on it yet --
+        // reset before the isShowingStartPage guard below so a freshly
+        // opened start page tab never shows a stale count left over from
+        // whatever real page this tab had before (browser-12m.5.1.1).
+        if blockedRequestCount != 0 {
+            blockedRequestCount = 0
+            delegate?.tabDidChangeDisplayState(self)
+        }
         guard !isShowingStartPage else { return }
         executeJavaScript(PasswordDetectionScript.source)
         // Separate script, separate cefQuery message types (browser-ojh.2)
