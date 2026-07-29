@@ -147,4 +147,56 @@ final class HistoryStoreTests: XCTestCase {
         let top = try store.topFrecent(now: now)
         XCTAssertEqual(top.first?.url, "https://new.example")
     }
+
+    // MARK: - importVisits (browser-ymx's Safari history import)
+
+    func testImportVisitsSumsCountForANewURL() throws {
+        let now = Date()
+        try store.importVisits([
+            (url: "https://imported.example", title: "Imported", visitTime: now.addingTimeInterval(-3600)),
+            (url: "https://imported.example", title: "Imported", visitTime: now),
+        ])
+
+        let entries = try store.entries()
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.visitCount, 2)
+    }
+
+    func testImportVisitsAddsToAnAlreadyExistingURLRatherThanReplacingIt() throws {
+        let now = Date()
+        try store.recordVisit(url: "https://both.example", title: "Both", at: now.addingTimeInterval(-7200))
+        try store.importVisits([
+            (url: "https://both.example", title: "Both", visitTime: now.addingTimeInterval(-3600)),
+        ])
+
+        let entries = try store.entries()
+        XCTAssertEqual(entries.first(where: { $0.url == "https://both.example" })?.visitCount, 2,
+                        "one real visit plus one imported visit should sum, not overwrite")
+    }
+
+    func testImportVisitsNeverRegressesLastVisitTimeBackward() throws {
+        let now = Date()
+        try store.recordVisit(url: "https://recent.example", title: "Recent", at: now)
+        // An import replaying an *older* visit for a URL this profile has
+        // already visited more recently since shouldn't move
+        // last_visit_time backward -- frecency ranking would otherwise
+        // regress for a URL the user just visited moments ago.
+        try store.importVisits([
+            (url: "https://recent.example", title: "Recent", visitTime: now.addingTimeInterval(-30 * 24 * 3600)),
+        ])
+
+        let entries = try store.entries()
+        let entry = entries.first(where: { $0.url == "https://recent.example" })
+        XCTAssertEqual(entry?.lastVisitTime.timeIntervalSince1970 ?? 0, now.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testImportVisitsFillsInATitleForAURLThatHadNoneYet() throws {
+        try store.recordVisit(url: "https://untitled.example", title: nil, at: Date())
+        try store.importVisits([
+            (url: "https://untitled.example", title: "Now Has A Title", visitTime: Date()),
+        ])
+
+        let entries = try store.entries()
+        XCTAssertEqual(entries.first(where: { $0.url == "https://untitled.example" })?.title, "Now Has A Title")
+    }
 }

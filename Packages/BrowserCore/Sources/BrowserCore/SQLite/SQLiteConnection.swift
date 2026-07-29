@@ -6,14 +6,25 @@ import SQLite3
 final class SQLiteConnection {
     private let handle: OpaquePointer
 
-    init(path: String) throws {
+    /// `readOnly` is for opening a file this app doesn't own the schema/
+    /// writes for (browser-ymx's Safari-history import reads a copy of
+    /// Safari's own History.db this way) -- SQLITE_OPEN_READONLY instead of
+    /// the default READWRITE|CREATE, and skips the two PRAGMAs below
+    /// entirely: `journal_mode = WAL` fails outright on a read-only-opened
+    /// connection (it requires write access to change), and
+    /// `foreign_keys = ON` has nothing to enforce on a connection that
+    /// never writes.
+    init(path: String, readOnly: Bool = false) throws {
         var db: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let flags = readOnly
+            ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+            : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         try SQLiteError.check(sqlite3_open_v2(path, &db, flags, nil), db)
         guard let db else {
             throw SQLiteError(code: SQLITE_ERROR, message: "sqlite3_open_v2 returned no handle")
         }
         self.handle = db
+        guard !readOnly else { return }
         try SQLiteError.check(sqlite3_exec(db, "PRAGMA foreign_keys = ON;", nil, nil, nil), db)
         try SQLiteError.check(sqlite3_exec(db, "PRAGMA journal_mode = WAL;", nil, nil, nil), db)
     }

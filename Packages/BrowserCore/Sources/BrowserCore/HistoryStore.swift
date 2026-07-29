@@ -31,44 +31,71 @@ public final class HistoryStore {
     }
 
     public func recordVisit(url: String, title: String?, at date: Date = Date()) throws {
-        let epochMs = Self.epochMs(date)
-        let resolvedTitle = title ?? ""
         try database.perform { db in
             try db.withTransaction {
-                let select = try db.prepare("SELECT id FROM history_urls WHERE url = ?;")
-                try select.bind(url, at: 1)
-                let urlId: Int64
-                if try select.step() {
-                    urlId = select.int64(0)
-                    let update = try db.prepare("""
-                        UPDATE history_urls
-                        SET visit_count = visit_count + 1,
-                            last_visit_time = ?,
-                            title = CASE WHEN ? != '' THEN ? ELSE title END
-                        WHERE id = ?;
-                        """)
-                    try update.bind(epochMs, at: 1)
-                    try update.bind(resolvedTitle, at: 2)
-                    try update.bind(resolvedTitle, at: 3)
-                    try update.bind(urlId, at: 4)
-                    try update.step()
-                } else {
-                    let insert = try db.prepare("""
-                        INSERT INTO history_urls (url, title, visit_count, last_visit_time)
-                        VALUES (?, ?, 1, ?);
-                        """)
-                    try insert.bind(url, at: 1)
-                    try insert.bind(resolvedTitle, at: 2)
-                    try insert.bind(epochMs, at: 3)
-                    try insert.step()
-                    urlId = db.lastInsertRowID
-                }
-                let visitInsert = try db.prepare("INSERT INTO history_visits (url_id, visit_time) VALUES (?, ?);")
-                try visitInsert.bind(urlId, at: 1)
-                try visitInsert.bind(epochMs, at: 2)
-                try visitInsert.step()
+                try Self.insertVisit(url: url, title: title, at: date, db: db)
             }
         }
+    }
+
+    /// Bulk variant for importing another browser's history (browser-ymx's
+    /// Safari import) -- one shared transaction for the whole batch rather
+    /// than one per visit (recordVisit's own per-call transaction is fine
+    /// for real-time recording, but would mean thousands of individual
+    /// fsync'd commits for an import of a whole history file). Each
+    /// visit's own real historical timestamp is preserved (not "now"), so
+    /// the same rollup + individual-visit-row bookkeeping recordVisit
+    /// itself relies on -- and therefore deleteRange's later recompute --
+    /// stays exactly as consistent as if these had been recorded for real,
+    /// one at a time, as they originally happened. Order doesn't matter:
+    /// insertVisit takes the max of the existing and new last_visit_time,
+    /// never regresses it backward regardless of which order visits are
+    /// replayed in.
+    public func importVisits(_ visits: [(url: String, title: String?, visitTime: Date)]) throws {
+        try database.perform { db in
+            try db.withTransaction {
+                for visit in visits {
+                    try Self.insertVisit(url: visit.url, title: visit.title, at: visit.visitTime, db: db)
+                }
+            }
+        }
+    }
+
+    private static func insertVisit(url: String, title: String?, at date: Date, db: SQLiteConnection) throws {
+        let epochMs = epochMs(date)
+        let resolvedTitle = title ?? ""
+        let select = try db.prepare("SELECT id FROM history_urls WHERE url = ?;")
+        try select.bind(url, at: 1)
+        let urlId: Int64
+        if try select.step() {
+            urlId = select.int64(0)
+            let update = try db.prepare("""
+                UPDATE history_urls
+                SET visit_count = visit_count + 1,
+                    last_visit_time = MAX(last_visit_time, ?),
+                    title = CASE WHEN ? != '' THEN ? ELSE title END
+                WHERE id = ?;
+                """)
+            try update.bind(epochMs, at: 1)
+            try update.bind(resolvedTitle, at: 2)
+            try update.bind(resolvedTitle, at: 3)
+            try update.bind(urlId, at: 4)
+            try update.step()
+        } else {
+            let insert = try db.prepare("""
+                INSERT INTO history_urls (url, title, visit_count, last_visit_time)
+                VALUES (?, ?, 1, ?);
+                """)
+            try insert.bind(url, at: 1)
+            try insert.bind(resolvedTitle, at: 2)
+            try insert.bind(epochMs, at: 3)
+            try insert.step()
+            urlId = db.lastInsertRowID
+        }
+        let visitInsert = try db.prepare("INSERT INTO history_visits (url_id, visit_time) VALUES (?, ?);")
+        try visitInsert.bind(urlId, at: 1)
+        try visitInsert.bind(epochMs, at: 2)
+        try visitInsert.step()
     }
 
     /// Ranked candidates for omnibox autocomplete: substring match against
