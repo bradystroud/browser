@@ -72,10 +72,6 @@ final class PermissionPromptController: NSObject, NSPopoverDelegate {
     var isShowing: Bool { popover.isShown }
 
     func show(kinds: EnginePermissionKind, origin: String, anchorView: NSView, decision: @escaping (Bool) -> Void) {
-        if ProcessInfo.processInfo.environment["AUDIT_DIAG"] == "permission" {
-            NSLog("AUDITDIAG: PermissionPromptController.show anchorView.window=%@ anchorView.superview=%@",
-                  String(describing: anchorView.window), String(describing: anchorView.superview))
-        }
         // At most one prompt at a time -- deny whatever was pending before
         // showing the new one, same as any other app-initiated dismissal.
         dismiss(invokingDecision: true)
@@ -83,20 +79,12 @@ final class PermissionPromptController: NSObject, NSPopoverDelegate {
 
         let content = PermissionPromptViewController(
             message: Self.message(kinds: kinds, origin: origin),
-            onAllow: { [weak self] in
-                if ProcessInfo.processInfo.environment["AUDIT_DIAG"] == "permission" {
-                    NSLog("AUDITDIAG: onAllow button handler invoked")
-                }
-                self?.complete(allow: true)
-            },
+            onAllow: { [weak self] in self?.complete(allow: true) },
             onDontAllow: { [weak self] in self?.complete(allow: false) }
         )
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
-        if ProcessInfo.processInfo.environment["AUDIT_DIAG"] == "permission" {
-            NSLog("AUDITDIAG: after popover.show, isShown=%@", popover.isShown ? "true" : "false")
-        }
     }
 
     /// Tears down the popover. `invokingDecision` controls whether the
