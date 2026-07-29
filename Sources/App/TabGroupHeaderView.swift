@@ -34,6 +34,12 @@ final class TabGroupHeaderView: NSView {
     /// tint, unchanged from before this rework.
     private var glassBackground: NSView?
 
+    /// Real content lives here, not directly on `self` -- see
+    /// TabButtonView.contentContainer's own doc comment (browser-0y1) for
+    /// why a plain sibling subview of the glass view isn't guaranteed
+    /// correct z-ordering.
+    private let contentContainer = NSView()
+
     private let colorDotView = NSView()
     private let nameLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
@@ -57,29 +63,36 @@ final class TabGroupHeaderView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
 
+        colorDotView.wantsLayer = true
+        colorDotView.layer?.cornerRadius = 4
+        contentContainer.addSubview(colorDotView)
+
+        nameLabel.stringValue = name
+        contentContainer.addSubview(nameLabel)
+
+        chevronView.imageScaling = .scaleProportionallyDown
+        contentContainer.addSubview(chevronView)
+
+        contentContainer.addSubview(countBadgeLabel)
+
         // Real Liquid Glass material for the header pill (browser-qpy
-        // rework) -- same add-behind pattern as TabButtonView's own glass
-        // background; setColorHex(_:) below rides its tintColor property
-        // instead of the plain layer.backgroundColor tint pre-26 uses.
+        // rework), hosting contentContainer as its contentView so the
+        // dot/name/chevron above are guaranteed to render on top of the
+        // glass effect rather than composited underneath it (browser-0y1);
+        // setColorHex(_:) below rides its tintColor property instead of the
+        // plain layer.backgroundColor tint pre-26 uses.
+        contentContainer.frame = bounds
+        contentContainer.autoresizingMask = [.width, .height]
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: bounds)
             glass.autoresizingMask = [.width, .height]
             glass.style = .regular
-            addSubview(glass, positioned: .below, relativeTo: nil)
+            glass.contentView = contentContainer
+            addSubview(glass)
             glassBackground = glass
+        } else {
+            addSubview(contentContainer)
         }
-
-        colorDotView.wantsLayer = true
-        colorDotView.layer?.cornerRadius = 4
-        addSubview(colorDotView)
-
-        nameLabel.stringValue = name
-        addSubview(nameLabel)
-
-        chevronView.imageScaling = .scaleProportionallyDown
-        addSubview(chevronView)
-
-        addSubview(countBadgeLabel)
 
         setColorHex(colorHex)
         updateChevronAndBadge()

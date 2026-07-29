@@ -70,11 +70,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private static let omniboxHorizontalMargin: CGFloat = 16
     /// A simple "Private" pill -- the whole visual distinction Private
     /// Browsing gets for now (browser-12m.1). nil (never created) for a
-    /// normal window. The profile-dot indicator this used to sit next to
-    /// is gone (browser-qpy point 5: the profile accent is now a glass
-    /// tint, not a solid dot -- see updateChromeTint(for:)), so this is
-    /// now anchored directly off the toolbar's trailing edge instead.
+    /// normal window. Anchored off the toolbar's trailing edge.
     private let privateLabel: NSTextField?
+    /// Safari-style profile indicator (browser-0y1, Brady's ask): a small
+    /// glass pill showing this window's profile color + name, at the
+    /// toolbar's leading edge next to navigation -- the chrome tint alone
+    /// (browser-qpy point 5) turned out to be too subtle for Brady to
+    /// actually tell which profile he's in at a glance. Clicking it offers
+    /// switching profiles (see profilePillTapped(_:)) -- always by opening
+    /// a *new* window: a window's CefRequestContext is fixed for its
+    /// lifetime, so there's no in-place "hot swap" of an existing window's
+    /// profile. nil (never created) for a Private window, which has no
+    /// real profile identity to indicate.
+    private let profilePillView: GlassBackgroundView?
+    private let profilePillButton: NSButton?
+    private static let profilePillHeight: CGFloat = 24
     private let contentContainerView = NSView()
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
@@ -118,8 +128,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
             label.layer?.cornerRadius = 8
             self.privateLabel = label
+            self.profilePillView = nil
+            self.profilePillButton = nil
         } else {
             self.privateLabel = nil
+            self.profilePillView = GlassBackgroundView(
+                material: .hudWindow, blendingMode: .withinWindow,
+                solidFallbackColor: .controlBackgroundColor,
+                cornerRadius: Self.profilePillHeight / 2
+            )
+            self.profilePillButton = NSButton()
         }
 
         let window = BrowserWindow(
@@ -135,6 +153,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         setUpViews()
         autocomplete.onCommit = { [weak self] suggestion in
             self?.commitOmniboxNavigation(to: suggestion.url)
+        }
+        // So a mode change in Settings' General pane is reflected
+        // immediately in this window's collapsed omnibox pill, rather than
+        // waiting for the active tab's next navigation/title change
+        // (browser-0y1) -- see collapsedOmniboxDisplay(for:).
+        NotificationCenter.default.addObserver(
+            forName: .omniboxDisplayPreferenceDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, let tab = self.activeTab, !self.isOmniboxFocused else { return }
+            self.omniboxField.stringValue = Self.collapsedOmniboxDisplay(for: tab)
+        }
+        // So the profile pill picks up a rename/recolor of this window's
+        // own profile done elsewhere (e.g. the Settings Profiles pane)
+        // while this window is open.
+        NotificationCenter.default.addObserver(
+            forName: .profileManagerDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.updateProfilePillContent()
         }
     }
 
@@ -230,10 +266,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - View setup
 
-    /// Space reserved at the tab strip's leading edge for the traffic-light
-    /// buttons, which float over this area now that the titlebar is hidden
-    /// (browser-qpy) -- wide enough to clear them at any window size (they
-    /// don't move), a touch more generous than their tightest possible fit.
+    /// Space reserved at the toolbar row's leading edge for the traffic-
+    /// light buttons, which float over this area now that the titlebar is
+    /// hidden (browser-qpy) -- wide enough to clear them at any window
+    /// size (they don't move), a touch more generous than their tightest
+    /// possible fit. Was the tab strip's own leadingInset until browser-0y1
+    /// flipped the chrome order (toolbar/omnibox row now on top, tab strip
+    /// below it -- Brady's ask, matching where the traffic lights actually
+    /// float once the order changes); TabStripView.leadingInset now stays
+    /// at its default 0.
     private static let trafficLightReservedWidth: CGFloat = 78
 
     private func setUpViews() {
@@ -242,10 +283,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let toolbarHeight: CGFloat = 36
         let chromeHeight = tabStripHeight + toolbarHeight
 
-        // Hidden titlebar + full-size content view (browser-qpy): the tab
-        // strip effectively becomes the titlebar area, with the traffic
-        // lights floating over its leading edge (see
-        // Self.trafficLightReservedWidth / TabStripView.leadingInset below).
+        // Hidden titlebar + full-size content view (browser-qpy): the
+        // toolbar row effectively becomes the titlebar area, with the
+        // traffic lights floating over its leading edge (see
+        // Self.trafficLightReservedWidth, applied in setUpToolbarContents/
+        // expandedOmniboxWidth below).
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
@@ -259,26 +301,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         chromeBackground.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(chromeBackground)
 
-        tabStripView.leadingInset = Self.trafficLightReservedWidth
-        tabStripView.frame = NSRect(
-            x: 0,
-            y: contentView.bounds.height - tabStripHeight,
-            width: contentView.bounds.width,
-            height: tabStripHeight
-        )
-        tabStripView.autoresizingMask = [.width, .minYMargin]
-        tabStripView.delegate = self
-        contentView.addSubview(tabStripView)
-
+        // Toolbar/omnibox row now on top (browser-0y1) -- was below the tab
+        // strip before.
         toolbarView.frame = NSRect(
             x: 0,
-            y: contentView.bounds.height - tabStripHeight - toolbarHeight,
+            y: contentView.bounds.height - toolbarHeight,
             width: contentView.bounds.width,
             height: toolbarHeight
         )
         toolbarView.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(toolbarView)
         setUpToolbarContents()
+
+        // Tab strip now below the toolbar -- no longer needs leadingInset
+        // (stays at its default 0), since the traffic lights float over the
+        // toolbar row above it instead.
+        tabStripView.frame = NSRect(
+            x: 0,
+            y: contentView.bounds.height - toolbarHeight - tabStripHeight,
+            width: contentView.bounds.width,
+            height: tabStripHeight
+        )
+        tabStripView.autoresizingMask = [.width, .minYMargin]
+        tabStripView.delegate = self
+        contentView.addSubview(tabStripView)
 
         contentContainerView.frame = NSRect(
             x: 0,
@@ -294,10 +340,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func setUpToolbarContents() {
         let buttonSize: CGFloat = 24
         let margin: CGFloat = 8
+        // Traffic lights float over this toolbar row now (browser-0y1's
+        // chrome-order flip put it on top) -- back/forward start clear of
+        // them, not at the bare left margin. Only the leading edge needs
+        // this; the trailing edge (privateLabel below) still uses the
+        // plain margin.
+        let leadingMargin: CGFloat = margin + Self.trafficLightReservedWidth
         let gap: CGFloat = 4
         let toolbarHeight = toolbarView.bounds.height
 
-        backButton.frame = NSRect(x: margin, y: (toolbarHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
+        backButton.frame = NSRect(x: leadingMargin, y: (toolbarHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
         backButton.isBordered = false
         backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
         // Glassy toolbar buttons (browser-qpy): a muted secondary-label
@@ -309,7 +361,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         toolbarView.addSubview(backButton)
 
         forwardButton.frame = NSRect(
-            x: margin + buttonSize + gap,
+            x: leadingMargin + buttonSize + gap,
             y: (toolbarHeight - buttonSize) / 2,
             width: buttonSize,
             height: buttonSize
@@ -320,6 +372,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         forwardButton.target = self
         forwardButton.action = #selector(goForwardAction(_:))
         toolbarView.addSubview(forwardButton)
+
+        // Profile indicator pill (browser-0y1) -- right after navigation,
+        // matching Safari's own placement. nil for a Private window (see
+        // this controller's init).
+        if let profilePillView, let profilePillButton {
+            profilePillView.layer?.borderWidth = 0.5
+            profilePillView.layer?.borderColor = NSColor.separatorColor.cgColor
+            toolbarView.addSubview(profilePillView)
+
+            profilePillButton.isBordered = false
+            profilePillButton.imagePosition = .imageLeading
+            profilePillButton.font = .systemFont(ofSize: 11, weight: .medium)
+            profilePillButton.target = self
+            profilePillButton.action = #selector(profilePillTapped(_:))
+            profilePillView.contentContainer.addSubview(profilePillButton)
+
+            updateProfilePillContent()
+            layoutProfilePill()
+        }
 
         if let privateLabel {
             let labelSize = CGSize(width: 54, height: 18)
@@ -352,7 +423,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         omniboxField.target = self
         omniboxField.action = #selector(omniboxSubmitted)
         omniboxField.delegate = self
-        omniboxContainerView.addSubview(omniboxField)
+        // Real content lives in contentContainer, not omniboxContainerView
+        // itself (browser-0y1) -- see GlassBackgroundView.contentContainer's
+        // own doc comment for why a plain sibling subview of the glass view
+        // isn't guaranteed correct z-ordering.
+        omniboxContainerView.contentContainer.addSubview(omniboxField)
 
         // browser-12m.5.1.1 -- hidden until refreshContentBlockerButton(for:)
         // has something to show (see that method's own doc comment).
@@ -363,14 +438,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentBlockerButton.target = self
         contentBlockerButton.action = #selector(toggleContentBlockerPopover(_:))
         contentBlockerButton.isHidden = true
-        omniboxContainerView.addSubview(contentBlockerButton)
+        omniboxContainerView.contentContainer.addSubview(contentBlockerButton)
 
         reloadButton.isBordered = false
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
         reloadButton.contentTintColor = .secondaryLabelColor
         reloadButton.target = self
         reloadButton.action = #selector(reloadPage(_:))
-        omniboxContainerView.addSubview(reloadButton)
+        omniboxContainerView.contentContainer.addSubview(reloadButton)
 
         layoutOmniboxContainer()
     }
@@ -392,7 +467,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let margin: CGFloat = 8
         let buttonSize: CGFloat = 24
         let gap: CGFloat = 4
-        let leadingReserved = margin + (buttonSize + gap) * 2 + Self.omniboxHorizontalMargin
+        // Traffic lights float over this row's leading edge now
+        // (browser-0y1) -- back/forward already start past them (see
+        // setUpToolbarContents), so the expanded pill must stop there too.
+        // The profile pill (also browser-0y1) sits right after them.
+        let profilePillReserved = profilePillView.map { $0.frame.width + gap } ?? 0
+        let leadingReserved = margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2 + profilePillReserved + Self.omniboxHorizontalMargin
         let trailingReserved = (privateLabel != nil ? 54 + gap : 0) + margin + Self.omniboxHorizontalMargin
         return max(Self.omniboxCollapsedWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
     }
@@ -431,12 +511,127 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     /// Just the host, e.g. "example.com" -- what the pill shows while
-    /// collapsed/unfocused. Falls back to the raw string if it does not
-    /// parse as a URL with a host (e.g. "about:blank", or the empty string
-    /// shown for the internal start page -- see Tab.urlString).
+    /// collapsed/unfocused in .domainOnly mode (the default). Falls back to
+    /// the raw string if it does not parse as a URL with a host (e.g.
+    /// "about:blank", or the empty string shown for the internal start
+    /// page -- see Tab.urlString).
     private static func domainOnlyDisplay(for urlString: String) -> String {
         guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else { return urlString }
         return host
+    }
+
+    /// What the omnibox pill shows while collapsed/unfocused, per
+    /// OmniboxDisplayPreference (browser-0y1, Brady's ask) -- always the
+    /// full editable URL while focused/being edited, regardless of this
+    /// setting (see setOmniboxFocused(_:animated:), the only place that
+    /// ever shows the focused/full-URL form).
+    private static func collapsedOmniboxDisplay(for tab: Tab) -> String {
+        switch OmniboxDisplayPreference.current {
+        case .domainOnly:
+            return domainOnlyDisplay(for: tab.urlString)
+        case .pageTitle:
+            // An empty title (e.g. a page that hasn't reported one yet)
+            // would show as a blank pill -- fall back to the domain rather
+            // than leave it looking broken.
+            return tab.title.isEmpty ? domainOnlyDisplay(for: tab.urlString) : tab.title
+        case .fullURL:
+            // Strips only the "https://" scheme -- "http://" is deliberately
+            // kept visible (a security nicety: an insecure site should
+            // still visibly announce itself as such, even in the compact
+            // display -- see the Settings help text for this preference).
+            guard tab.urlString.hasPrefix("https://") else { return tab.urlString }
+            return String(tab.urlString.dropFirst("https://".count))
+        }
+    }
+
+    // MARK: - Profile pill (browser-0y1)
+
+    /// Re-reads this window's profile fresh from ProfileManager (by id, not
+    /// `self.profile` directly) since `Profile` is a value type -- `profile`
+    /// is a snapshot from whenever this window was created/last refreshed,
+    /// so a rename/recolor done elsewhere wouldn't otherwise be reflected
+    /// (see the .profileManagerDidChange observer in init).
+    private func updateProfilePillContent() {
+        guard let profilePillButton, let profilePillView else { return }
+        let current = ProfileManager.shared.profile(id: profile.id) ?? profile
+        profilePillButton.image = Self.dotImage(colorHex: current.colorHex, diameter: 10)
+        profilePillButton.title = current.name
+        layoutProfilePill()
+        profilePillView.needsLayout = true
+    }
+
+    /// Sizes/positions the pill to fit its current content, right after
+    /// forwardButton (already laid out by the time this runs -- see
+    /// setUpToolbarContents). Also re-run whenever the content changes
+    /// (a rename can change the button's fitted width).
+    private func layoutProfilePill() {
+        guard let profilePillButton, let profilePillView else { return }
+        profilePillButton.sizeToFit()
+        let innerPadding: CGFloat = 10
+        let gap: CGFloat = 8
+        let pillWidth = profilePillButton.frame.width + innerPadding * 2
+        let toolbarHeight = toolbarView.bounds.height
+        profilePillView.frame = NSRect(
+            x: forwardButton.frame.maxX + gap,
+            y: (toolbarHeight - Self.profilePillHeight) / 2,
+            width: pillWidth,
+            height: Self.profilePillHeight
+        )
+        profilePillButton.frame = NSRect(
+            x: innerPadding,
+            y: (Self.profilePillHeight - profilePillButton.frame.height) / 2,
+            width: profilePillButton.frame.width,
+            height: profilePillButton.frame.height
+        )
+    }
+
+    /// Small solid-colored circle, e.g. for the profile pill and its
+    /// switch-profile menu -- not a template image, so its actual color
+    /// renders rather than being tinted to a single color by whatever
+    /// `contentTintColor`/menu styling would otherwise apply.
+    private static func dotImage(colorHex: String, diameter: CGFloat) -> NSImage {
+        let image = NSImage(size: NSSize(width: diameter, height: diameter))
+        image.lockFocus()
+        (NSColor(hex: colorHex) ?? .controlAccentColor).setFill()
+        NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: diameter, height: diameter)).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return image
+    }
+
+    /// Offers switching to a different profile -- always a new window (see
+    /// profilePillView's own doc comment for why there's no in-place hot
+    /// swap). Built fresh each time so it always reflects the current
+    /// profile list/current selection, same reasoning as TabButtonView's
+    /// own context menu.
+    @objc private func profilePillTapped(_ sender: NSButton) {
+        let menu = NSMenu()
+        for candidate in ProfileManager.shared.profiles {
+            let item = NSMenuItem(title: candidate.name, action: #selector(switchToProfileMenuItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = candidate
+            item.image = Self.dotImage(colorHex: candidate.colorHex, diameter: 10)
+            item.state = candidate.id == profile.id ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "New Profile…", action: #selector(newProfileFromPillMenu), keyEquivalent: "").target = self
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    /// A no-op for the current window's own profile (there's nothing to
+    /// switch to) -- opens a new window for any other profile.
+    @objc private func switchToProfileMenuItem(_ sender: NSMenuItem) {
+        guard let candidate = sender.representedObject as? Profile, candidate.id != profile.id else { return }
+        WindowManager.shared.openNewWindow(profile: candidate)
+    }
+
+    /// Reuses AppDelegate's own "New Profile…" action (same prompt, same
+    /// rebuildProfilesMenu + openNewWindow sequence as the app menu's own
+    /// Profiles > New Profile… item) rather than duplicating that sequence
+    /// here.
+    @objc private func newProfileFromPillMenu() {
+        (NSApp.delegate as? AppDelegate)?.newProfilePrompt(nil)
     }
 
     /// Expands/collapses the pill and swaps the field's displayed text
@@ -450,7 +645,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         guard isOmniboxFocused != focused else { return }
         isOmniboxFocused = focused
         if let tab = activeTab {
-            omniboxField.stringValue = focused ? tab.urlString : Self.domainOnlyDisplay(for: tab.urlString)
+            omniboxField.stringValue = focused ? tab.urlString : Self.collapsedOmniboxDisplay(for: tab)
         }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
@@ -839,7 +1034,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // setOmniboxFocused(_:animated:), which is what actually flips
         // isOmniboxFocused.
         if omniboxField.currentEditor() == nil {
-            omniboxField.stringValue = isOmniboxFocused ? tab.urlString : Self.domainOnlyDisplay(for: tab.urlString)
+            omniboxField.stringValue = isOmniboxFocused ? tab.urlString : Self.collapsedOmniboxDisplay(for: tab)
         }
         updateChromeTint(for: tab)
         refreshContentBlockerButton(for: tab)

@@ -141,36 +141,54 @@ final class TabButtonView: NSView {
     /// draw(_:) falls back to its original bezier-fill rendering unchanged.
     private var glassBackground: NSView?
 
+    /// Real content (favicon/title/audio/close button) lives here, not
+    /// directly on `self` (browser-0y1: titles/favicons rendered blurred,
+    /// and a selected tab's title disappeared entirely, because this view
+    /// used to add them as plain sibling subviews of its own
+    /// `NSGlassEffectView` -- that view's own header doc comment only
+    /// guarantees correct z-order for its `contentView`, not arbitrary
+    /// siblings; see GlassBackgroundView.contentContainer's own doc comment
+    /// for the same fix applied there). On macOS 26+ this becomes the
+    /// glass's `contentView`; pre-26 it's a plain full-size subview of
+    /// `self`, sitting on top of `self`'s own bezier-filled layer exactly
+    /// as the un-nested subviews used to.
+    private let contentContainer = NSView()
+
     init(index: Int, title: String) {
         self.index = index
         super.init(frame: .zero)
         wantsLayer = true
 
-        // Real Liquid Glass material for the pill itself (browser-qpy
-        // rework) -- added as the bottommost subview so favicon/title/close
-        // button (added below) all sit visibly on top of it, same
-        // add-behind pattern GlassBackgroundView uses for its own material
-        // view. draw(_:) skips its bezier fill entirely whenever this
-        // exists (see draw(_:)); pre-26 this stays nil and draw(_:) is the
-        // only rendering path, unchanged from before this rework.
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: bounds)
-            glass.autoresizingMask = [.width, .height]
-            addSubview(glass, positioned: .below, relativeTo: nil)
-            glassBackground = glass
-        }
-
         titleLabel.stringValue = title
-        addSubview(faviconView)
-        addSubview(titleLabel)
+        contentContainer.addSubview(faviconView)
+        contentContainer.addSubview(titleLabel)
 
         audioButton.target = self
         audioButton.action = #selector(muteToggleTapped)
-        addSubview(audioButton)
+        contentContainer.addSubview(audioButton)
 
         closeButton.target = self
         closeButton.action = #selector(closeTapped)
-        addSubview(closeButton)
+        contentContainer.addSubview(closeButton)
+
+        // Real Liquid Glass material for the pill itself (browser-qpy
+        // rework), hosting contentContainer as its contentView so the
+        // favicon/title/buttons above are guaranteed to render on top of
+        // the glass effect, not composited underneath it. draw(_:) skips
+        // its bezier fill entirely whenever this exists (see draw(_:));
+        // pre-26 this stays nil and draw(_:) is the only rendering path,
+        // unchanged from before this rework.
+        contentContainer.frame = bounds
+        contentContainer.autoresizingMask = [.width, .height]
+        if #available(macOS 26.0, *) {
+            let glass = NSGlassEffectView(frame: bounds)
+            glass.autoresizingMask = [.width, .height]
+            glass.contentView = contentContainer
+            addSubview(glass)
+            glassBackground = glass
+        } else {
+            addSubview(contentContainer)
+        }
 
         updateGlassAppearance()
     }

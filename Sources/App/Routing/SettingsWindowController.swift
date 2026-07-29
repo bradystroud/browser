@@ -1,22 +1,24 @@
 import AppKit
 
 /// The app's "Settings…" window (⌘,), standard macOS placement in the app
-/// menu. Hosts five sections in an NSTabView: "Routing Rules" (main/first
-/// tab, per Brady's original request -- see RoutingRulesPaneController),
-/// "Profiles" (create/rename/recolor/delete -- see ProfilesPaneController),
-/// "Privacy" (per-profile ad/tracker blocking -- see
-/// PrivacyPaneController, browser-12m.5.1), "Start Page" (per-profile
-/// start-page customization -- see StartPageSettingsPaneController,
-/// browser-5kq.3/.4), and "Autofill" (per-profile saved passwords/cards/
-/// addresses as three inner sub-tabs, Touch-ID-gated reveal for the
-/// secret bits -- see AutofillPaneController, browser-ojh.1/.2; this used
-/// to be a standalone "Passwords" top-level tab before browser-ojh.2 added
-/// cards/addresses alongside it). This controller just owns the window and
-/// composes the panes; all the section-specific logic lives in their own
-/// controllers.
+/// menu. Hosts six sections in an NSTabView: "General" (global preferences
+/// not tied to any one profile -- currently just the omnibox display mode,
+/// see GeneralPaneController, browser-0y1), "Routing Rules" (per Brady's
+/// original request -- see RoutingRulesPaneController), "Profiles"
+/// (create/rename/recolor/delete -- see ProfilesPaneController), "Privacy"
+/// (per-profile ad/tracker blocking -- see PrivacyPaneController,
+/// browser-12m.5.1), "Start Page" (per-profile start-page customization --
+/// see StartPageSettingsPaneController, browser-5kq.3/.4), and "Autofill"
+/// (per-profile saved passwords/cards/addresses as three inner sub-tabs,
+/// Touch-ID-gated reveal for the secret bits -- see AutofillPaneController,
+/// browser-ojh.1/.2; this used to be a standalone "Passwords" top-level tab
+/// before browser-ojh.2 added cards/addresses alongside it). This
+/// controller just owns the window and composes the panes; all the
+/// section-specific logic lives in their own controllers.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
+    private let generalPane = GeneralPaneController()
     private let routingRulesPane = RoutingRulesPaneController()
     private let profilesPane = ProfilesPaneController()
     private let privacyPane = PrivacyPaneController()
@@ -43,6 +45,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func show() {
+        generalPane.reload()
         routingRulesPane.reload()
         profilesPane.reload()
         privacyPane.reload()
@@ -66,6 +69,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         tabView.frame = contentView.bounds
         tabView.autoresizingMask = [.width, .height]
 
+        let generalItem = NSTabViewItem(identifier: "general")
+        generalItem.label = "General"
+        generalItem.view = generalPane.view
+
         let routingItem = NSTabViewItem(identifier: "routing-rules")
         routingItem.label = "Routing Rules"
         routingItem.view = routingRulesPane.view
@@ -86,6 +93,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         autofillItem.label = "Autofill"
         autofillItem.view = autofillPane.view
 
+        tabView.addTabViewItem(generalItem)
         tabView.addTabViewItem(routingItem)
         tabView.addTabViewItem(profilesItem)
         tabView.addTabViewItem(privacyItem)

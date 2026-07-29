@@ -36,10 +36,12 @@ set(BROWSER_SWIFT_SRCS
   BrowserWindowController.swift
   ColorSwatchPicker.swift
   CommandLineArgs.swift
+  GeneralPaneController.swift
   GlassBackgroundView.swift
   MainMenuBuilder.swift
   NewProfilePrompt.swift
   NSColor+Hex.swift
+  OmniboxDisplayPreference.swift
   Profile.swift
   ProfileDotView.swift
   ProfileManager.swift

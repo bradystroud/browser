@@ -148,11 +148,13 @@ final class TabStripView: NSView {
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 24
 
-    /// Extra space reserved before the first tab, for the traffic-light
-    /// buttons that now float over this area once the window's titlebar is
-    /// hidden (browser-qpy's liquid-glass restyle) -- set once by
-    /// BrowserWindowController, 0 by default so this view still lays out
-    /// sensibly if ever reused somewhere without a hidden titlebar.
+    /// Extra space reserved before the first tab, for e.g. traffic-light
+    /// buttons floating over this area. Unused (stays at its default 0)
+    /// since browser-0y1 flipped the chrome order -- the toolbar/omnibox
+    /// row is on top now, so the traffic lights float over *that* row's
+    /// leading edge instead (see BrowserWindowController.
+    /// trafficLightReservedWidth). Kept as a general capability rather than
+    /// removed, in case a future layout puts the tab strip back on top.
     var leadingInset: CGFloat = 0 {
         didSet {
             guard oldValue != leadingInset else { return }

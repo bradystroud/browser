@@ -38,6 +38,25 @@ final class GlassBackgroundView: NSView {
     /// Pre-26/Reduce-Transparency-only tint approximation -- see applyTint().
     private var legacyTintOverlay: NSView?
 
+    /// Real content callers should add subviews to -- **not `self`
+    /// directly** (browser-0y1: tab titles/favicons rendered blurred/
+    /// smeared, and a selected tab's title disappeared entirely, because
+    /// TabButtonView/TabGroupHeaderView were adding their labels as plain
+    /// sibling subviews of their own `NSGlassEffectView` instance rather
+    /// than inside its `contentView`). `NSGlassEffectView`'s own header doc
+    /// comment is explicit: "only guarantees the `contentView` will be
+    /// placed inside the glass effect; arbitrary subviews aren't guaranteed
+    /// specific behavior with regard to z-order in relation to the content
+    /// view or glass effect" -- in practice, on macOS 26+, a sibling
+    /// subview can end up composited *underneath* the glass's own blur/
+    /// refraction pass instead of on top of it, which is exactly the
+    /// symptom reported. `rebuild()` below reparents this same container
+    /// into whichever background is currently active (the glass's
+    /// `contentView` on 26+, a plain subview of `self` pre-26/solid) --
+    /// its own children are never touched, so callers just add to this
+    /// once and never think about it again.
+    let contentContainer = NSView()
+
     init(
         material: NSVisualEffectView.Material,
         blendingMode: NSVisualEffectView.BlendingMode,
@@ -88,10 +107,14 @@ final class GlassBackgroundView: NSView {
         legacyEffectView?.removeFromSuperview()
         solidView?.removeFromSuperview()
         legacyTintOverlay?.removeFromSuperview()
+        contentContainer.removeFromSuperview()
         modernGlassView = nil
         legacyEffectView = nil
         solidView = nil
         legacyTintOverlay = nil
+
+        contentContainer.frame = bounds
+        contentContainer.autoresizingMask = [.width, .height]
 
         if NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency {
             let view = NSView(frame: bounds)
@@ -100,10 +123,12 @@ final class GlassBackgroundView: NSView {
             view.layer?.backgroundColor = solidFallbackColor.cgColor
             addSubview(view, positioned: .below, relativeTo: nil)
             solidView = view
+            addSubview(contentContainer)
         } else if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: bounds)
             glass.autoresizingMask = [.width, .height]
             glass.style = .regular
+            glass.contentView = contentContainer
             addSubview(glass, positioned: .below, relativeTo: nil)
             modernGlassView = glass
         } else {
@@ -114,6 +139,7 @@ final class GlassBackgroundView: NSView {
             view.state = .active
             addSubview(view, positioned: .below, relativeTo: nil)
             legacyEffectView = view
+            addSubview(contentContainer)
         }
         applyCornerRadius()
         applyTint()
