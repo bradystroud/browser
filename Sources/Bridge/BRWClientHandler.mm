@@ -90,6 +90,66 @@ void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   Registry().erase(this);
 }
 
+bool BRWClientHandler::OnBeforePopup(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int popup_id,
+    const CefString& target_url,
+    const CefString& target_frame_name,
+    WindowOpenDisposition target_disposition,
+    bool user_gesture,
+    const CefPopupFeatures& popupFeatures,
+    CefWindowInfo& windowInfo,
+    CefRefPtr<CefClient>& client,
+    CefBrowserSettings& settings,
+    CefRefPtr<CefDictionaryValue>& extra_info,
+    bool* no_javascript_access) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (target_disposition == CEF_WOD_NEW_PICTURE_IN_PICTURE) {
+    // Document Picture-in-Picture (documentPictureInPicture.requestWindow())
+    // needs CEF's own default handling to produce the special floating
+    // window Chromium manages internally -- turning this into a regular tab
+    // would break the feature. This app's own <video>.requestPictureInPicture()
+    // (browser-7jz.1) is a different, unrelated code path that never reaches
+    // OnBeforePopup at all -- see cefclient's own reference OnBeforePopup
+    // (tests/cefclient/browser/client_handler.cc) for the same special case.
+    return false;
+  }
+
+  BRWWindowOpenDisposition disposition;
+  switch (target_disposition) {
+    case CEF_WOD_NEW_BACKGROUND_TAB:
+      disposition = BRWWindowOpenDispositionBackgroundTab;
+      break;
+    case CEF_WOD_NEW_POPUP:
+      disposition = BRWWindowOpenDispositionNewPopup;
+      break;
+    case CEF_WOD_NEW_WINDOW:
+      disposition = BRWWindowOpenDispositionNewWindow;
+      break;
+    default:
+      // Includes NEW_FOREGROUND_TAB (the common target="_blank" case) and
+      // every other value CEF's own richer enum has (singleton tab, save-to-
+      // disk, switch-to-tab, etc.) -- none of which this app distinguishes;
+      // a new foreground tab is the closest standard-browser match for all
+      // of them.
+      disposition = BRWWindowOpenDispositionForegroundTab;
+      break;
+  }
+
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestNewTabForURL:disposition:)]) {
+    [delegate_ browserDidRequestNewTabForURL:ToNSString(target_url) disposition:disposition];
+  }
+
+  // Always cancel CEF's own popup/window creation -- the delegate above is
+  // responsible for every disposition itself (a new tab in this window, or
+  // a genuine Swift-owned BrowserWindow for *NewWindow/*NewPopup), never a
+  // raw CEF-created window with no toolbar/tab strip/session-restore/quit-
+  // sequencing integration.
+  return true;
+}
+
 void BRWClientHandler::RequestClose() {
   CEF_REQUIRE_UI_THREAD();
   if (closed_ || close_requested_) {

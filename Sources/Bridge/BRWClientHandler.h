@@ -85,6 +85,27 @@ class BRWClientHandler : public CefClient,
   // CloseBrowser() by itself.
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
+  // Cancels CEF's own default popup/new-window browser creation for every
+  // disposition except document Picture-in-Picture (which needs CEF's
+  // special-purpose floating window -- see the .mm) and forwards the target
+  // URL plus a translated BRWWindowOpenDisposition to the delegate instead,
+  // which decides whether that means a new tab in this window or a genuine
+  // new native window (link-click behavior -- see BRWBrowser.h's
+  // -browserDidRequestNewTabForURL:disposition:).
+  bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
+                      CefRefPtr<CefFrame> frame,
+                      int popup_id,
+                      const CefString& target_url,
+                      const CefString& target_frame_name,
+                      WindowOpenDisposition target_disposition,
+                      bool user_gesture,
+                      const CefPopupFeatures& popupFeatures,
+                      CefWindowInfo& windowInfo,
+                      CefRefPtr<CefClient>& client,
+                      CefBrowserSettings& settings,
+                      CefRefPtr<CefDictionaryValue>& extra_info,
+                      bool* no_javascript_access) override;
+
   // CefLoadHandler methods:
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                              bool isLoading,

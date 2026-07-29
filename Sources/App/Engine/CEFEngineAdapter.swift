@@ -64,6 +64,27 @@ enum CEFEngine: BrowserEngine {
     static func setVisualLookUpAvailable(_ available: Bool) {
         BRWBrowser.setVisualLookUpAvailable(available)
     }
+
+    static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings]) {
+        var bridgeSettings: [String: BRWProfileBlockingSettings] = [:]
+        for (profileName, settings) in profileSettings {
+            bridgeSettings[profileName] = BRWProfileBlockingSettings(
+                enabled: settings.enabled, allowlistedHosts: settings.allowlistedHosts)
+        }
+        BRWContentBlocker.update(withBlockedDomains: domains, profileSettings: bridgeSettings)
+    }
+
+    static func setThreatInterstitialBuilder(_ builder: @escaping (String, String) -> String) {
+        BRWThreatList.setInterstitialPageBuilder(builder)
+    }
+
+    static func updateThreatBlocking(domains: [String], profileSettings: [String: EngineProfileThreatSettings]) {
+        var bridgeSettings: [String: BRWProfileThreatSettings] = [:]
+        for (profileName, settings) in profileSettings {
+            bridgeSettings[profileName] = BRWProfileThreatSettings(enabled: settings.enabled)
+        }
+        BRWThreatList.update(withThreatDomains: domains, profileSettings: bridgeSettings)
+    }
 }
 
 /// Wraps a single BRWBrowser, translating its Objective-C BRWBrowserDelegate
@@ -184,11 +205,24 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func browserDidRequestVisualLookUp(forImageURL imageURL: String, pageURL: String) {
         delegate?.engineTabDidRequestVisualLookUp(imageURL: imageURL, pageURL: pageURL)
     }
+
+    func browserDidRequestNewTab(forURL url: String, disposition: BRWWindowOpenDisposition) {
+        let engineDisposition: EngineWindowOpenDisposition
+        switch disposition {
+        case .foregroundTab: engineDisposition = .foregroundTab
+        case .backgroundTab: engineDisposition = .backgroundTab
+        case .newWindow: engineDisposition = .newWindow
+        case .newPopup: engineDisposition = .newPopup
+        @unknown default: engineDisposition = .foregroundTab
+        }
+        delegate?.engineTabDidRequestNewTab(url: url, disposition: engineDisposition)
+    }
 }
 
-/// The engine the app builds against today. main.swift and AppDelegate
-/// reference this type name (never a BRW* symbol) to bootstrap and
-/// initialize it -- see BrowserEngine's doc comment for why a protocol with
-/// static requirements, conformed to by exactly one type at a time, is the
-/// right shape here.
-typealias ActiveEngine = CEFEngine
+// `ActiveEngine` -- what the rest of Sources/App actually calls
+// (`ActiveEngine.initialize(...)`, `ActiveEngine.createTab(...)`, etc.) --
+// now lives in WebKitEngineAdapter.swift as a runtime-selected
+// `BrowserEngine.Type` rather than a compile-time typealias fixed to
+// CEFEngine, so `--engine cef|webkit` can pick between this file's CEFEngine
+// and that file's WebKitEngine at launch. See that declaration's own doc
+// comment.

@@ -13,6 +13,16 @@ struct EnginePermissionKind: OptionSet {
     static let notifications = EnginePermissionKind(rawValue: 1 << 3)
 }
 
+/// Mirrors BRWWindowOpenDisposition (BRWBrowser.h) 1:1 -- see
+/// CEFEngineAdapter.swift's translation and
+/// EngineTabDelegate.engineTabDidRequestNewTab's own doc comment.
+enum EngineWindowOpenDisposition {
+    case foregroundTab
+    case backgroundTab
+    case newWindow
+    case newPopup
+}
+
 /// Per-tab navigation/state/download/permission callbacks -- the
 /// engine-agnostic counterpart of the bridge's BRWBrowserDelegate
 /// (Objective-C protocol, CEF-specific naming). One EngineTab has at most
@@ -71,6 +81,13 @@ protocol EngineTabDelegate: AnyObject {
     /// -browserDidRequestVisualLookUpForImageURL:pageURL: for what `imageURL`/
     /// `pageURL` actually are.
     func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String)
+
+    /// A page tried to open `url` in a new browsing context -- a
+    /// target="_blank" link or window.open() call -- see BRWBrowser.h's
+    /// -browserDidRequestNewTabForURL:disposition: for the full contract,
+    /// including why this always fires instead of CEF creating its own raw
+    /// popup window for it.
+    func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -151,6 +168,31 @@ protocol EngineTab: AnyObject {
     func respondToPageMessage(requestId: Int64, success: Bool, response: String)
 }
 
+/// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
+/// selects at launch. Exhaustive by design -- adding a third engine means
+/// updating this enum, its one switch in WebKitEngineAdapter.swift's
+/// `ActiveEngine`, and nothing else in Sources/App.
+enum EngineChoice {
+    case cef
+    case webkit
+}
+
+/// One profile's content-blocking configuration -- the engine-agnostic
+/// counterpart of the bridge's BRWProfileBlockingSettings (BRWContentBlocker.h),
+/// itself a thin carrier for BlockListCore's BlockingSettings. Exists so
+/// ContentBlockerCoordinator (Sources/App/Blocking) never needs to import a
+/// BRW* bridge type directly -- see AGENTS.md's engine-agnostic-UI principle.
+struct EngineProfileBlockingSettings {
+    let enabled: Bool
+    let allowlistedHosts: [String]
+}
+
+/// One profile's threat-warning configuration -- the engine-agnostic
+/// counterpart of the bridge's BRWProfileThreatSettings (BRWThreatList.h).
+struct EngineProfileThreatSettings {
+    let enabled: Bool
+}
+
 /// Process-wide engine lifecycle + tab creation. A protocol with static
 /// requirements (conformed to by exactly one concrete adapter at a time,
 /// referenced everywhere else as `ActiveEngine`) rather than an instance
@@ -196,4 +238,28 @@ protocol BrowserEngine {
     /// per-tab. Call once, before creating the first tab, with whatever
     /// VisionKit.ImageAnalyzer.isSupported reports.
     static func setVisualLookUpAvailable(_ available: Bool)
+
+    /// Publishes a fresh content-blocking snapshot -- the shared blocked-
+    /// domain list plus every existing profile's settings -- for the engine
+    /// to enforce on its own resource-load path (browser-12m.5.1). See the
+    /// CEF adapter for the exact atomic-swap contract this wraps
+    /// (BRWContentBlocker.h's +updateWithBlockedDomains:profileSettings:).
+    /// Call from the main thread at launch and any time the shared list or
+    /// a profile's BlockingSettings changes -- see ContentBlockerCoordinator.
+    static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings])
+
+    /// Registers the Swift closure that renders a blocked-navigation warning
+    /// page for a given host and the original URL that was blocked
+    /// (browser-12m.6) -- see the CEF adapter for the exact contract
+    /// (BRWThreatList.h's +setInterstitialPageBuilder:). Call once, from the
+    /// main thread, before any tab can navigate -- see ThreatListCoordinator.start().
+    static func setThreatInterstitialBuilder(_ builder: @escaping (_ host: String, _ originalURL: String) -> String)
+
+    /// Publishes a fresh threat-warning snapshot -- the shared threat-domain
+    /// list plus every existing profile's settings (browser-12m.6). See the
+    /// CEF adapter for the exact contract (BRWThreatList.h's
+    /// +updateWithThreatDomains:profileSettings:). Call from the main thread
+    /// at launch and any time the shared list or a profile's
+    /// ThreatWarningSettings changes -- see ThreatListCoordinator.
+    static func updateThreatBlocking(domains: [String], profileSettings: [String: EngineProfileThreatSettings])
 }

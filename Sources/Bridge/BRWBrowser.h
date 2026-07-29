@@ -20,6 +20,20 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
     BRWPermissionKindNotifications = 1 << 3,
 };
 
+/// Where a popup/link-target browser should open, translated from CEF's own
+/// cef_window_open_disposition_t (BRWClientHandler::OnBeforePopup) into
+/// something that doesn't leak a CEF type into this Swift-visible header.
+/// Only the subset OnBeforePopup actually needs to distinguish for tab vs.
+/// window placement -- CEF's own richer enum (singleton tab, save-to-disk,
+/// switch-to-tab, etc.) collapses into ForegroundTab as a safe default; see
+/// BRWClientHandler.mm's translation.
+typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
+    BRWWindowOpenDispositionForegroundTab,
+    BRWWindowOpenDispositionBackgroundTab,
+    BRWWindowOpenDispositionNewWindow,
+    BRWWindowOpenDispositionNewPopup,
+};
+
 /// Per-tab navigation/state callbacks, all delivered on the main thread (CEF's
 /// UI thread is the main thread in this architecture -- see BRWMessagePump).
 /// One BRWBrowser has at most one delegate; the Swift-side tab model owns
@@ -128,6 +142,20 @@ typedef NS_OPTIONS(NSUInteger, BRWPermissionKind) {
 /// containing page's URL, useful as a Referer header on a follow-up fetch
 /// for `imageURL` since some hosts reject image requests with no Referer.
 - (void)browserDidRequestVisualLookUpForImageURL:(NSString *)imageURL pageURL:(NSString *)pageURL;
+
+/// The page tried to open `url` in a new browsing context -- a
+/// target="_blank" link or window.open() call that CEF would otherwise
+/// satisfy by creating its own raw native popup window, entirely outside
+/// this app's window management (no toolbar/tab strip/session-restore/
+/// quit-sequencing integration -- see BrowserWindowController). This fires
+/// *instead* of that happening at all: BRWClientHandler::OnBeforePopup
+/// always cancels CEF's own creation and calls this instead, leaving the
+/// delegate to decide what "open" means -- a new tab in the same window for
+/// *ForegroundTab/*BackgroundTab, or a genuine new native window (via this
+/// app's own window-creation code) for *NewWindow/*NewPopup, matching
+/// standard browser behavior for a plain target="_blank" link vs. a
+/// deliberate window.open()-with-features popup (OAuth sign-in flows, etc.).
+- (void)browserDidRequestNewTabForURL:(NSString *)url disposition:(BRWWindowOpenDisposition)disposition;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed

@@ -17,6 +17,18 @@ protocol TabDelegate: AnyObject {
 
     /// Mirrors EngineTabDelegate.engineTabDidDismissPermissionRequest.
     func tab(_ tab: Tab, didDismissPermissionRequestWithId promptId: UInt64)
+
+    /// A target="_blank" link or window.open() call this tab's page made,
+    /// resolved to "open as a new tab in this window" -- see
+    /// Tab.engineTabDidRequestNewTab for the modifier-key overrides that
+    /// decide `foreground` alongside CEF's own reported disposition.
+    func tab(_ tab: Tab, didRequestNewTabForURL url: String, foreground: Bool)
+
+    /// Same trigger as above, resolved to "open as a genuine new native
+    /// window" instead (a Shift-click override, or CEF's own NEW_WINDOW/
+    /// NEW_POPUP disposition -- e.g. an OAuth sign-in flow's window.open()
+    /// with explicit size features).
+    func tab(_ tab: Tab, didRequestNewWindowForURL url: String)
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -550,5 +562,36 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func engineTabDidDismissPermissionRequest(_ promptId: UInt64) {
         delegate?.tab(self, didDismissPermissionRequestWithId: promptId)
+    }
+
+    /// CEF's OnBeforePopup gives no held-modifier-key state at all (its
+    /// CefPopupFeatures carries only position/size, see
+    /// docs/ai-tasks/link-click-new-tab-notes.md) -- so the standard macOS
+    /// Cmd-click (background tab) / Cmd+Shift-click (foreground tab) /
+    /// Shift-click (new window) overrides are read here instead, via a
+    /// synchronous point-in-time query of NSEvent.modifierFlags, the same
+    /// idiom AppDelegate's Shift-to-skip-restore check already uses. This is
+    /// safe because OnBeforePopup fires synchronously on the main thread in
+    /// direct response to the click, before any run-loop turn passes, so the
+    /// held modifiers are still exactly what the user pressed to trigger it.
+    /// With no modifier held, CEF's own reported disposition decides.
+    func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition) {
+        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.shift) && !modifiers.contains(.command) {
+            delegate?.tab(self, didRequestNewWindowForURL: url)
+            return
+        }
+        if modifiers.contains(.command) {
+            delegate?.tab(self, didRequestNewTabForURL: url, foreground: modifiers.contains(.shift))
+            return
+        }
+        switch disposition {
+        case .foregroundTab:
+            delegate?.tab(self, didRequestNewTabForURL: url, foreground: true)
+        case .backgroundTab:
+            delegate?.tab(self, didRequestNewTabForURL: url, foreground: false)
+        case .newWindow, .newPopup:
+            delegate?.tab(self, didRequestNewWindowForURL: url)
+        }
     }
 }
