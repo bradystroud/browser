@@ -17,14 +17,6 @@ import Foundation
 /// monogram (the title's first letter) -- the same fallback most browsers
 /// already show before a real favicon has loaded.
 enum StartPageRenderer {
-    /// Appended (as a URL fragment) by the gear button's plain
-    /// `<a href="#browser-settings">` link -- a same-document fragment
-    /// click never triggers a real navigation/network request, so
-    /// Tab.engineTabDidChangeURL can intercept exactly this suffix to open
-    /// Settings' Start Page tab, with no JS-to-Swift bridge message channel
-    /// (none exists yet) and no CEF request interception needed.
-    static let settingsFragment = "#browser-settings"
-
     static func dataURL(profileName: String, isPrivate: Bool = false) -> String {
         let html = isPrivate ? renderPrivateHTML() : renderHTML(profileName: profileName)
         let base64 = Data(html.utf8).base64EncodedString()
@@ -59,7 +51,7 @@ enum StartPageRenderer {
         <style>\(css(gradient: gradientCSS(from: settings.backgroundColorHex)))</style>
         </head>
         <body>
-        <a class="gear" href="\(settingsFragment)" title="Start page settings">⚙</a>
+        <a class="gear" href="#" title="Start page settings" onclick="window.cefQuery({request: JSON.stringify({type: 'openStartPageSettings'}), onSuccess: function(){}, onFailure: function(){}}); return false;">⚙</a>
         <main>
         \(sections)
         </main>

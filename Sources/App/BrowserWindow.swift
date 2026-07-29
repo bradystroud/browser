@@ -30,6 +30,8 @@ final class BrowserWindow: NSWindow {
         PaymentAddressAutofillCoordinator.shared.activate()
         // Same reasoning, for the per-tab audio indicator (browser-rhi.4).
         TabAudioCoordinator.shared.activate()
+        // Same reasoning, for the start page gear button (browser-ymx).
+        StartPageSettingsCoordinator.shared.activate()
     }
 
     required init?(coder: NSCoder) {
