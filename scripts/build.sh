@@ -94,6 +94,31 @@ if [[ -n "${CODESIGN_IDENTITY:-}" && "${CODESIGN_IDENTITY}" != "-" ]]; then
   /usr/libexec/PlistBuddy -c "Add :BRWDisableMockKeychain bool true" "${INFO_PLIST}"
 fi
 
+# browser-82d: the `browser` CLI (browser-cli/, a standalone SwiftPM
+# executable -- see docs/ai-tasks/browser-cli-notes.md) -- built and dropped
+# into the app bundle's Resources so it travels with it, but deliberately
+# kept off the app build's critical path: a failure here is a warning, never
+# a reason to fail the whole ./scripts/build.sh (nothing about Browser.app
+# itself depends on this binary existing). Must happen *before*
+# scripts/sign.sh below, not after -- adding a file into an already-signed
+# bundle invalidates its resource seal, so this binary needs to already be
+# sitting in place before that script's final codesign of the main app
+# bundle runs, not layered on top of it afterward.
+echo "== Building browser CLI (browser-cli/) =="
+if swift build --package-path "${ROOT_DIR}/browser-cli" -c release; then
+  CLI_BIN_DIR="${APP_PATH}/Contents/Resources/bin"
+  mkdir -p "${CLI_BIN_DIR}"
+  cp "${ROOT_DIR}/browser-cli/.build/release/browser" "${CLI_BIN_DIR}/browser"
+  # Signed on its own, independent of the app bundle's own inside-out pass
+  # below -- this is what lets Brady run it directly (symlinked onto his
+  # PATH, outside the app bundle entirely) as a normal signed executable,
+  # not just as an inert resource file along for the ride inside the seal.
+  codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY:--}" "${CLI_BIN_DIR}/browser"
+  echo "== browser CLI built: ${CLI_BIN_DIR}/browser =="
+else
+  echo "warning: browser CLI build failed -- continuing without it (Browser.app itself is unaffected)" >&2
+fi
+
 echo "== Signing (inside-out; identity: ${CODESIGN_IDENTITY:--}; see scripts/sign.sh) =="
 "${ROOT_DIR}/scripts/sign.sh" "${APP_PATH}" "${MANIFEST}"
 
@@ -110,4 +135,11 @@ Or directly (useful for seeing stdout/stderr):
 Two-profile cookie isolation check:
   "${APP_PATH}/Contents/MacOS/Browser" --profile alice &
   "${APP_PATH}/Contents/MacOS/Browser" --profile bob &
+
+browser CLI (browser-82d) -- put it on your PATH once:
+  ln -sf "${APP_PATH}/Contents/Resources/bin/browser" /usr/local/bin/browser
+Then, with the app running:
+  browser profiles
+  browser open https://example.com
+  browser route-test https://ssw.com.au --json
 EOF
