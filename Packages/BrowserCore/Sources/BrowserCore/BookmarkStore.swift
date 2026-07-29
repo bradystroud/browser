@@ -1,5 +1,15 @@
 import Foundation
 
+extension Notification.Name {
+    /// Posted after any BookmarkStore mutation (add/rename/move/delete)
+    /// succeeds, `object` being the BookmarkStore instance that changed --
+    /// mirrors ProfileManager's `.profileManagerDidChange` pattern so
+    /// MainMenuBuilder's Bookmarks menu (and anything else that reads
+    /// bookmarks) can refresh itself without every call site needing to
+    /// remember to trigger that refresh directly.
+    public static let bookmarkStoreDidChange = Notification.Name("BookmarkStoreDidChange")
+}
+
 public enum BookmarkKind: String, Hashable {
     case folder
     case bookmark
@@ -35,12 +45,16 @@ public final class BookmarkStore {
 
     @discardableResult
     public func addFolder(title: String, parentId: Int64?, at date: Date = Date()) throws -> Int64 {
-        try insert(kind: .folder, title: title, url: nil, parentId: parentId, at: date)
+        let id = try insert(kind: .folder, title: title, url: nil, parentId: parentId, at: date)
+        postDidChange()
+        return id
     }
 
     @discardableResult
     public func addBookmark(title: String, url: String, parentId: Int64?, at date: Date = Date()) throws -> Int64 {
-        try insert(kind: .bookmark, title: title, url: url, parentId: parentId, at: date)
+        let id = try insert(kind: .bookmark, title: title, url: url, parentId: parentId, at: date)
+        postDidChange()
+        return id
     }
 
     private func insert(kind: BookmarkKind, title: String, url: String?, parentId: Int64?, at date: Date) throws -> Int64 {
@@ -100,6 +114,7 @@ public final class BookmarkStore {
             try stmt.bind(itemId, at: 2)
             try stmt.step()
         }
+        postDidChange()
     }
 
     public func updateURL(itemId: Int64, url: String) throws {
@@ -109,6 +124,7 @@ public final class BookmarkStore {
             try stmt.bind(itemId, at: 2)
             try stmt.step()
         }
+        postDidChange()
     }
 
     /// Moves `itemId` to be a child of `toParentId` at position `index`
@@ -138,6 +154,7 @@ public final class BookmarkStore {
                 try Self.applyPositions(siblingIds, db: db)
             }
         }
+        postDidChange()
     }
 
     public func delete(itemId: Int64) throws {
@@ -154,6 +171,11 @@ public final class BookmarkStore {
                 try Self.renumber(parentId: parentId, db: db)
             }
         }
+        postDidChange()
+    }
+
+    private func postDidChange() {
+        NotificationCenter.default.post(name: .bookmarkStoreDidChange, object: self)
     }
 
     private static func item(from stmt: Statement) -> BookmarkItem {

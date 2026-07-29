@@ -67,6 +67,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.mainMenuBuilder.rebuildBookmarksMenu(for: controller.profile)
         }
 
+        // BookmarkStore itself has no notion of "the active window" (it's a
+        // per-profile store, not UI), so a bookmark change refreshes the menu
+        // here using whichever profile is currently key -- covers the case a
+        // bookmark is added/moved/deleted without a BrowserWindowController
+        // regaining key status right after (e.g. from the Bookmarks manager
+        // window while it stays frontmost). If no BrowserWindowController is
+        // key at the moment of the change, the didBecomeKey observer above
+        // still catches it the next time one is.
+        NotificationCenter.default.addObserver(
+            forName: .bookmarkStoreDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, let controller = NSApp.keyWindow?.windowController as? BrowserWindowController else { return }
+            self.mainMenuBuilder.rebuildBookmarksMenu(for: controller.profile)
+        }
+
         let profilesRootPath = CommandLineArgs.profilesRootPath()
         guard ActiveEngine.initialize(profilesRootPath: profilesRootPath) else {
             NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)

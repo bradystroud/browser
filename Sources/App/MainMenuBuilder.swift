@@ -275,22 +275,41 @@ final class MainMenuBuilder {
             case .folder:
                 let submenu = NSMenu(title: item.title)
                 let children = (try? store.children(of: item.id)) ?? []
-                for child in children {
-                    switch child.kind {
-                    case .bookmark:
-                        let childItem = NSMenuItem(title: child.title, action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
-                        childItem.representedObject = child.url
-                        submenu.addItem(childItem)
-                    case .folder:
-                        // One level of nesting only -- see this method's doc
-                        // comment; a nested subfolder shows as a prompt into
-                        // the full manager instead of recursing indefinitely.
-                        let placeholder = NSMenuItem(
-                            title: "\(child.title) (open in Bookmarks manager)",
-                            action: #selector(BrowserWindowController.showBookmarksManager(_:)),
-                            keyEquivalent: ""
-                        )
-                        submenu.addItem(placeholder)
+                if children.isEmpty {
+                    // An empty submenu renders as a folder item that opens
+                    // onto literally nothing -- indistinguishable from the
+                    // menu being broken (this is exactly what the "Favorites"
+                    // folder looks like before a user has filed anything into
+                    // it, since FavoritesFolder auto-creates it empty the
+                    // first time the start page renders). A disabled
+                    // placeholder makes the empty state visible instead of
+                    // silent.
+                    let empty = NSMenuItem(
+                        title: item.title == FavoritesFolder.title ? "No favourites yet" : "No bookmarks",
+                        action: nil,
+                        keyEquivalent: ""
+                    )
+                    empty.isEnabled = false
+                    submenu.addItem(empty)
+                } else {
+                    for child in children {
+                        switch child.kind {
+                        case .bookmark:
+                            let childItem = NSMenuItem(title: child.title, action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
+                            childItem.representedObject = child.url
+                            submenu.addItem(childItem)
+                        case .folder:
+                            // One level of nesting only -- see this method's
+                            // doc comment; a nested subfolder shows as a
+                            // prompt into the full manager instead of
+                            // recursing indefinitely.
+                            let placeholder = NSMenuItem(
+                                title: "\(child.title) (open in Bookmarks manager)",
+                                action: #selector(BrowserWindowController.showBookmarksManager(_:)),
+                                keyEquivalent: ""
+                            )
+                            submenu.addItem(placeholder)
+                        }
                     }
                 }
                 let folderItem = NSMenuItem(title: item.title, action: nil, keyEquivalent: "")

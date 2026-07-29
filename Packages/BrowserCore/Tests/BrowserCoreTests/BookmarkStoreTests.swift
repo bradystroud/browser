@@ -102,4 +102,53 @@ final class BookmarkStoreTests: XCTestCase {
         XCTAssertEqual(bookmark?.kind, .bookmark)
         XCTAssertEqual(bookmark?.url, "https://example.com")
     }
+
+    // MARK: - .bookmarkStoreDidChange
+
+    /// Every mutating call posts once -- this is what lets MainMenuBuilder's
+    /// Bookmarks menu refresh itself immediately rather than only on the
+    /// next window-key-change (see AppDelegate's observer for this name).
+    func testEachMutationPostsExactlyOneChangeNotification() throws {
+        var postCount = 0
+        let observer = NotificationCenter.default.addObserver(forName: .bookmarkStoreDidChange, object: store, queue: nil) { _ in
+            postCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let folder = try store.addFolder(title: "Folder", parentId: nil)
+        XCTAssertEqual(postCount, 1)
+
+        let bookmark = try store.addBookmark(title: "A", url: "https://a.example", parentId: nil)
+        XCTAssertEqual(postCount, 2)
+
+        try store.rename(itemId: bookmark, title: "Renamed")
+        XCTAssertEqual(postCount, 3)
+
+        try store.updateURL(itemId: bookmark, url: "https://renamed.example")
+        XCTAssertEqual(postCount, 4)
+
+        try store.move(itemId: bookmark, toParentId: folder, index: 0)
+        XCTAssertEqual(postCount, 5)
+
+        try store.delete(itemId: bookmark)
+        XCTAssertEqual(postCount, 6)
+    }
+
+    /// Read-only calls (children/item lookups) must never post -- otherwise
+    /// every menu rebuild's own `children(of:)` read would recursively
+    /// trigger another rebuild.
+    func testReadOnlyCallsDoNotPostChangeNotification() throws {
+        let folder = try store.addFolder(title: "Folder", parentId: nil)
+
+        var postCount = 0
+        let observer = NotificationCenter.default.addObserver(forName: .bookmarkStoreDidChange, object: store, queue: nil) { _ in
+            postCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        _ = try store.children(of: nil)
+        _ = try store.children(of: folder)
+        _ = try store.item(id: folder)
+        XCTAssertEqual(postCount, 0)
+    }
 }
