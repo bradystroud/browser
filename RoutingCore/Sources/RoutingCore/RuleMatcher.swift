@@ -14,19 +14,57 @@ public struct RoutingContext {
     }
 }
 
+/// The result of evaluating a link against the full rule list -- which
+/// rule (if any) matched, alongside the profile it resolves to either way.
+/// This is the one shared entry point for anything that needs to explain
+/// *why* a link resolved where it did, not just the resolved profile id:
+/// the Routing Rules pane's "Test" affordance (Sources/App/Routing) and the
+/// `browser route-test` CLI command (m4-webkit, Packages/BrowserCLIProtocol
+/// + the app's CLIServer) both evaluate against this same function rather
+/// than each re-deriving first-match-wins logic independently, which would
+/// risk the CLI and the in-app diagnostics silently disagreeing about which
+/// rule matched.
+public enum RuleEvaluation: Equatable {
+    case matched(rule: RoutingRule, profileId: String)
+    case noMatch(defaultProfileId: String)
+
+    /// The profile this evaluation resolves to either way -- what
+    /// `resolveProfileId` itself returns.
+    public var profileId: String {
+        switch self {
+        case .matched(_, let profileId): return profileId
+        case .noMatch(let defaultProfileId): return defaultProfileId
+        }
+    }
+}
+
 public enum RuleMatcher {
     /// First-match-wins profile resolution: walks `rules` in order, returns
     /// the action of the first one whose match fully applies, else
-    /// `defaultProfileId`.
+    /// `defaultProfileId`. A thin wrapper around `evaluate(context:rules:
+    /// defaultProfileId:)` for callers (RoutingCoordinator) that only need
+    /// the resolved profile, not which rule (if any) produced it.
     public static func resolveProfileId(
         for context: RoutingContext,
         rules: [RoutingRule],
         defaultProfileId: String
     ) -> String {
+        evaluate(context: context, rules: rules, defaultProfileId: defaultProfileId).profileId
+    }
+
+    /// Same first-match-wins walk as `resolveProfileId`, but reports which
+    /// rule matched (or that none did) -- see `RuleEvaluation`'s own doc
+    /// comment for why this, not `resolveProfileId`, is the entry point
+    /// diagnostic tooling should call.
+    public static func evaluate(
+        context: RoutingContext,
+        rules: [RoutingRule],
+        defaultProfileId: String
+    ) -> RuleEvaluation {
         for rule in rules where matches(rule.match, context: context) {
-            return rule.action.profileId
+            return .matched(rule: rule, profileId: rule.action.profileId)
         }
-        return defaultProfileId
+        return .noMatch(defaultProfileId: defaultProfileId)
     }
 
     /// AND across every present (non-nil) field of `match`; absent fields

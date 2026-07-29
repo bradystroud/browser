@@ -228,3 +228,63 @@ struct RuleOrderingTests {
         #expect(resolved == "slack-links")
     }
 }
+
+/// `evaluate` is the shared diagnostic entry point (browser-ymx) both the
+/// Routing Rules pane's "Test" affordance and the `browser route-test` CLI
+/// command call -- these tests exist specifically to lock in that its
+/// first-match-wins behavior, and its `.profileId` convenience, stay
+/// identical to `resolveProfileId`'s own (already covered above), while
+/// additionally reporting which rule (if any) actually matched.
+@Suite("evaluate (rule-match diagnostics)")
+struct RuleEvaluationTests {
+    @Test("reports the matching rule, not just its resolved profile")
+    func reportsMatchingRule() {
+        let workRule = RoutingRule(match: .init(domainGlob: "*.example.com"), action: .init(profileId: "work"))
+        let rules = [workRule]
+
+        let result = RuleMatcher.evaluate(
+            context: RoutingContext(url: "https://example.com", sourceBundleId: nil),
+            rules: rules,
+            defaultProfileId: "default"
+        )
+
+        guard case .matched(let rule, let profileId) = result else {
+            Issue.record("expected .matched, got \(result)")
+            return
+        }
+        #expect(rule == workRule)
+        #expect(profileId == "work")
+        #expect(result.profileId == "work")
+    }
+
+    @Test("reports noMatch with the default profile when nothing matches")
+    func reportsNoMatch() {
+        let result = RuleMatcher.evaluate(
+            context: RoutingContext(url: "https://other.com", sourceBundleId: nil),
+            rules: [RoutingRule(match: .init(domainGlob: "*.example.com"), action: .init(profileId: "work"))],
+            defaultProfileId: "default"
+        )
+
+        guard case .noMatch(let defaultProfileId) = result else {
+            Issue.record("expected .noMatch, got \(result)")
+            return
+        }
+        #expect(defaultProfileId == "default")
+        #expect(result.profileId == "default")
+    }
+
+    @Test("agrees with resolveProfileId on which profile is resolved, first-match-wins")
+    func agreesWithResolveProfileId() {
+        let rules = [
+            RoutingRule(match: .init(domainGlob: "*.example.com"), action: .init(profileId: "work")),
+            RoutingRule(match: .init(domainGlob: "*.example.com"), action: .init(profileId: "personal")),
+        ]
+        let context = RoutingContext(url: "https://example.com", sourceBundleId: nil)
+
+        let evaluated = RuleMatcher.evaluate(context: context, rules: rules, defaultProfileId: "default")
+        let resolved = RuleMatcher.resolveProfileId(for: context, rules: rules, defaultProfileId: "default")
+
+        #expect(evaluated.profileId == resolved)
+        #expect(resolved == "work")
+    }
+}
