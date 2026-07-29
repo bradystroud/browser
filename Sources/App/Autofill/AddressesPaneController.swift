@@ -121,7 +121,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
             addressesTableView.reloadData()
             return
         }
-        addresses = AddressStoreManager.shared.store(forProfileName: profile.name).all()
+        addresses = AddressStoreManager.shared.store(forProfileId: profile.id).all()
             .sorted { $0.fullName == $1.fullName ? $0.streetAddress < $1.streetAddress : $0.fullName < $1.fullName }
         addressesTableView.reloadData()
     }
@@ -138,7 +138,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         let sheet = AddressFormSheetController(existing: nil)
         sheet.show(in: window) { [weak self] address in
             guard let self, let address else { return }
-            AddressStoreManager.shared.store(forProfileName: profile.name).save(address)
+            AddressStoreManager.shared.store(forProfileId: profile.id).save(address)
             self.loadAddressesForSelectedProfile()
         }
     }
@@ -150,7 +150,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         let sheet = AddressFormSheetController(existing: existing)
         sheet.show(in: window) { [weak self] address in
             guard let self, let address else { return }
-            AddressStoreManager.shared.store(forProfileName: profile.name).save(address)
+            AddressStoreManager.shared.store(forProfileId: profile.id).save(address)
             self.loadAddressesForSelectedProfile()
         }
     }
@@ -168,7 +168,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        AddressStoreManager.shared.store(forProfileName: profile.name).delete(id: address.id)
+        AddressStoreManager.shared.store(forProfileId: profile.id).delete(id: address.id)
         loadAddressesForSelectedProfile()
     }
 

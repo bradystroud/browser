@@ -119,7 +119,7 @@ final class StartPageSettingsPaneController: NSObject {
         favoritesCheckbox.isEnabled = true
         frequentlyVisitedCheckbox.isEnabled = true
 
-        let settings = StartPageSettingsStore.load(forProfileName: profile.name)
+        let settings = StartPageSettingsStore.load(forProfileId: profile.id)
         favoritesCheckbox.state = settings.showFavorites ? .on : .off
         frequentlyVisitedCheckbox.state = settings.showFrequentlyVisited ? .on : .off
 
@@ -138,7 +138,7 @@ final class StartPageSettingsPaneController: NSObject {
             showFavorites: favoritesCheckbox.state == .on,
             showFrequentlyVisited: frequentlyVisitedCheckbox.state == .on
         )
-        StartPageSettingsStore.save(settings, forProfileName: profile.name)
+        StartPageSettingsStore.save(settings, forProfileId: profile.id)
     }
 
     // MARK: - Actions

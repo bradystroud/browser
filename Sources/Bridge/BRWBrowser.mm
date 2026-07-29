@@ -69,10 +69,15 @@ class PdfPrintCallback : public CefPdfPrintCallback {
 }
 
 - (instancetype)initWithProfileName:(NSString *)profileName
+                            profileId:(NSString *)profileId
                              hostView:(NSView *)hostView
                            initialURL:(NSString *)initialURL {
   self = [super init];
   if (self) {
+    // profileName here is only for BRWClientHandler's own (separate,
+    // name-keyed) content-blocking snapshot lookup -- see BRWBrowser.h's
+    // doc comment on this initializer for why the cache-path lookup just
+    // below deliberately uses profileId instead.
     _handler = new BRWClientHandler(hostView, ToStdString(profileName));
 
     CefWindowInfo window_info;
@@ -82,7 +87,7 @@ class PdfPrintCallback : public CefPdfPrintCallback {
 
     CefBrowserSettings browser_settings;
     CefRefPtr<CefRequestContext> request_context =
-        BRWGetOrCreateProfileContext(ToStdString(profileName));
+        BRWGetOrCreateProfileContext(ToStdString(profileId));
 
     CefBrowserHost::CreateBrowser(window_info, _handler, ToStdString(initialURL),
                                    browser_settings, nullptr, request_context);

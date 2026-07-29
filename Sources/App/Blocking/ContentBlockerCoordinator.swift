@@ -35,25 +35,34 @@ final class ContentBlockerCoordinator {
 
     /// The given profile's current blocking settings (default: enabled, no
     /// allowlist, if never explicitly saved before).
-    func settings(forProfileName profileName: String) -> BlockingSettings {
-        BlockingSettingsStore.load(forProfileName: profileName)
+    func settings(forProfileId profileId: String) -> BlockingSettings {
+        BlockingSettingsStore.load(forProfileId: profileId)
     }
 
     /// Call after changing a profile's BlockingSettings (see
     /// PrivacyPaneController) -- persists to disk and pushes the updated
     /// snapshot to the bridge immediately. Both steps are this
     /// coordinator's job; callers only deal in BlockingSettings values.
-    func updateSettings(_ settings: BlockingSettings, forProfileName profileName: String) {
-        BlockingSettingsStore.save(settings, forProfileName: profileName)
+    func updateSettings(_ settings: BlockingSettings, forProfileId profileId: String) {
+        BlockingSettingsStore.save(settings, forProfileId: profileId)
         pushSnapshot()
     }
 
     private func pushSnapshot() {
         let domains = blockList.allDomains()
 
+        // Keyed by profile *name* here, deliberately -- this dictionary is
+        // read engine-side by BRWClientHandler's own name-keyed
+        // profile_name_ (a separate, in-memory-only mechanism from the
+        // id-keyed on-disk BlockingSettingsStore lookup just above; see
+        // BRWBrowser.h's initializer doc comment for why the two aren't
+        // conflated). A rename just means this rebuilds under the new name
+        // moments later via the .profileManagerDidChange observer below --
+        // nothing here needs to survive across a rename the way the actual
+        // BlockingSettings.disk storage does.
         var engineSettings: [String: EngineProfileBlockingSettings] = [:]
         for profile in ProfileManager.shared.profiles {
-            let settings = BlockingSettingsStore.load(forProfileName: profile.name)
+            let settings = BlockingSettingsStore.load(forProfileId: profile.id)
             engineSettings[profile.name] = EngineProfileBlockingSettings(
                 enabled: settings.isEnabled,
                 allowlistedHosts: settings.allowlistedHosts

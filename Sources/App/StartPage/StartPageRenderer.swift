@@ -17,8 +17,8 @@ import Foundation
 /// monogram (the title's first letter) -- the same fallback most browsers
 /// already show before a real favicon has loaded.
 enum StartPageRenderer {
-    static func dataURL(profileName: String, isPrivate: Bool = false) -> String {
-        let html = isPrivate ? renderPrivateHTML() : renderHTML(profileName: profileName)
+    static func dataURL(profileId: String, isPrivate: Bool = false) -> String {
+        let html = isPrivate ? renderPrivateHTML() : renderHTML(profileId: profileId)
         let base64 = Data(html.utf8).base64EncodedString()
         return "data:text/html;charset=utf-8;base64,\(base64)"
     }
@@ -28,9 +28,9 @@ enum StartPageRenderer {
         let url: String
     }
 
-    private static func renderHTML(profileName: String) -> String {
-        let settings = StartPageSettingsStore.load(forProfileName: profileName)
-        let (favorites, frequentlyVisited) = tileData(profileName: profileName, settings: settings)
+    private static func renderHTML(profileId: String) -> String {
+        let settings = StartPageSettingsStore.load(forProfileId: profileId)
+        let (favorites, frequentlyVisited) = tileData(profileId: profileId, settings: settings)
 
         var sections = ""
         if settings.showFavorites, !favorites.isEmpty {
@@ -84,8 +84,8 @@ enum StartPageRenderer {
         """
     }
 
-    private static func tileData(profileName: String, settings: StartPageSettings) -> (favorites: [Tile], frequentlyVisited: [Tile]) {
-        guard let profile = ProfileManager.shared.profile(named: profileName) else { return ([], []) }
+    private static func tileData(profileId: String, settings: StartPageSettings) -> (favorites: [Tile], frequentlyVisited: [Tile]) {
+        guard let profile = ProfileManager.shared.profile(id: profileId) else { return ([], []) }
         let stores = ProfileDataStoreManager.shared.stores(for: profile)
 
         var favorites: [Tile] = []

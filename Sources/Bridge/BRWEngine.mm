@@ -28,11 +28,13 @@ std::string ToStdString(NSString *s) {
   return s ? std::string([s UTF8String]) : std::string();
 }
 
-// One CefRequestContext per profile name, reused across every BRWBrowser
+// One CefRequestContext per profile id, reused across every BRWBrowser
 // created for that profile so they share cookies/storage; a different
-// profile name gets a distinct context (and thus full isolation). All
-// contexts' cache_path values are children of the single root_cache_path
-// passed to +[BRWEngine initializeWithProfilesRootPath:], which CEF requires.
+// profile id gets a distinct context (and thus full isolation). Keyed by
+// the profile's stable UUID, not its mutable display name (browser-ojw) --
+// see BRWGetOrCreateProfileContext's own doc comment. All contexts'
+// cache_path values are children of the single root_cache_path passed to
+// +[BRWEngine initializeWithProfilesRootPath:], which CEF requires.
 std::map<std::string, CefRefPtr<CefRequestContext>> &ProfileContexts() {
   static std::map<std::string, CefRefPtr<CefRequestContext>> contexts;
   return contexts;
@@ -75,20 +77,20 @@ WindowCloseHandlerBlock __strong &WindowCloseHandler() {
 }  // namespace
 
 // Declared in BRWEngineInternal.h -- BRWBrowser.mm is the other caller.
-CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &profile_name) {
+CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &profile_id) {
   auto &contexts = ProfileContexts();
-  auto it = contexts.find(profile_name);
+  auto it = contexts.find(profile_id);
   if (it != contexts.end()) {
     return it->second;
   }
 
   CefRequestContextSettings settings;
-  const std::string cache_path = ProfilesRootPath() + "/" + profile_name;
+  const std::string cache_path = ProfilesRootPath() + "/" + profile_id;
   CefString(&settings.cache_path) = cache_path;
 
   CefRefPtr<CefRequestContext> context =
       CefRequestContext::CreateContext(settings, nullptr);
-  contexts[profile_name] = context;
+  contexts[profile_id] = context;
   return context;
 }
 

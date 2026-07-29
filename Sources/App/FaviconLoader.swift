@@ -5,9 +5,11 @@ import AppKit
 /// - In-memory cache keyed by host, so switching between already-visited
 ///   tabs never re-fetches.
 /// - On-disk cache per profile, under the same directory CEF already uses
-///   for that profile's own cache (see CommandLineArgs.profilesRootPath) --
-///   `<profilesRootPath>/<profileName>/Favicons/<host>.png` -- so icons
-///   survive a relaunch without needing the network again.
+///   for that profile's own cache (see CommandLineArgs.profileDirectory) --
+///   `<profilesRootPath>/<profileId>/Favicons/<host>.png`, keyed by the
+///   profile's stable id rather than its mutable name (browser-ojw) -- so
+///   icons survive both a relaunch and a profile rename without needing the
+///   network again.
 /// - No third-party favicon services: this only ever talks to the site's
 ///   own host, for privacy.
 ///
@@ -26,7 +28,7 @@ final class FaviconLoader {
 
     private init() {}
 
-    func loadFavicon(host: String, hintURL: String?, profileName: String, completion: @escaping (NSImage?) -> Void) {
+    func loadFavicon(host: String, hintURL: String?, profileId: String, completion: @escaping (NSImage?) -> Void) {
         if let cached = memoryCache[host] {
             DispatchQueue.main.async { completion(cached) }
             return
@@ -35,7 +37,7 @@ final class FaviconLoader {
         queue.async { [weak self] in
             guard let self else { return }
 
-            let diskURL = self.diskCacheURL(host: host, profileName: profileName)
+            let diskURL = self.diskCacheURL(host: host, profileId: profileId)
             if let data = try? Data(contentsOf: diskURL), let image = self.decodedImage(from: data) {
                 self.memoryCache[host] = image
                 DispatchQueue.main.async { completion(image) }
@@ -91,9 +93,8 @@ final class FaviconLoader {
         return resized
     }
 
-    private func diskCacheURL(host: String, profileName: String) -> URL {
-        let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-        let dir = root.appendingPathComponent(profileName).appendingPathComponent("Favicons")
+    private func diskCacheURL(host: String, profileId: String) -> URL {
+        let dir = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId)).appendingPathComponent("Favicons")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("\(host).png")
     }

@@ -58,6 +58,18 @@ enum CommandLineArgs {
         return profilesRoot
     }
 
+    /// One profile's own directory under `profilesRootPath()`, keyed by its
+    /// immutable `id` (browser-ojw) -- the single call every per-profile
+    /// store (CEF's own cache_path, BlockingSettingsStore, PermissionStore,
+    /// ProfileDataStoreManager, FaviconLoader, etc.) should go through,
+    /// rather than each independently rebuilding `profilesRootPath()/<key>`
+    /// with its own choice of key. See BrowserCore's
+    /// `ProfilesRootResolver.profileDirectory(profilesRoot:profileId:)` for
+    /// the pure/tested half of this.
+    static func profileDirectory(profileId: String) -> String {
+        ProfilesRootResolver.profileDirectory(profilesRoot: profilesRootPath(), profileId: profileId)
+    }
+
     /// Where `SessionStore`/`ProfileManager` read/write `session.json`/
     /// `profiles.json` (browser-1rp: previously hardcoded regardless of
     /// `--profiles-root`, so every "isolated" test launch actually read and

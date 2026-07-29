@@ -33,6 +33,19 @@ protocol EngineTabDelegate: AnyObject {
     func engineTabDidChangeFaviconURL(_ faviconURL: String?)
     func engineTabDidChangeLoadingState(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool)
 
+    /// Fires as soon as a main-frame navigation is requested, before it
+    /// commits (browser-7z5) -- see BRWBrowser.h's
+    /// -browserWillStartMainFrameNavigationTo: for the exact CEF timing
+    /// (OnBeforeBrowse, the earliest point a navigation can be observed).
+    /// The optimistic-UI signal: a click should show feedback instantly,
+    /// not wait for the real navigation to actually commit.
+    func engineTabWillStartMainFrameNavigation(_ url: String)
+
+    /// Overall page-loading progress, 0.0-1.0 -- see BRWBrowser.h's
+    /// -browserDidUpdateLoadingProgress: for the real CEF signal this
+    /// mirrors (a genuine percentage, not a fake/eased approximation).
+    func engineTabDidUpdateLoadingProgress(_ progress: Double)
+
     /// Fired once per successfully-completed top-level (main-frame)
     /// navigation -- see BRWBrowser.h's -browserDidCommitNavigation: (which
     /// this mirrors) for exactly what counts. This is the history-recording
@@ -213,7 +226,14 @@ protocol BrowserEngine {
 
     static func initialize(profilesRootPath: String) -> Bool
 
-    static func createTab(profileName: String, hostView: NSView, initialURL: String) -> EngineTab
+    /// `profileId` (the profile's stable UUID) is what actually scopes the
+    /// engine-side cache/storage directory (browser-ojw) -- keyed by id, not
+    /// `profileName`, so a later profile rename never needs to move it or
+    /// leave an already-open tab pointing at stale storage. `profileName` is
+    /// kept only for name-keyed, in-memory-only mechanisms (content-blocking
+    /// snapshot lookups) that a rename simply rebuilds fresh -- see the CEF
+    /// adapter/BRWBrowser.h for exactly where each is used.
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab
 
     /// Creates a tab for a Private Browsing window (browser-12m.1): backed by
     /// an engine context with no persisted profile identity at all -- not

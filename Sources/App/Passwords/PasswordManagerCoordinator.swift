@@ -124,7 +124,7 @@ final class PasswordManagerCoordinator: NSObject {
         guard !payload.password.isEmpty else { return }
         let profileName = tab.profileName
 
-        guard !PasswordNeverStoreManager.shared.store(forProfileName: profileName).isNeverForSite(payload.origin) else {
+        guard !PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).isNeverForSite(payload.origin) else {
             return
         }
 
@@ -158,7 +158,7 @@ final class PasswordManagerCoordinator: NSObject {
                 PasswordStore.save(profileName: profileName, origin: payload.origin, username: payload.username, password: payload.password)
             },
             onNever: {
-                PasswordNeverStoreManager.shared.store(forProfileName: profileName).setNeverForSite(payload.origin)
+                PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).setNeverForSite(payload.origin)
             }
         )
     }

@@ -141,8 +141,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     private func handleAddressSubmit(_ payload: AddressFormSubmitPayload, tab: Tab) {
         guard !payload.streetAddress.isEmpty || !payload.postalCode.isEmpty else { return }
-        let profileName = tab.profileName
-        let store = AddressStoreManager.shared.store(forProfileName: profileName)
+        let store = AddressStoreManager.shared.store(forProfileId: tab.profileId)
 
         let candidate = StoredAddress(
             fullName: payload.fullName, streetAddress: payload.streetAddress, addressLine2: payload.addressLine2,
@@ -226,7 +225,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
         }
         let hasSaved = group == "card"
             ? !CardStore.allCards(profileName: tab.profileName).isEmpty
-            : !AddressStoreManager.shared.store(forProfileName: tab.profileName).all().isEmpty
+            : !AddressStoreManager.shared.store(forProfileId: tab.profileId).all().isEmpty
         setFillButtonVisible(hasSaved, in: contentView, window: window, group: group)
     }
 
@@ -293,7 +292,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
                 menu.addItem(item)
             }
         } else {
-            for address in AddressStoreManager.shared.store(forProfileName: tab.profileName).all() {
+            for address in AddressStoreManager.shared.store(forProfileId: tab.profileId).all() {
                 let title = [address.fullName, address.streetAddress, address.city].filter { !$0.isEmpty }.joined(separator: ", ")
                 let item = NSMenuItem(title: title.isEmpty ? "Saved address" : title, action: #selector(fillAddress(_:)), keyEquivalent: "")
                 item.target = self
@@ -389,7 +388,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     @objc private func fillAddress(_ sender: NSMenuItem) {
         guard let (tab, addressId) = sender.representedObject as? (Tab, String),
-              let address = AddressStoreManager.shared.store(forProfileName: tab.profileName).all().first(where: { $0.id == addressId })
+              let address = AddressStoreManager.shared.store(forProfileId: tab.profileId).all().first(where: { $0.id == addressId })
         else {
             return
         }

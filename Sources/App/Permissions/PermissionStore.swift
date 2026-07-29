@@ -1,15 +1,14 @@
 import Foundation
 
 /// Per-profile, per-origin permission decisions, persisted as JSON at
-/// `<profilesRootPath>/<profile.name>/permissions.json` -- the same
+/// `<profilesRootPath>/<profile.id>/permissions.json` -- the same
 /// per-profile directory convention BrowserCore's browser.db and CEF's own
-/// cache_path already use (see ProfileDataStores.swift), keyed by `name` for
-/// the same reason those are (Profile.swift: names are the stable
-/// per-profile identifier today, no rename feature yet). Deliberately a
-/// plain JSON file rather than a BrowserCore SQLite table -- this is a small
-/// key-value map with no querying/ranking/ordering needs, matching
-/// RoutingRulesStore/ProfileManager's existing JSON-file pattern rather than
-/// HistoryStore/BookmarkStore/DownloadStore's SQLite one.
+/// cache_path already use (see ProfileDataStores.swift), keyed by the
+/// profile's immutable id, not its mutable display name (browser-ojw).
+/// Deliberately a plain JSON file rather than a BrowserCore SQLite table --
+/// this is a small key-value map with no querying/ranking/ordering needs,
+/// matching RoutingRulesStore/ProfileManager's existing JSON-file pattern
+/// rather than HistoryStore/BookmarkStore/DownloadStore's SQLite one.
 final class PermissionStore {
     private let fileURL: URL
     /// origin -> kind raw value -> allowed.
@@ -93,8 +92,7 @@ final class PermissionStoreManager {
         if let existing = cache[profile.id] {
             return existing
         }
-        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-            .appendingPathComponent(profile.name)
+        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profile.id))
         // Usually already created by BrowserCore's Database or CEF's own
         // cache_path by the time this runs, but not guaranteed to run after
         // either -- ensured here too so a fresh profile with no history/

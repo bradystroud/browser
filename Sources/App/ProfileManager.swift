@@ -18,11 +18,12 @@ extension Notification.Name {
 /// hardcoded regardless of that flag, so every "isolated" test launch
 /// actually read and wrote Brady's real session/profile state). This is the
 /// single source of truth for what profiles exist and their display identity
-/// (name, color); it is independent of BRWEngine's profile-name ->
-/// CefRequestContext map, which just needs a profile's `name` to key its
-/// cache directory (itself under CommandLineArgs.profilesRootPath(), the
-/// sibling, CEF-facing path -- see that function's own doc comment for why
-/// it isn't the same directory as this one).
+/// (name, color); it is independent of BRWEngine's profile-id ->
+/// CefRequestContext map, which keys its cache directory by a profile's
+/// immutable `id` (browser-ojw), not its mutable `name`, under
+/// CommandLineArgs.profilesRootPath() (the sibling, CEF-facing path -- see
+/// that function's own doc comment for why it isn't the same directory as
+/// this one).
 final class ProfileManager {
     static let shared = ProfileManager()
 
@@ -57,7 +58,56 @@ final class ProfileManager {
         if profiles.isEmpty {
             _ = createProfile(name: Self.defaultProfileName, colorHex: ProfileColorPalette.hexValues[7])
         }
+        // Every profile is now known (existing or freshly bootstrapped) --
+        // the one point in the app's lifecycle before anything (CEF's own
+        // cache_path, BrowserCore's browser.db, any of the per-profile JSON
+        // stores) has touched a profile directory yet, so this is the only
+        // safe place to migrate browser-ojw's old name-keyed layout to the
+        // new id-keyed one without racing a store that's already reading/
+        // writing under one name or the other.
+        migrateNameKeyedDirectoriesIfNeeded()
         isBootstrapping = false
+    }
+
+    /// One-time upgrade from this app's original layout (every per-profile
+    /// directory/file keyed by the profile's mutable `name`) to the current
+    /// one (keyed by its immutable `id` -- browser-ojw). Renaming a profile
+    /// used to require a best-effort directory move (see this file's git
+    /// history) and left an already-open window pointing at stale storage
+    /// until reopened; keying by id removes the need for that move at all.
+    ///
+    /// Per-profile, and each move is a single `FileManager.moveItem` --
+    /// atomic on the same volume (which this always is, both paths sharing
+    /// one `profilesRootPath()` parent), so a kill mid-migration can only
+    /// ever leave some profiles still name-keyed, never a half-moved single
+    /// profile's directory. Those remaining profiles are simply retried (and
+    /// succeed) on the next launch -- no data is ever lost, just possibly
+    /// deferred by one relaunch.
+    ///
+    /// Skips (rather than guesses) anything ambiguous: if a profile's old
+    /// name-keyed directory doesn't exist, there's nothing to migrate
+    /// (already done, or a genuinely new profile that's never had one). If
+    /// *both* the old and new paths already exist, this doesn't know which
+    /// one is authoritative -- overwriting either risks real data loss --
+    /// so it's left alone entirely, logged, for a human to sort out.
+    private func migrateNameKeyedDirectoriesIfNeeded() {
+        let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
+        for profile in profiles {
+            let oldDir = root.appendingPathComponent(profile.name)
+            let newDir = root.appendingPathComponent(profile.id)
+            guard FileManager.default.fileExists(atPath: oldDir.path) else { continue }
+            guard !FileManager.default.fileExists(atPath: newDir.path) else {
+                NSLog("Browser: profile '%@' has both a name-keyed (%@) and id-keyed (%@) directory -- skipping migration, needs manual resolution",
+                      profile.name, oldDir.path, newDir.path)
+                continue
+            }
+            do {
+                try FileManager.default.moveItem(at: oldDir, to: newDir)
+            } catch {
+                NSLog("Browser: failed to migrate profile '%@' directory from %@ to %@: %@",
+                      profile.name, oldDir.path, newDir.path, String(describing: error))
+            }
+        }
     }
 
     private func load() {
@@ -117,23 +167,14 @@ final class ProfileManager {
 
     /// Renames a profile and/or changes its color in place, preserving its
     /// stable `id` (routing rules and anything else keyed on id are
-    /// unaffected). A profile's on-disk cache directory is keyed by its
-    /// *name*, not its id (see Sources/Bridge/BRWEngine.mm: `cache_path =
-    /// root_cache_path + "/" + profile_name`), so a rename best-effort moves
-    /// that directory too, so a future window opened under the new name
-    /// still finds the existing cookies/history/cache. This is best-effort,
-    /// not guaranteed: a window already open for this profile at rename time
-    /// keeps operating on its already-opened file handles regardless (POSIX
-    /// rename-of-an-open-directory is safe), but that window's title bar and
-    /// menu label were captured at open time and won't reflect the new name
-    /// until it's closed and reopened.
+    /// unaffected). A profile's on-disk directories (CEF's own cache_path,
+    /// BrowserCore's browser.db, and every per-profile JSON store) are keyed
+    /// by that same immutable `id`, not by `name` (browser-ojw) -- so a
+    /// rename is purely this metadata update, with no directory to move and
+    /// no already-open window left pointing at stale storage the way a
+    /// name-keyed rename used to.
     func updateProfile(id: String, name: String, colorHex: String) {
         guard let index = profiles.firstIndex(where: { $0.id == id }) else { return }
-        let oldName = profiles[index].name
-        if oldName != name {
-            let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-            try? FileManager.default.moveItem(at: root.appendingPathComponent(oldName), to: root.appendingPathComponent(name))
-        }
         profiles[index].name = name
         profiles[index].colorHex = colorHex
         save()
@@ -165,7 +206,7 @@ final class ProfileManager {
 
         let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
         for profile in profilesToDelete {
-            try? FileManager.default.removeItem(at: root.appendingPathComponent(profile.name))
+            try? FileManager.default.removeItem(at: root.appendingPathComponent(profile.id))
         }
         return true
     }

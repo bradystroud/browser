@@ -202,24 +202,24 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         }
         enabledCheckbox.isEnabled = true
         threatWarningCheckbox.isEnabled = true
-        let settings = ContentBlockerCoordinator.shared.settings(forProfileName: profile.name)
+        let settings = ContentBlockerCoordinator.shared.settings(forProfileId: profile.id)
         enabledCheckbox.state = settings.isEnabled ? .on : .off
         allowlistedHosts = settings.allowlistedHosts
         allowlistTableView.reloadData()
-        let threatSettings = ThreatListCoordinator.shared.settings(forProfileName: profile.name)
+        let threatSettings = ThreatListCoordinator.shared.settings(forProfileId: profile.id)
         threatWarningCheckbox.state = threatSettings.isEnabled ? .on : .off
     }
 
     private func saveCurrentSettings() {
         guard let profile = selectedProfile else { return }
         let settings = BlockingSettings(isEnabled: enabledCheckbox.state == .on, allowlistedHosts: allowlistedHosts)
-        ContentBlockerCoordinator.shared.updateSettings(settings, forProfileName: profile.name)
+        ContentBlockerCoordinator.shared.updateSettings(settings, forProfileId: profile.id)
     }
 
     private func saveThreatWarningSettings() {
         guard let profile = selectedProfile else { return }
         let settings = ThreatWarningSettings(isEnabled: threatWarningCheckbox.state == .on)
-        ThreatListCoordinator.shared.updateSettings(settings, forProfileName: profile.name)
+        ThreatListCoordinator.shared.updateSettings(settings, forProfileId: profile.id)
     }
 
     // MARK: - Actions

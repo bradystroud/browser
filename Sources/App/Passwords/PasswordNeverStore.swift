@@ -1,12 +1,12 @@
 import Foundation
 
 /// Per-profile "never save a password for this site" decisions, persisted
-/// as JSON at `<profilesRootPath>/<profileName>/password-never-list.json` --
-/// same per-profile-directory and plain-JSON-file conventions as
-/// PermissionStore (browser-12m.2), and for the same reason: this is a
-/// small set of opt-outs, not a credential, so there's nothing here that
-/// needs Keychain-level protection the way PasswordStore's actual saved
-/// passwords do.
+/// as JSON at `<profilesRootPath>/<profileId>/password-never-list.json`
+/// (browser-ojw) -- same per-profile-directory and plain-JSON-file
+/// conventions as PermissionStore (browser-12m.2), and for the same reason:
+/// this is a small set of opt-outs, not a credential, so there's nothing
+/// here that needs Keychain-level protection the way PasswordStore's
+/// actual saved passwords do.
 final class PasswordNeverStore {
     private let fileURL: URL
     private var neverOrigins: Set<String> = []
@@ -57,11 +57,8 @@ final class PasswordNeverStore {
     }
 }
 
-/// Lazily opens and caches one PasswordNeverStore per profile name, mirroring
-/// PermissionStoreManager's pattern -- keyed directly by profile *name*
-/// (rather than Profile.id the way PermissionStoreManager is) since that's
-/// all Tab/PasswordManagerController have on hand; Profile.name is still the
-/// stable per-profile identifier today (see ProfileManager.swift).
+/// Lazily opens and caches one PasswordNeverStore per profile id (browser-
+/// ojw), mirroring PermissionStoreManager's pattern.
 final class PasswordNeverStoreManager {
     static let shared = PasswordNeverStoreManager()
 
@@ -69,15 +66,14 @@ final class PasswordNeverStoreManager {
 
     private init() {}
 
-    func store(forProfileName profileName: String) -> PasswordNeverStore {
-        if let existing = cache[profileName] {
+    func store(forProfileId profileId: String) -> PasswordNeverStore {
+        if let existing = cache[profileId] {
             return existing
         }
-        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-            .appendingPathComponent(profileName)
+        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId))
         try? FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
         let store = PasswordNeverStore(profileDirectory: profileDirectory)
-        cache[profileName] = store
+        cache[profileId] = store
         return store
     }
 }

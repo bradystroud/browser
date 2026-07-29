@@ -61,6 +61,16 @@ struct TabDownloadUpdate {
 final class Tab: NSObject, EngineTabDelegate {
     let id = UUID()
     let profileName: String
+
+    /// The profile's stable UUID (browser-ojw) -- what actually scopes this
+    /// tab's engine-side cache directory and FaviconLoader's on-disk cache,
+    /// as opposed to `profileName` above, which is only used for name-keyed,
+    /// in-memory-only mechanisms (content-blocking snapshot lookups) that a
+    /// rename simply rebuilds fresh. For a private tab this is the same
+    /// throwaway value `profileName` gets -- never actually used to look up
+    /// or create real engine-side storage for this tab either, see
+    /// createBrowserIfNeeded().
+    let profileId: String
     let hostView = NSView()
 
     /// True for a Private Browsing tab (browser-12m.1). `profileName` above
@@ -97,6 +107,43 @@ final class Tab: NSObject, EngineTabDelegate {
     private(set) var isLoading = false
     private(set) var canGoBack = false
     private(set) var canGoForward = false
+
+    /// The target URL of a main-frame navigation that's been requested but
+    /// hasn't committed yet (browser-7z5, Brady's ask: a click should show
+    /// feedback instantly, not wait for the real navigation to land). Set
+    /// from engineTabWillStartMainFrameNavigation(_:); cleared the moment a
+    /// real navigation event supersedes it (loading finishes, whether it
+    /// succeeded or failed -- see engineTabDidChangeLoadingState) so it can
+    /// never outlive the request it was optimistic about. Purely a display
+    /// hint for the omnibox (see BrowserWindowController.
+    /// collapsedOmniboxDisplay(for:)/refreshToolbar(for:)) -- urlString
+    /// itself is unaffected and stays the tab's real, authoritative address.
+    private(set) var pendingNavigationURL: String?
+
+    /// Overall page-loading progress, 0.0-1.0 (browser-7z5) -- mirrors CEF's
+    /// own real percentage (see EngineTabDelegate.engineTabDidUpdateLoadingProgress's
+    /// own doc comment). Reset to 0 whenever a new main-frame navigation is
+    /// requested, so a fresh navigation's progress bar always starts empty
+    /// rather than briefly showing the previous page's final value.
+    private(set) var loadingProgress: Double = 0
+
+    /// False from the moment a main-frame navigation is requested until this
+    /// tab's title next actually changes (browser-7z5) -- lets the tab strip/
+    /// toolbar show the target host as a placeholder instead of the
+    /// previous page's now-stale title during that window (Brady's report:
+    /// "no feedback until it's loaded, then it jumps"). See displayTitle.
+    private(set) var hasFreshTitle = true
+
+    /// What the tab strip/toolbar should show as this tab's title right now
+    /// (browser-7z5) -- the real title once one has arrived for the current
+    /// navigation, otherwise the target host as a placeholder. Falls back to
+    /// the real (possibly stale, but better than nothing) title if there's
+    /// no URL to derive a host from.
+    var displayTitle: String {
+        guard !hasFreshTitle else { return title }
+        let source = pendingNavigationURL ?? urlString
+        return URL(string: source)?.host ?? title
+    }
 
     /// True until this tab's first load finishes, then consumed. CEF's
     /// CefFocusHandler::OnSetFocus defaults to allowing the browser's own
@@ -209,10 +256,11 @@ final class Tab: NSObject, EngineTabDelegate {
     /// letting the engine actually try to navigate to them.
     private static let blankPageSentinel = "about:blank"
 
-    init(profileName: String, initialURL: String, isPrivate: Bool = false) {
+    init(profileName: String, profileId: String, initialURL: String, isPrivate: Bool = false) {
         self.profileName = profileName
+        self.profileId = profileId
         self.isPrivate = isPrivate
-        let resolved = Self.resolveInitialLoad(initialURL, profileName: profileName, isPrivate: isPrivate)
+        let resolved = Self.resolveInitialLoad(initialURL, profileId: profileId, isPrivate: isPrivate)
         self.isShowingStartPage = resolved.isStartPage
         self.engineURLString = resolved.url
         self.title = resolved.isStartPage ? "New Tab" : initialURL
@@ -220,11 +268,11 @@ final class Tab: NSObject, EngineTabDelegate {
         hostView.wantsLayer = true
     }
 
-    private static func resolveInitialLoad(_ requestedURL: String, profileName: String, isPrivate: Bool) -> (url: String, isStartPage: Bool) {
+    private static func resolveInitialLoad(_ requestedURL: String, profileId: String, isPrivate: Bool) -> (url: String, isStartPage: Bool) {
         guard requestedURL == blankPageSentinel || requestedURL.isEmpty else {
             return (requestedURL, false)
         }
-        return (StartPageRenderer.dataURL(profileName: profileName, isPrivate: isPrivate), true)
+        return (StartPageRenderer.dataURL(profileId: profileId, isPrivate: isPrivate), true)
     }
 
     /// Must be called only once `hostView` is attached to a window with a
@@ -238,13 +286,13 @@ final class Tab: NSObject, EngineTabDelegate {
         // cache_path incognito context (browser-12m.1).
         let browser = isPrivate
             ? ActiveEngine.createPrivateTab(hostView: hostView, initialURL: engineURLString)
-            : ActiveEngine.createTab(profileName: profileName, hostView: hostView, initialURL: engineURLString)
+            : ActiveEngine.createTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: engineURLString)
         browser.delegate = self
         self.browser = browser
     }
 
     func load(url: String) {
-        let resolved = Self.resolveInitialLoad(url, profileName: profileName, isPrivate: isPrivate)
+        let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
         if browser == nil {
@@ -390,6 +438,11 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func engineTabDidChangeTitle(_ title: String) {
         self.title = title.isEmpty ? urlString : title
+        // A real title has arrived for whatever's currently loading (or
+        // just finished) -- the placeholder-host display (see
+        // displayTitle) no longer applies until the *next* navigation
+        // starts. Harmless no-op if this fires outside a navigation.
+        hasFreshTitle = true
         delegate?.tabDidChangeDisplayState(self)
     }
 
@@ -411,6 +464,33 @@ final class Tab: NSObject, EngineTabDelegate {
         self.isLoading = isLoading
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
+        // Loading has stopped, whether the navigation succeeded or failed --
+        // either way, any optimistic pending-navigation display (browser-
+        // 7z5) is now stale and must fall back to this tab's real,
+        // authoritative urlString. Deliberately not gated on success/
+        // failure: a genuine failure never updates urlString/title either,
+        // so falling back here already reverts to "whatever was showing
+        // before the click" for free, with no separate load-error hook
+        // needed.
+        if !isLoading {
+            pendingNavigationURL = nil
+        }
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    /// Fires the instant a main-frame navigation is requested, before it
+    /// commits (browser-7z5, Brady's ask: "no feedback until it's loaded,
+    /// then it jumps"). Resets loadingProgress to 0 so a fresh navigation's
+    /// progress bar never briefly shows the previous page's final value.
+    func engineTabWillStartMainFrameNavigation(_ url: String) {
+        pendingNavigationURL = url
+        loadingProgress = 0
+        hasFreshTitle = false
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    func engineTabDidUpdateLoadingProgress(_ progress: Double) {
+        loadingProgress = progress
         delegate?.tabDidChangeDisplayState(self)
     }
 
@@ -538,7 +618,7 @@ final class Tab: NSObject, EngineTabDelegate {
         let key = "\(host)|\(faviconURL ?? "")"
         guard key != faviconFetchKey else { return }
         faviconFetchKey = key
-        FaviconLoader.shared.loadFavicon(host: host, hintURL: faviconURL, profileName: profileName) { [weak self] image in
+        FaviconLoader.shared.loadFavicon(host: host, hintURL: faviconURL, profileId: profileId) { [weak self] image in
             guard let self, self.faviconFetchKey == key else { return }
             self.faviconImage = image
             self.delegate?.tabDidChangeDisplayState(self)

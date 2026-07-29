@@ -94,12 +94,12 @@ final class ContentBlockerToolbarController: NSObject, NSPopoverDelegate {
 
     var isShowing: Bool { popover.isShown }
 
-    func toggle(anchorView: NSView, profileName: String, host: String, blockedCount: Int, isPrivate: Bool) {
+    func toggle(anchorView: NSView, profileId: String, host: String, blockedCount: Int, isPrivate: Bool) {
         if popover.isShown {
             popover.performClose(nil)
             return
         }
-        let settings = ContentBlockerCoordinator.shared.settings(forProfileName: profileName)
+        let settings = ContentBlockerCoordinator.shared.settings(forProfileId: profileId)
         let content = ContentBlockerPopoverViewController(
             blockedCount: blockedCount,
             host: host,
@@ -115,7 +115,7 @@ final class ContentBlockerToolbarController: NSObject, NSPopoverDelegate {
                 } else {
                     updated.allowlistedHosts.removeAll { $0 == host }
                 }
-                ContentBlockerCoordinator.shared.updateSettings(updated, forProfileName: profileName)
+                ContentBlockerCoordinator.shared.updateSettings(updated, forProfileId: profileId)
             }
         )
         popover.contentViewController = content

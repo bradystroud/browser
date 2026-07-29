@@ -45,8 +45,8 @@ enum CEFEngine: BrowserEngine {
         return ok
     }
 
-    static func createTab(profileName: String, hostView: NSView, initialURL: String) -> EngineTab {
-        CEFTab(profileName: profileName, hostView: hostView, initialURL: initialURL)
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
+        CEFTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
     }
 
     static func createPrivateTab(hostView: NSView, initialURL: String) -> EngineTab {
@@ -95,8 +95,8 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     weak var delegate: EngineTabDelegate?
     private let browser: BRWBrowser
 
-    init(profileName: String, hostView: NSView, initialURL: String) {
-        browser = BRWBrowser(profileName: profileName, hostView: hostView, initialURL: initialURL)
+    init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
+        browser = BRWBrowser(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
         super.init()
         browser.delegate = self
     }
@@ -160,6 +160,14 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidChangeLoadingState(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool) {
         delegate?.engineTabDidChangeLoadingState(isLoading, canGoBack: canGoBack, canGoForward: canGoForward)
+    }
+
+    func browserWillStartMainFrameNavigation(to url: String) {
+        delegate?.engineTabWillStartMainFrameNavigation(url)
+    }
+
+    func browserDidUpdateLoadingProgress(_ progress: Double) {
+        delegate?.engineTabDidUpdateLoadingProgress(progress)
     }
 
     func browserDidCommitNavigation(_ url: String) {

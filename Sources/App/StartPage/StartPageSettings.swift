@@ -4,7 +4,7 @@ import Foundation
 /// simple two-tone gradient from this color -- see StartPageRenderer) and
 /// which sections show. Codable, persisted as startpage.json inside that
 /// profile's own cache directory, mirroring BlockingSettingsStore's exact
-/// pattern (root_cache_path/<profile name>/startpage.json).
+/// pattern (root_cache_path/<profile id>/startpage.json -- browser-ojw).
 struct StartPageSettings: Codable, Equatable {
     var backgroundColorHex: String
     var showFavorites: Bool
@@ -21,29 +21,28 @@ struct StartPageSettings: Codable, Equatable {
     }
 }
 
-/// Persists one profile's StartPageSettings, loaded/saved by profile name on
+/// Persists one profile's StartPageSettings, loaded/saved by profile id on
 /// demand -- same shape as BlockingSettingsStore (see that file's doc
 /// comment for why this is a per-profile-file store rather than one shared
 /// singleton like ProfileManager/RoutingRulesStore).
 enum StartPageSettingsStore {
-    static func load(forProfileName profileName: String) -> StartPageSettings {
-        guard let data = try? Data(contentsOf: fileURL(forProfileName: profileName)),
+    static func load(forProfileId profileId: String) -> StartPageSettings {
+        guard let data = try? Data(contentsOf: fileURL(forProfileId: profileId)),
               let decoded = try? JSONDecoder().decode(StartPageSettings.self, from: data) else {
             return StartPageSettings()
         }
         return decoded
     }
 
-    static func save(_ settings: StartPageSettings, forProfileName profileName: String) {
+    static func save(_ settings: StartPageSettings, forProfileId profileId: String) {
         guard let data = try? JSONEncoder().encode(settings) else { return }
-        let url = fileURL(forProfileName: profileName)
+        let url = fileURL(forProfileId: profileId)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
 
-    private static func fileURL(forProfileName profileName: String) -> URL {
-        URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
-            .appendingPathComponent(profileName)
+    private static func fileURL(forProfileId profileId: String) -> URL {
+        URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId))
             .appendingPathComponent("startpage.json")
     }
 }

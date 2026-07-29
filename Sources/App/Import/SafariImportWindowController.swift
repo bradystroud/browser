@@ -206,7 +206,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
 
             for url in insertedURLs {
                 guard let host = URL(string: url)?.host else { continue }
-                FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileName: profile.name) { _ in }
+                FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileId: profile.id) { _ in }
             }
             importedProfileCount += 1
         }

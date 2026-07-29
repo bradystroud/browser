@@ -2,9 +2,12 @@ import Foundation
 
 /// A browser profile identity. Each window belongs to exactly one profile
 /// (per-window profile identity, see docs/plans/2026-07-27-browser-plan.md);
-/// `name` doubles as the BRWBrowser/CefRequestContext key, so profile cache
-/// data lives at root_cache_path/<name> (see BRWEngine.mm). Names are treated
-/// as stable identifiers for M1 -- there is no rename feature yet.
+/// `id` (immutable) is the BRWBrowser/CefRequestContext key, so profile
+/// cache data lives at root_cache_path/<id>, not root_cache_path/<name>
+/// (see BRWEngine.mm) -- `name` is a mutable display label only (see
+/// ProfileManager.updateProfile), never used to key any on-disk storage
+/// (browser-ojw; see ProfileManager.migrateNameKeyedDirectoriesIfNeeded()
+/// for the one-time upgrade from this app's earlier name-keyed layout).
 struct Profile: Codable, Equatable {
     let id: String
     var name: String

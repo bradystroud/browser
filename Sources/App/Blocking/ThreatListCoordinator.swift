@@ -47,24 +47,28 @@ final class ThreatListCoordinator {
 
     /// The given profile's current threat-warning settings (default:
     /// enabled, if never explicitly saved before).
-    func settings(forProfileName profileName: String) -> ThreatWarningSettings {
-        ThreatWarningSettingsStore.load(forProfileName: profileName)
+    func settings(forProfileId profileId: String) -> ThreatWarningSettings {
+        ThreatWarningSettingsStore.load(forProfileId: profileId)
     }
 
     /// Call after changing a profile's ThreatWarningSettings (see
     /// PrivacyPaneController) -- persists to disk and pushes the updated
     /// snapshot to the bridge immediately.
-    func updateSettings(_ settings: ThreatWarningSettings, forProfileName profileName: String) {
-        ThreatWarningSettingsStore.save(settings, forProfileName: profileName)
+    func updateSettings(_ settings: ThreatWarningSettings, forProfileId profileId: String) {
+        ThreatWarningSettingsStore.save(settings, forProfileId: profileId)
         pushSnapshot()
     }
 
     private func pushSnapshot() {
         let domains = threatList.allDomains()
 
+        // Keyed by profile *name*, deliberately -- see
+        // ContentBlockerCoordinator.pushSnapshot's own comment on the
+        // identical shape; this dictionary is a separate, in-memory-only,
+        // name-keyed mechanism from the id-keyed on-disk store just above.
         var engineSettings: [String: EngineProfileThreatSettings] = [:]
         for profile in ProfileManager.shared.profiles {
-            let settings = ThreatWarningSettingsStore.load(forProfileName: profile.name)
+            let settings = ThreatWarningSettingsStore.load(forProfileId: profile.id)
             engineSettings[profile.name] = EngineProfileThreatSettings(enabled: settings.isEnabled)
         }
         // "private" is the fixed profile_name every private-browsing

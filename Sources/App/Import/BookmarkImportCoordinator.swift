@@ -131,7 +131,7 @@ final class BookmarkImportCoordinator: NSObject {
         // icons sooner, without making the import wait on network calls.
         for url in insertedURLs {
             guard let host = URL(string: url)?.host else { continue }
-            FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileName: profile.name) { _ in }
+            FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileId: profile.id) { _ in }
         }
 
         presentAlert(

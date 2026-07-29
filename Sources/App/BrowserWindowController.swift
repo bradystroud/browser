@@ -57,6 +57,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         solidFallbackColor: .controlBackgroundColor,
         cornerRadius: BrowserWindowController.omniboxPillHeight / 2
     )
+    /// Thin, Safari-style loading-progress bar shown just below the
+    /// omnibox pill (browser-7z5, Brady's ask: navigation gave zero
+    /// feedback before). Fills as CEF's own real loading-progress signal
+    /// advances (Tab.loadingProgress -- a genuine percentage, not a fake/
+    /// eased approximation; see EngineTabDelegate.
+    /// engineTabDidUpdateLoadingProgress's own doc comment for why no
+    /// approximation is needed here), fades out shortly after completion.
+    /// A plain NSView whose own frame width *is* the progress -- simpler
+    /// than a custom draw(_:), and animates for free via NSAnimationContext
+    /// the same way the omnibox pill's own frame already does.
+    private let loadingProgressView: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        view.layer?.cornerRadius = 1
+        view.alphaValue = 0
+        return view
+    }()
+    private static let loadingProgressBarHeight: CGFloat = 2
     /// True while the omnibox field is actually being edited (see
     /// controlTextDidBeginEditing/controlTextDidEndEditing below) -- expands
     /// the pill to show the full editable URL; false shows a narrow,
@@ -67,6 +86,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// cancelled and replaced on every ⌘⇧C press so rapid repeats restart
     /// the same 0.8s countdown instead of stacking reverts.
     private var copiedFeedbackWorkItem: DispatchWorkItem?
+    /// The pending fade-out after a navigation's progress bar reaches 100%
+    /// (browser-7z5, see updateLoadingProgressBar(for:)) -- cancelled if a
+    /// new navigation starts before the fade would have fired, so a rapid
+    /// second navigation doesn't have its own fresh progress bar fade away
+    /// underneath it because of the *previous* navigation's stale timer.
+    private var loadingProgressCompletionWorkItem: DispatchWorkItem?
     private static let omniboxPillHeight: CGFloat = 30
     private static let omniboxCollapsedWidth: CGFloat = 280
     /// Minimum breathing room between the expanded pill and whatever sits
@@ -259,9 +284,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private var currentDisplayInfos: [TabStripView.DisplayInfo] {
         tabs.map {
             TabStripView.DisplayInfo(
-                title: $0.title, favicon: $0.faviconImage, isPinned: $0.isPinned,
+                // displayTitle, not title (browser-7z5) -- see
+                // tabDidChangeDisplayState(_:)'s own comment for why.
+                title: $0.displayTitle, favicon: $0.faviconImage, isPinned: $0.isPinned,
                 groupId: $0.groupId, themeColorHex: $0.themeColorHex,
-                isMuted: $0.isMuted, isAudible: $0.isAudible)
+                isMuted: $0.isMuted, isAudible: $0.isAudible, isLoading: $0.isLoading)
         }
     }
 
@@ -469,6 +496,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         reloadButton.action = #selector(reloadPage(_:))
         omniboxContainerView.contentContainer.addSubview(reloadButton)
 
+        // Sits in the toolbar's own padding below the pill (browser-0y1's
+        // breathing-room fix left room for exactly this) -- not inside
+        // omniboxContainerView itself, so it isn't clipped to the pill's
+        // rounded corners or affected by its glass material.
+        toolbarView.addSubview(loadingProgressView)
+
         layoutOmniboxContainer()
     }
 
@@ -506,6 +539,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func layoutOmniboxContainer() {
         omniboxContainerView.frame = omniboxFrame()
         layoutOmniboxInnerContent()
+        layoutLoadingProgressTrack()
+    }
+
+    /// Repositions the progress bar's track (x/y/height, tied to the
+    /// omnibox pill's own current frame) without touching its current
+    /// fill width -- that's owned by updateLoadingProgressBar(for:), the
+    /// only place that animates it based on Tab.loadingProgress. Called
+    /// whenever the pill itself moves/resizes (window resize, focus
+    /// expand/collapse) so the bar always tracks the pill's current x
+    /// position and width even if the fill animation isn't mid-flight.
+    private func layoutLoadingProgressTrack() {
+        let barY: CGFloat = 2
+        let currentFillWidth = loadingProgressView.frame.width
+        loadingProgressView.frame = NSRect(
+            x: omniboxContainerView.frame.minX, y: barY,
+            width: min(currentFillWidth, omniboxContainerView.frame.width),
+            height: Self.loadingProgressBarHeight
+        )
     }
 
     private func layoutOmniboxInnerContent() {
@@ -548,21 +599,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// setting (see setOmniboxFocused(_:animated:), the only place that
     /// ever shows the focused/full-URL form).
     private static func collapsedOmniboxDisplay(for tab: Tab) -> String {
+        // Prefer the optimistic pending-navigation URL over the tab's real
+        // committed one (browser-7z5) -- the whole point is instant
+        // feedback the moment a click/Enter registers, not waiting for the
+        // real navigation to land.
+        let effectiveURLString = tab.pendingNavigationURL ?? tab.urlString
         switch OmniboxDisplayPreference.current {
         case .domainOnly:
-            return domainOnlyDisplay(for: tab.urlString)
+            return domainOnlyDisplay(for: effectiveURLString)
         case .pageTitle:
-            // An empty title (e.g. a page that hasn't reported one yet)
-            // would show as a blank pill -- fall back to the domain rather
-            // than leave it looking broken.
-            return tab.title.isEmpty ? domainOnlyDisplay(for: tab.urlString) : tab.title
+            // No real title exists yet for a pending navigation -- same
+            // "show the target host, not a stale title" reasoning as
+            // Tab.displayTitle. An empty title (e.g. a committed page that
+            // hasn't reported one yet) falls back the same way.
+            guard tab.pendingNavigationURL == nil, !tab.title.isEmpty else {
+                return domainOnlyDisplay(for: effectiveURLString)
+            }
+            return tab.title
         case .fullURL:
             // Strips only the "https://" scheme -- "http://" is deliberately
             // kept visible (a security nicety: an insecure site should
             // still visibly announce itself as such, even in the compact
             // display -- see the Settings help text for this preference).
-            guard tab.urlString.hasPrefix("https://") else { return tab.urlString }
-            return String(tab.urlString.dropFirst("https://".count))
+            guard effectiveURLString.hasPrefix("https://") else { return effectiveURLString }
+            return String(effectiveURLString.dropFirst("https://".count))
         }
     }
 
@@ -778,7 +838,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // activeTabIndex points at. Recomputing by object identity afterward
         // is the same guard reloadAfterReorder uses for the same reason.
         let activeTabObject = activeTab
-        let tab = Tab(profileName: profile.name, initialURL: url, isPrivate: isPrivate)
+        let tab = Tab(profileName: profile.name, profileId: profile.id, initialURL: url, isPrivate: isPrivate)
         tab.delegate = self
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
@@ -1160,6 +1220,38 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         refreshContentBlockerButton(for: tab)
     }
 
+    /// Drives the thin loading-progress bar below the omnibox pill
+    /// (browser-7z5) from Tab.loadingProgress/isLoading. Safari-style
+    /// completion: rather than instantly disappearing at 100%, the bar
+    /// briefly shows a full fill before fading out, so a very fast
+    /// navigation doesn't look like the bar never appeared at all.
+    private func updateLoadingProgressBar(for tab: Tab) {
+        let trackWidth = omniboxContainerView.frame.width
+        if tab.isLoading {
+            loadingProgressCompletionWorkItem?.cancel()
+            loadingProgressView.isHidden = false
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                loadingProgressView.animator().alphaValue = 1
+                loadingProgressView.animator().frame.size.width = max(4, trackWidth * CGFloat(tab.loadingProgress))
+            }
+        } else {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                loadingProgressView.animator().frame.size.width = trackWidth
+            }
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, self.activeTab === tab, !tab.isLoading else { return }
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.25
+                    self.loadingProgressView.animator().alphaValue = 0
+                }
+            }
+            loadingProgressCompletionWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
+        }
+    }
+
     /// browser-12m.5.1.1 -- hidden entirely on a page with nothing blocked
     /// yet (matches Safari's own convention: no icon shown until there's
     /// something to say), otherwise a shield glyph + the blocked count.
@@ -1181,7 +1273,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     @objc private func toggleContentBlockerPopover(_ sender: Any?) {
         guard let tab = activeTab, let host = URL(string: tab.urlString)?.host else { return }
         contentBlockerPopover.toggle(
-            anchorView: contentBlockerButton, profileName: profile.name, host: host,
+            anchorView: contentBlockerButton, profileId: profile.id, host: host,
             blockedCount: tab.blockedRequestCount, isPrivate: isPrivate
         )
     }
@@ -1216,20 +1308,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     private func updateWindowTitle(for tab: Tab) {
-        window?.title = isPrivate ? "\(tab.title) — Private Browsing" : "\(tab.title) — \(profile.name)"
+        // displayTitle, not title (browser-7z5) -- same "show the target
+        // host, not a stale title" reasoning as the tab strip; otherwise
+        // Mission Control/Cmd-Tab previews would show the old page's title
+        // for however long the new one takes to load, same "looks broken"
+        // symptom Brady reported for the tab strip.
+        window?.title = isPrivate ? "\(tab.displayTitle) — Private Browsing" : "\(tab.displayTitle) — \(profile.name)"
     }
 
     // MARK: - TabDelegate
 
     func tabDidChangeDisplayState(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
-        tabStripView.updateTitle(at: index, title: tab.title)
+        // displayTitle, not title (browser-7z5) -- shows the target host as
+        // a placeholder while loading and before a real title has arrived
+        // for the current navigation, instead of the previous page's now-
+        // stale title (see Tab.displayTitle's own doc comment).
+        tabStripView.updateTitle(at: index, title: tab.displayTitle)
         tabStripView.updateFavicon(at: index, image: tab.faviconImage)
         tabStripView.updateThemeColor(at: index, hex: tab.themeColorHex)
         tabStripView.updateAudioState(at: index, isMuted: tab.isMuted, isAudible: tab.isAudible)
+        tabStripView.updateLoadingState(at: index, isLoading: tab.isLoading)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
+            updateLoadingProgressBar(for: tab)
         }
         // See Tab.needsInitialOmniboxFocus: CEF's own view reliably takes
         // first responder for itself shortly after the tab's initial load

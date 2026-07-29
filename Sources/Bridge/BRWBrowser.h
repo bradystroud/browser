@@ -47,6 +47,20 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
                             canGoBack:(BOOL)canGoBack
                          canGoForward:(BOOL)canGoForward;
 
+/// Fires as soon as a main-frame navigation is *requested*, before it
+/// commits (browser-7z5) -- see BRWClientHandler::OnBeforeBrowse for the
+/// exact CEF timing (the earliest point CEF allows a navigation to
+/// proceed). `url` is the target request's URL, not yet the tab's real
+/// current one -- the intended use is optimistic UI feedback (e.g. an
+/// omnibox update) shown immediately on click, not a source of truth for
+/// what the tab is actually showing.
+- (void)browserWillStartMainFrameNavigationTo:(NSString *)url;
+
+/// Overall page-loading progress, 0.0-1.0 (browser-7z5) -- mirrors CEF's
+/// own CefDisplayHandler::OnLoadingProgressChange directly, a real
+/// percentage, not an approximation.
+- (void)browserDidUpdateLoadingProgress:(double)progress;
+
 /// Fired once per successfully-completed top-level (main-frame) navigation --
 /// i.e. a real page load, not an iframe/subresource load and not an aborted
 /// or failed one (see BRWClientHandler::OnLoadEnd / OnLoadError, which
@@ -159,11 +173,22 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
-/// by a CefRequestContext scoped to `profileName`. Two BRWBrowser instances
-/// with different profile names have fully independent cookies/storage.
+/// by a CefRequestContext scoped to `profileId`. Two BRWBrowser instances
+/// with different profile ids have fully independent cookies/storage.
 @interface BRWBrowser : NSObject
 
+/// `profileId` (the profile's stable UUID) is what actually scopes the
+/// on-disk CefRequestContext/cache_path (browser-ojw) -- keyed by id, not
+/// name, so a later profile rename never needs to move this directory.
+/// `profileName` is kept separately only for BRWClientHandler's own
+/// content-blocking-settings snapshot lookup (see that class's
+/// `profile_name_`), a completely different, in-memory-only, name-keyed
+/// mechanism that a rename simply rebuilds fresh (see
+/// ContentBlockerCoordinator's `.profileManagerDidChange` observer) --
+/// don't conflate the two even though most callers have both values handy
+/// at the same time.
 - (instancetype)initWithProfileName:(NSString *)profileName
+                            profileId:(NSString *)profileId
                              hostView:(NSView *)hostView
                            initialURL:(NSString *)initialURL NS_DESIGNATED_INITIALIZER;
 
@@ -171,7 +196,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// with an empty cache_path (CEF's documented incognito mode -- see
 /// BRWCreateEphemeralRequestContext's doc comment in BRWEngineInternal.h),
 /// used by exactly this one browser and discarded when it closes. Distinct
-/// from -initWithProfileName:hostView:initialURL: in that there is no real
+/// from -initWithProfileName:profileId:hostView:initialURL: in that there is no real
 /// profile identity behind it at all -- it isn't `profileName`-scoped and
 /// isn't reused across windows, so two private windows never share cookies
 /// or storage with each other any more than they share them with a real

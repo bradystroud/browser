@@ -79,4 +79,17 @@ public enum ProfilesRootResolver {
         })
         return "dev.stroud.browser.testprefs.\(sanitized)"
     }
+
+    /// One profile's own directory -- root_cache_path/<profile.id> -- keyed
+    /// by the profile's immutable UUID, not its mutable display name
+    /// (browser-ojw). Everything that used to live at
+    /// `<profilesRoot>/<profile name>/...` (CEF's own cache_path contents --
+    /// Cookies, History, etc. -- plus this app's own per-profile JSON/SQLite
+    /// stores, which all shared that same directory) now lives here instead,
+    /// so renaming a profile is purely a metadata change (see
+    /// `ProfileManager.updateProfile`) with no directory to move and no
+    /// stale-until-reopened identity for an already-open window.
+    public static func profileDirectory(profilesRoot: String, profileId: String) -> String {
+        (profilesRoot as NSString).appendingPathComponent(profileId)
+    }
 }

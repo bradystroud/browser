@@ -96,4 +96,20 @@ final class ProfilesRootResolverTests: XCTestCase {
         XCTAssertFalse(suffix.contains(" "))
         XCTAssertFalse(suffix.contains("-"))
     }
+
+    // MARK: - profileDirectory (browser-ojw)
+
+    func testProfileDirectoryIsKeyedByIdNotName() {
+        XCTAssertEqual(
+            ProfilesRootResolver.profileDirectory(profilesRoot: "/tmp/profiles-root", profileId: "ABCD-1234"),
+            "/tmp/profiles-root/ABCD-1234"
+        )
+    }
+
+    func testProfileDirectoryDiffersForDifferentIds() {
+        XCTAssertNotEqual(
+            ProfilesRootResolver.profileDirectory(profilesRoot: "/tmp/profiles-root", profileId: "id-1"),
+            ProfilesRootResolver.profileDirectory(profilesRoot: "/tmp/profiles-root", profileId: "id-2")
+        )
+    }
 }
