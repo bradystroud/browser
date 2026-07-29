@@ -24,6 +24,7 @@ Launching the app to confirm it starts, and reading logs/crash reports, is fine.
 
 ## Conventions
 
+- **Never `pkill -f` a browser process.** `pkill -f "Browser.app/Contents/MacOS/Browser"` also matches Brady's real running `/Applications/Browser.app` and will kill his live session. Capture your own test launch's PID and kill exactly that. The one sanctioned exception is `scripts/install.sh`, where terminating the installed app is the point.
 - **Shared-tree commits:** multiple agents work in this tree concurrently. Always commit with explicit paths (`git commit -m "..." -- <your files>`) — never bare `git commit` (it sweeps whatever anyone else has staged) and never `git add -A`/`git add .`.
 
 - Plans live in `docs/plans/`, filenames `YYYY-MM-DD-TOPIC.md`. Research reports in `docs/research/`.
