@@ -8,7 +8,7 @@ import AppKit
 /// allowlist ("turn off blocking on this site") below it. Every change
 /// saves immediately via ContentBlockerCoordinator -- there is no separate
 /// "Apply" step.
-final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let profilePopup = NSPopUpButton()

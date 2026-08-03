@@ -126,6 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
             }
         }
+
+        if let tabIdentifier = CommandLineArgs.showSettingsTabIdentifier() {
+            SettingsWindowController.shared.showTab(identifier: tabIdentifier)
+        }
     }
 
     // Normally true (closing the last window quits, standard for this kind

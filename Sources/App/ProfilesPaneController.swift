@@ -10,7 +10,7 @@ import AppKit
 /// browsing data is removed), refuses to delete every remaining profile,
 /// closes any of those profiles' open windows, then bulk-deletes both their
 /// persisted entries and on-disk cache directories.
-final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let tableView = NSTableView()

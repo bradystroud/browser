@@ -7,7 +7,7 @@ import AppKit
 /// SettingsWindowController hosts this one controller instead of hosting
 /// PasswordsPaneController directly -- see that file's own updated doc
 /// comment.
-final class AutofillPaneController: NSObject {
+final class AutofillPaneController: NSObject, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let passwordsPane = PasswordsPaneController()
@@ -24,6 +24,16 @@ final class AutofillPaneController: NSObject {
         passwordsPane.reload()
         cardsPane.reload()
         addressesPane.reload()
+    }
+
+    /// Test-only entry point for the `--show-settings-tab
+    /// autofill:<sub-identifier>` launch argument (see
+    /// CommandLineArgs.showSettingsTabIdentifier and
+    /// SettingsWindowController.showTab) -- lets an agent screenshot the
+    /// Cards/Addresses sub-tabs directly instead of only ever seeing
+    /// whichever one Passwords leaves selected.
+    func selectSubTab(identifier: String) {
+        tabView.selectTabViewItem(withIdentifier: identifier)
     }
 
     private func setUpViews() {

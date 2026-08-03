@@ -11,7 +11,7 @@ import AppKit
 /// is no separate "Apply" step; only "Make Default Browser…" has an
 /// explicit action, since that one triggers a system confirmation dialog
 /// rather than just writing local state.
-final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let tableView = NSTableView()

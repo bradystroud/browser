@@ -8,7 +8,7 @@ import AppKit
 /// since there's no page-submit flow guaranteed to ever populate this list
 /// otherwise (a user might want to add their own address without first
 /// filling out some site's checkout form).
-final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let profilePopup = NSPopUpButton()

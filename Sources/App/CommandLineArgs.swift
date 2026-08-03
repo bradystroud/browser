@@ -115,4 +115,20 @@ enum CommandLineArgs {
         let args = CommandLine.arguments
         return args.contains("--profile") || args.contains("--url")
     }
+
+    /// `--show-settings-tab <identifier>` launch argument: opens the
+    /// Settings window on a specific tab at launch, with no synthetic
+    /// click/keystroke -- the sanctioned way an agent can drive this
+    /// window for screenshot verification under AGENTS.md's UI
+    /// verification protocol (same "explicit flag, no-op unless passed"
+    /// pattern as testNoActivate() above). <identifier> matches one of
+    /// SettingsWindowController's own NSTabViewItem identifiers ("general",
+    /// "routing-rules", "profiles", "privacy", "start-page", "autofill").
+    /// Returns nil (no-op) unless explicitly passed, so normal launches are
+    /// unaffected.
+    static func showSettingsTabIdentifier() -> String? {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--show-settings-tab"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
 }

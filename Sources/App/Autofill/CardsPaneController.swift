@@ -7,7 +7,7 @@ import LocalAuthentication
 /// actually secret (the full card number; cardholder name/last-4/expiry
 /// are shown in the table directly, same as PasswordsPaneController shows
 /// site+username without gating).
-final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let profilePopup = NSPopUpButton()

@@ -8,8 +8,26 @@ import AppKit
 /// a background color swatch picker (rendered as a simple gradient -- see
 /// StartPageRenderer), and toggles for each section. Every change saves
 /// immediately via StartPageSettingsStore.
-final class StartPageSettingsPaneController: NSObject {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
+    private static let margin: CGFloat = 12
+    private static let rowGap: CGFloat = 10
+    private static let headerHeight: CGFloat = 22
+    private static let profileRowHeight: CGFloat = 28
+    private static let checkboxRowHeight: CGFloat = 20
+    private static let swatchLabelHeight: CGFloat = 16
+    private static let swatchRowHeight: CGFloat = ColorSwatchPicker.swatchDiameter
+
+    /// This pane's natural content height, computed from the same
+    /// constants setUpViews lays out with -- see
+    /// GeneralPaneController.preferredContentHeight's doc comment for why
+    /// this pane needs its own accurate value instead of
+    /// SettingsPaneController's generic table-filler default.
+    static let preferredContentHeight: CGFloat =
+        margin + headerHeight + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 6 + checkboxRowHeight
+            + rowGap + swatchLabelHeight + 6 + swatchRowHeight + margin
+    var preferredContentHeight: CGFloat { Self.preferredContentHeight }
+
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: StartPageSettingsPaneController.preferredContentHeight))
 
     private let profilePopup = NSPopUpButton()
     private let favoritesCheckbox = NSButton(checkboxWithTitle: "Show Favorites", target: nil, action: nil)
@@ -49,12 +67,13 @@ final class StartPageSettingsPaneController: NSObject {
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let profileRowHeight: CGFloat = 28
-        let checkboxRowHeight: CGFloat = 20
-        let swatchRowHeight: CGFloat = ColorSwatchPicker.swatchDiameter
+        let margin = Self.margin
+        let rowGap = Self.rowGap
+        let headerHeight = Self.headerHeight
+        let profileRowHeight = Self.profileRowHeight
+        let checkboxRowHeight = Self.checkboxRowHeight
+        let swatchLabelHeight = Self.swatchLabelHeight
+        let swatchRowHeight = Self.swatchRowHeight
 
         let headerLabel = NSTextField(labelWithString: "Start Page")
         headerLabel.font = .boldSystemFont(ofSize: 13)
@@ -67,41 +86,46 @@ final class StartPageSettingsPaneController: NSObject {
         headerLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(headerLabel)
 
-        // Bottom-up from here, mirroring the other panes' layout style.
-        let profileRowY: CGFloat = margin
+        // Top-down from here, each row pinned to the top (.minYMargin) so
+        // extra height the window picks up collects below the color
+        // swatches instead of pushing this content toward the bottom edge.
+        let profileRowY = headerLabel.frame.minY - rowGap - profileRowHeight
         let profileLabel = NSTextField(labelWithString: "Profile:")
         profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
+        profileLabel.autoresizingMask = [.maxXMargin, .minYMargin]
         view.addSubview(profileLabel)
 
         profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: profileRowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .maxYMargin]
+        profilePopup.autoresizingMask = [.maxXMargin, .minYMargin]
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
         view.addSubview(profilePopup)
 
-        let checkbox1Y = profileRowY + profileRowHeight + rowGap
+        let checkbox1Y = profileRowY - rowGap - checkboxRowHeight
         favoritesCheckbox.target = self
         favoritesCheckbox.action = #selector(toggleChanged)
         favoritesCheckbox.frame = NSRect(x: margin, y: checkbox1Y, width: 260, height: checkboxRowHeight)
-        favoritesCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
+        favoritesCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
         view.addSubview(favoritesCheckbox)
 
-        let checkbox2Y = checkbox1Y + checkboxRowHeight + 6
+        let checkbox2Y = checkbox1Y - 6 - checkboxRowHeight
         frequentlyVisitedCheckbox.target = self
         frequentlyVisitedCheckbox.action = #selector(toggleChanged)
         frequentlyVisitedCheckbox.frame = NSRect(x: margin, y: checkbox2Y, width: 260, height: checkboxRowHeight)
-        frequentlyVisitedCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
+        frequentlyVisitedCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
         view.addSubview(frequentlyVisitedCheckbox)
 
-        let swatchLabelY = checkbox2Y + checkboxRowHeight + rowGap
+        // The label sits above the swatches it describes (it used to sit
+        // below them -- same inverted-order bug as General's popup label).
+        let swatchLabelY = checkbox2Y - rowGap - swatchLabelHeight
         let swatchLabel = NSTextField(labelWithString: "Background color:")
-        swatchLabel.frame = NSRect(x: margin, y: swatchLabelY, width: 200, height: 16)
-        swatchLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
+        swatchLabel.frame = NSRect(x: margin, y: swatchLabelY, width: 200, height: swatchLabelHeight)
+        swatchLabel.autoresizingMask = [.maxXMargin, .minYMargin]
         view.addSubview(swatchLabel)
 
-        swatchContainer.frame = NSRect(x: margin, y: swatchLabelY + 16 + 6, width: view.bounds.width - margin * 2, height: swatchRowHeight)
-        swatchContainer.autoresizingMask = [.width, .maxYMargin]
+        let swatchContainerY = swatchLabelY - 6 - swatchRowHeight
+        swatchContainer.frame = NSRect(x: margin, y: swatchContainerY, width: view.bounds.width - margin * 2, height: swatchRowHeight)
+        swatchContainer.autoresizingMask = [.width, .minYMargin]
         view.addSubview(swatchContainer)
     }
 

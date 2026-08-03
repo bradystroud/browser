@@ -12,7 +12,7 @@ import LocalAuthentication
 /// Revealing the actual password requires "Reveal" plus a fresh Touch ID
 /// (or passcode-fallback) check via LocalAuthentication first; there is no
 /// way to see a saved password from this pane without that check succeeding.
-final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
 
     private let profilePopup = NSPopUpButton()
