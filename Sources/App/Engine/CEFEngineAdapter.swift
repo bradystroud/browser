@@ -225,6 +225,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         }
         delegate?.engineTabDidRequestNewTab(url: url, disposition: engineDisposition)
     }
+
+    func browserDidBlockRequest() {
+        delegate?.engineTabDidBlockRequest()
+    }
 }
 
 // `ActiveEngine` -- what the rest of Sources/App actually calls

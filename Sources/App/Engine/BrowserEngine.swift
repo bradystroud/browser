@@ -101,6 +101,12 @@ protocol EngineTabDelegate: AnyObject {
     /// including why this always fires instead of CEF creating its own raw
     /// popup window for it.
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
+
+    /// The content blocker cancelled a resource request to an ad/tracker
+    /// domain -- see BRWBrowser.h's -browserDidBlockRequest for the exact
+    /// CEF-side signal this mirrors. Fired once per blocked request; the
+    /// toolbar badge's count is a running tally of these.
+    func engineTabDidBlockRequest()
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart

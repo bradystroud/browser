@@ -170,6 +170,14 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// standard browser behavior for a plain target="_blank" link vs. a
 /// deliberate window.open()-with-features popup (OAuth sign-in flows, etc.).
 - (void)browserDidRequestNewTabForURL:(NSString *)url disposition:(BRWWindowOpenDisposition)disposition;
+
+/// The content blocker (browser-12m.5.1) cancelled a resource request to an
+/// ad/tracker domain -- see BRWClientHandler::OnBeforeResourceLoad, which
+/// fires this once per blocked request. Delivered on the main thread even
+/// though the underlying check runs on CEF's IO thread. The toolbar badge's
+/// count (Tab.blockedRequestCount) is a running tally of these, reset on
+/// each new navigation.
+- (void)browserDidBlockRequest;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
