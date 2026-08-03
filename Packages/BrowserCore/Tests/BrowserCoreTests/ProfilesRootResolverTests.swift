@@ -13,9 +13,25 @@ final class ProfilesRootResolverTests: XCTestCase {
     }
 
     func testExplicitOverrideReadsTheFollowingArgument() {
+        // A path with no symlinked component in it (unlike /tmp below)
+        // round-trips unchanged through resolvingSymlinksInPath().
+        XCTAssertEqual(
+            ProfilesRootResolver.explicitOverride(arguments: ["Browser", "--profiles-root", "/Users/test/scratch"]),
+            "/Users/test/scratch"
+        )
+    }
+
+    /// The browser-x4l regression: macOS's /tmp is a permanent symlink to
+    /// /private/tmp -- a natural scratch path for an agent's test launch to
+    /// reach for -- and CEF's own cache_path validation rejects the mismatch
+    /// between that symlinked form and the canonical one it resolves
+    /// internally, silently falling back to in-memory-only storage. This
+    /// must come back already canonicalized so every caller (CEF's
+    /// cache_path, session/profile metadata, CLISocketPath's hash) agrees.
+    func testExplicitOverrideCanonicalizesASymlinkedTmpPath() {
         XCTAssertEqual(
             ProfilesRootResolver.explicitOverride(arguments: ["Browser", "--profiles-root", "/tmp/scratch"]),
-            "/tmp/scratch"
+            "/private/tmp/scratch"
         )
     }
 
@@ -32,11 +48,13 @@ final class ProfilesRootResolverTests: XCTestCase {
     }
 
     func testOverriddenProfilesRootPathIsUsedAsIs() {
+        // "As-is" modulo canonicalization (browser-x4l) -- /Users/test/scratch
+        // has no symlinked component, so this is the same path either way.
         XCTAssertEqual(
             ProfilesRootResolver.profilesRootPath(
-                arguments: ["Browser", "--profiles-root", "/tmp/scratch"], appSupportDirectory: appSupport
+                arguments: ["Browser", "--profiles-root", "/Users/test/scratch"], appSupportDirectory: appSupport
             ),
-            "/tmp/scratch"
+            "/Users/test/scratch"
         )
     }
 
@@ -57,14 +75,29 @@ final class ProfilesRootResolverTests: XCTestCase {
     /// session.json/profiles.json too, not just CEF's own cache path --
     /// this is what makes --profiles-root actually isolate a test instance.
     func testOverriddenMetadataDirectoryMatchesTheSameOverridePathAsProfilesRoot() {
-        let arguments = ["Browser", "--profiles-root", "/tmp/scratch"]
+        let arguments = ["Browser", "--profiles-root", "/Users/test/scratch"]
         XCTAssertEqual(
             ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: arguments, appSupportDirectory: appSupport),
             ProfilesRootResolver.profilesRootPath(arguments: arguments, appSupportDirectory: appSupport)
         )
         XCTAssertEqual(
             ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: arguments, appSupportDirectory: appSupport),
-            "/tmp/scratch"
+            "/Users/test/scratch"
+        )
+    }
+
+    /// Both of this file's functions resolve through the same
+    /// `explicitOverride` -- confirms the canonicalization above isn't
+    /// accidentally only applied to one of them.
+    func testOverriddenMetadataDirectoryIsAlsoCanonicalizedForASymlinkedPath() {
+        let arguments = ["Browser", "--profiles-root", "/tmp/scratch"]
+        XCTAssertEqual(
+            ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: arguments, appSupportDirectory: appSupport),
+            "/private/tmp/scratch"
+        )
+        XCTAssertEqual(
+            ProfilesRootResolver.profilesRootPath(arguments: arguments, appSupportDirectory: appSupport),
+            "/private/tmp/scratch"
         )
     }
 
