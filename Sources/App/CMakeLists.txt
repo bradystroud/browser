@@ -79,6 +79,7 @@ set(BROWSER_SWIFT_SRCS
   Furniture/OmniboxAutocompleteController.swift
   Furniture/HistoryWindowController.swift
   Furniture/BookmarksWindowController.swift
+  Furniture/AddBookmarkPromptController.swift
   Furniture/DownloadCoordinator.swift
   Furniture/DownloadsWindowController.swift
   Permissions/PermissionStore.swift

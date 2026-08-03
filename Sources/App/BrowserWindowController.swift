@@ -116,8 +116,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let profilePillButton: NSButton?
     private static let profilePillHeight: CGFloat = 24
     private let contentContainerView = NSView()
+
+    /// The Y coordinate, in window.contentView's own coordinate space, of
+    /// the real web content area's top edge -- i.e. immediately below all
+    /// chrome (toolbar/omnibox row + tab strip), whichever one of those
+    /// currently sits on top. Every floating overlay that positions itself
+    /// directly against window.contentView rather than as a proper sibling
+    /// of contentContainerView (the Reader button, the find bar, the
+    /// password/autofill key & fill icons and their save-prompt anchors)
+    /// should derive its top inset from this instead of hardcoding its own
+    /// copy of the tab-strip/toolbar heights -- several of those drifted out
+    /// of sync here before (toolbarHeight grew 36 -> 44, and browser-0y1
+    /// flipped the chrome order) and silently pushed every one of them
+    /// down into the tab strip, overlapping the mute/close buttons living
+    /// there. contentContainerView's own [.width, .height] autoresizing
+    /// mask keeps its frame correct across window resizes with no
+    /// recomputation needed here -- this is just a read of that live frame,
+    /// never a cached/duplicated constant.
+    var contentAreaTopY: CGFloat { contentContainerView.frame.maxY }
+
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
+    /// ⌘D's Add Bookmark popover (browser-5kq.7) -- see addBookmark(_:).
+    private let addBookmarkPrompt = AddBookmarkPromptController()
     /// The content blocker's toolbar shield (browser-12m.5.1.1) -- lives
     /// inside omniboxContainerView's leading edge, mirroring reloadButton's
     /// placement on the trailing edge. Title shows the active tab's
@@ -1694,14 +1715,35 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - Furniture: history / bookmarks / downloads
 
-    /// ⌘D -- bookmarks the active tab's current page at the top level. No
-    /// folder-picker popover (see docs/ai-tasks/m3-furniture-notes.md for
-    /// that scope cut) -- use the Bookmarks manager window to file it into a
-    /// folder afterward.
+    /// ⌘D -- opens the Add Bookmark popover (browser-5kq.7): editable name
+    /// (prefilled from the page's title), a folder picker defaulting to
+    /// Favorites, Add/Cancel. Superseded the old silent-top-level-file
+    /// behavior (see docs/ai-tasks/m3-furniture-notes.md's scope cut) -- this
+    /// is the fix for "no discoverable path from a page you like to it
+    /// showing up in the start page's Favorites grid," since the old
+    /// behavior could never file into Favorites at all without a trip
+    /// through the Bookmarks manager afterward.
     @objc func addBookmark(_ sender: Any?) {
         guard let tab = activeTab else { return }
         let bookmarks = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
-        try? bookmarks.addBookmark(title: tab.title, url: tab.urlString, parentId: nil)
+        addBookmarkPrompt.show(pageTitle: tab.title, bookmarks: bookmarks, anchorView: omniboxField) { name, folderId in
+            try? bookmarks.addBookmark(title: name, url: tab.urlString, parentId: folderId)
+        }
+    }
+
+    /// "Add to Favourites" in the Bookmarks menu (browser-5kq.7) -- the
+    /// no-popover, one-click discoverable route team-lead asked for
+    /// alongside ⌘D's editable popover above: files the active tab straight
+    /// into Favorites with its current title, no picker, no decision to
+    /// make. Silently no-ops with no active tab (matches addBookmark(_:)'s
+    /// own guard) rather than asserting -- this is reachable from a menu
+    /// item with no target-validation wired up yet for "is there an active
+    /// tab," same as every other furniture action in this section.
+    @objc func addActiveTabToFavorites(_ sender: Any?) {
+        guard let tab = activeTab else { return }
+        let bookmarks = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
+        guard let favoritesId = FavoritesFolder.id(in: bookmarks) else { return }
+        try? bookmarks.addBookmark(title: tab.title, url: tab.urlString, parentId: favoritesId)
     }
 
     /// ⌘Y -- "Show All History…"

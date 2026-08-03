@@ -261,6 +261,10 @@ final class MainMenuBuilder {
     /// manager window (see docs/ai-tasks/m3-furniture-notes.md).
     private func buildBookmarksMenuStaticItems() {
         bookmarksMenu.addItem(withTitle: "Add Bookmark", action: #selector(BrowserWindowController.addBookmark(_:)), keyEquivalent: "d")
+        // No-popover, one-click discoverable route to Favorites (browser-
+        // 5kq.7) -- complements "Add Bookmark" above, which opens a picker
+        // defaulting to Favorites but lets you choose otherwise.
+        bookmarksMenu.addItem(withTitle: "Add to Favourites", action: #selector(BrowserWindowController.addActiveTabToFavorites(_:)), keyEquivalent: "")
         bookmarksMenu.addItem(withTitle: "Show All Bookmarks…", action: #selector(BrowserWindowController.showBookmarksManager(_:)), keyEquivalent: "")
         bookmarksMenuStaticCount = bookmarksMenu.items.count
     }

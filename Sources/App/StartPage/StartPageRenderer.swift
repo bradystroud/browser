@@ -46,13 +46,24 @@ enum StartPageRenderer {
         let (favorites, frequentlyVisited) = tileData(profileId: profileId, settings: settings)
 
         var sections = ""
-        if settings.showFavorites, !favorites.isEmpty {
-            sections += section(title: "Favorites", tiles: favorites)
+        if settings.showFavorites {
+            // Actionable even when empty (browser-5kq.7) -- rather than
+            // hiding the section entirely, which left no discoverable path
+            // from "I'm on a page I like" to "it's in my Favorites grid."
+            // Still says "yet," not e.g. "disabled," since this only shows
+            // when the setting itself is on.
+            sections += favorites.isEmpty
+                ? emptySection(title: "Favorites", message: "No favourites yet — press ⌘D on any page to add one.")
+                : section(title: "Favorites", tiles: favorites)
         }
-        if settings.showFrequentlyVisited, !frequentlyVisited.isEmpty {
-            sections += section(title: "Frequently Visited", tiles: frequentlyVisited)
+        if settings.showFrequentlyVisited {
+            sections += frequentlyVisited.isEmpty
+                ? emptySection(title: "Frequently Visited", message: "Nothing here yet — browse a bit and your most-visited pages will show up.")
+                : section(title: "Frequently Visited", tiles: frequentlyVisited)
         }
         if sections.isEmpty {
+            // Both sections turned off in Settings -- the one case neither
+            // per-section empty state above ever fires for.
             sections = "<p class=\"empty\">Nothing to show yet — browse a bit, or add a favorite.</p>"
         }
 
@@ -141,6 +152,18 @@ enum StartPageRenderer {
         """
     }
 
+    /// A section header with an actionable message instead of a tile grid
+    /// (browser-5kq.7) -- see renderHTML's own comment for why this exists
+    /// instead of just omitting the section.
+    private static func emptySection(title: String, message: String) -> String {
+        return """
+        <section>
+        <h2>\(escape(title))</h2>
+        <p class="empty-inline">\(escape(message))</p>
+        </section>
+        """
+    }
+
     private static func gradientCSS(from hex: String) -> String {
         "linear-gradient(135deg, \(hex) 0%, #ffffff 140%)"
     }
@@ -221,6 +244,11 @@ enum StartPageRenderer {
           text-align: center;
           color: rgba(28, 28, 30, 0.5);
           margin-top: 64px;
+        }
+        .empty-inline {
+          font-size: 13px;
+          color: rgba(28, 28, 30, 0.5);
+          margin: 0;
         }
         """
     }

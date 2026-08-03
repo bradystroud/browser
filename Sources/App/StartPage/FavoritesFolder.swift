@@ -1,11 +1,12 @@
 import Foundation
 
 /// The start page's "Favorites" section reads from a special top-level
-/// bookmark folder, created lazily the first time anything asks for it --
-/// there's no dedicated "add to favorites" UI yet (a ⌘D-equivalent quick-add
-/// is a later enhancement per browser-5kq.4); for now, a user adds to it
-/// through the ordinary Bookmarks manager, same as any other folder, once
-/// it exists.
+/// bookmark folder, created lazily the first time anything asks for it.
+/// ⌘D's Add Bookmark popover (AddBookmarkPromptController) defaults its
+/// folder picker to this one, and the Bookmarks menu's "Add to Favourites"
+/// item (BrowserWindowController.addActiveTabToFavorites) files straight
+/// into it with no picker at all -- see those for the actual "how a page
+/// gets in here" paths (browser-5kq.7).
 enum FavoritesFolder {
     static let title = "Favorites"
 
