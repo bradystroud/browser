@@ -6,10 +6,14 @@ import AppKit
 ///   tabs never re-fetches.
 /// - On-disk cache per profile, under the same directory CEF already uses
 ///   for that profile's own cache (see CommandLineArgs.profileDirectory) --
-///   `<profilesRootPath>/<profileId>/Favicons/<host>.png`, keyed by the
-///   profile's stable id rather than its mutable name (browser-ojw) -- so
-///   icons survive both a relaunch and a profile rename without needing the
-///   network again.
+///   `<profilesRootPath>/<profileId>/BrowserFavicons/<host>.png`, keyed by
+///   the profile's stable id rather than its mutable name (browser-ojw) --
+///   so icons survive both a relaunch and a profile rename without needing
+///   the network again. Deliberately not named `Favicons`: CEF/Chromium
+///   already creates its own file with that exact name (a SQLite database)
+///   directly in this same directory, so `createDirectory` would silently
+///   fail against it every time (browser-c0m) -- `BrowserFavicons` can't
+///   collide with any of Chromium's own fixed per-profile filenames.
 /// - No third-party favicon services: this only ever talks to the site's
 ///   own host, for privacy.
 ///
@@ -94,7 +98,7 @@ final class FaviconLoader {
     }
 
     private func diskCacheURL(host: String, profileId: String) -> URL {
-        let dir = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId)).appendingPathComponent("Favicons")
+        let dir = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId)).appendingPathComponent("BrowserFavicons")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("\(host).png")
     }
