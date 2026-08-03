@@ -139,7 +139,21 @@ final class Tab: NSObject, EngineTabDelegate {
     /// navigation, otherwise the target host as a placeholder. Falls back to
     /// the real (possibly stale, but better than nothing) title if there's
     /// no URL to derive a host from.
+    ///
+    /// Always StartPageRenderer.tabTitle while `isShowingStartPage`,
+    /// regardless of `hasFreshTitle`/`pendingNavigationURL` -- same
+    /// unconditional-while-showing-it pattern as `urlString` above. Without
+    /// this, the moment a freshly created start-page tab's own initial
+    /// "navigation" to its data: URL is requested, `hasFreshTitle` goes
+    /// false and this would otherwise try to derive a host from that data:
+    /// URL to show as a placeholder (getting nil, since data: URLs have no
+    /// host, and falling through to `title` anyway) -- correct today only
+    /// because `title` itself happens to already hold the right value; this
+    /// guard makes that guarantee explicit and independent of incidental
+    /// URL-parsing behavior, and also holds for a tab transitioning back to
+    /// the start page via `load(url:)` on an existing tab.
     var displayTitle: String {
+        guard !isShowingStartPage else { return StartPageRenderer.tabTitle }
         guard !hasFreshTitle else { return title }
         let source = pendingNavigationURL ?? urlString
         return URL(string: source)?.host ?? title
@@ -263,7 +277,7 @@ final class Tab: NSObject, EngineTabDelegate {
         let resolved = Self.resolveInitialLoad(initialURL, profileId: profileId, isPrivate: isPrivate)
         self.isShowingStartPage = resolved.isStartPage
         self.engineURLString = resolved.url
-        self.title = resolved.isStartPage ? "New Tab" : initialURL
+        self.title = resolved.isStartPage ? StartPageRenderer.tabTitle : initialURL
         super.init()
         hostView.wantsLayer = true
     }
@@ -295,6 +309,14 @@ final class Tab: NSObject, EngineTabDelegate {
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
+        // Set synchronously rather than waiting for the page's own title
+        // event to round-trip back from CEF -- anything reading `title`
+        // directly (not just `displayTitle`, which already guards on
+        // isShowingStartPage above) sees the right value from this call
+        // returning, not one render frame later.
+        if resolved.isStartPage {
+            title = StartPageRenderer.tabTitle
+        }
         if browser == nil {
             createBrowserIfNeeded()
         } else {
@@ -424,8 +446,19 @@ final class Tab: NSObject, EngineTabDelegate {
     /// title right away instead of the raw URL -- the real page's own title
     /// arrives later via engineTabDidChangeTitle and naturally overwrites
     /// this. See WindowManager.restoreSession.
+    ///
+    /// Ignored entirely for a restored start-page tab: `title` is already
+    /// correctly StartPageRenderer.tabTitle from `init` above (the
+    /// constructor resolves `restoreTab.url` -- always the empty string for
+    /// a previously-start-page tab, see `urlString`'s own doc comment --
+    /// right back to the start page), and a persisted `title` here could be
+    /// stale/wrong for it regardless -- most notably a `session.json` saved
+    /// before this fix existed, whose start-page tabs have Chromium's own
+    /// title-less-page fallback (the raw data: URL) sitting in this exact
+    /// field. Letting that resurface on every future relaunch would make
+    /// this fix look broken forever for any such pre-existing session.
     func seedRestoredTitle(_ title: String) {
-        guard !title.isEmpty else { return }
+        guard !isShowingStartPage, !title.isEmpty else { return }
         self.title = title
     }
 

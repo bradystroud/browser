@@ -17,6 +17,19 @@ import Foundation
 /// monogram (the title's first letter) -- the same fallback most browsers
 /// already show before a real favicon has loaded.
 enum StartPageRenderer {
+    /// The tab title for every start-page tab, private or not -- also the
+    /// generated HTML's own `<title>` element. Without a real `<title>`,
+    /// Chromium falls back to formatting the page's own URL as its title
+    /// (the same fallback real Chrome uses for any title-less page), which
+    /// for this page is the full base64 `data:` URL -- confirmed live as
+    /// the actual root cause of a tab showing that raw URL instead of a
+    /// friendly name. Tab.swift's own `displayTitle`/`seedRestoredTitle`
+    /// additionally guard against this same text with their own fixed
+    /// fallback, so a stale/corrupted historical value (e.g. an already-
+    /// persisted `session.json` from before this fix existed) can't
+    /// resurface it either -- see those methods' own doc comments.
+    static let tabTitle = "New Tab"
+
     static func dataURL(profileId: String, isPrivate: Bool = false) -> String {
         let html = isPrivate ? renderPrivateHTML() : renderHTML(profileId: profileId)
         let base64 = Data(html.utf8).base64EncodedString()
@@ -48,6 +61,7 @@ enum StartPageRenderer {
         <html>
         <head>
         <meta charset="utf-8">
+        <title>\(escape(tabTitle))</title>
         <style>\(css(gradient: gradientCSS(from: settings.backgroundColorHex)))</style>
         </head>
         <body>
@@ -73,6 +87,7 @@ enum StartPageRenderer {
         <html>
         <head>
         <meta charset="utf-8">
+        <title>\(escape(tabTitle))</title>
         <style>\(css(gradient: gradientCSS(from: "#3a3a3c")))</style>
         </head>
         <body>
