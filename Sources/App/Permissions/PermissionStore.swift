@@ -1,5 +1,16 @@
 import Foundation
 
+/// One remembered decision, exposed read-only for the Settings Privacy
+/// pane's per-site permission list (browser-12m.2.1) -- origin, which of
+/// the four supported kinds, and whether it was allowed or denied. `kind`
+/// is the same raw string PermissionStore.keys(for:) already uses
+/// internally ("camera"/"microphone"/"geolocation"/"notifications").
+struct PermissionDecisionEntry: Equatable {
+    let origin: String
+    let kind: String
+    let allowed: Bool
+}
+
 /// Per-profile, per-origin permission decisions, persisted as JSON at
 /// `<profilesRootPath>/<profile.id>/permissions.json` -- the same
 /// per-profile directory convention BrowserCore's browser.db and CEF's own
@@ -71,10 +82,41 @@ final class PermissionStore {
     }
 
     /// Clears every remembered decision for every origin in this profile.
-    /// No UI calls this yet -- see the follow-up bead for a Settings
-    /// "Reset permissions" surface -- but the store itself is ready for it.
+    /// Wired to the Privacy pane's "Reset All" button (browser-12m.2.1).
     func resetAll() {
         decisions = [:]
+        save()
+    }
+
+    /// Every remembered decision across every origin in this profile,
+    /// sorted for a stable, scannable list (origin, then kind) -- backs the
+    /// Privacy pane's per-site permission table (browser-12m.2.1).
+    func allDecisions() -> [PermissionDecisionEntry] {
+        var entries: [PermissionDecisionEntry] = []
+        for (origin, kinds) in decisions {
+            for (kind, allowed) in kinds {
+                entries.append(PermissionDecisionEntry(origin: origin, kind: kind, allowed: allowed))
+            }
+        }
+        entries.sort { lhs, rhs in
+            if lhs.origin != rhs.origin { return lhs.origin < rhs.origin }
+            return lhs.kind < rhs.kind
+        }
+        return entries
+    }
+
+    /// Forgets one origin's decision for one specific kind -- e.g. "stop
+    /// remembering that example.com was allowed camera access" without
+    /// touching its other permissions. Drops the origin's entry entirely
+    /// once it has no decisions left, keeping the persisted file tidy.
+    func removeDecision(origin: String, kind: String) {
+        guard var originDecisions = decisions[origin] else { return }
+        originDecisions.removeValue(forKey: kind)
+        if originDecisions.isEmpty {
+            decisions.removeValue(forKey: origin)
+        } else {
+            decisions[origin] = originDecisions
+        }
         save()
     }
 }
