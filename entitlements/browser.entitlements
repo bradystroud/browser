@@ -2,11 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The main app process dynamically loads Chromium Embedded Framework.framework
-	     (never linked directly, per CEF's macOS requirements). Under the hardened
-	     runtime, library validation requires loaded code to share the app's
-	     signing team; ad-hoc-signed local builds have no team ID at all, so this
-	     exception is required for the framework to load even outside sandboxing. -->
+	<!-- Chromium needs all three of these under the hardened runtime, in
+	     every process that hosts V8 or loads the CEF framework, which is
+	     all of them. That includes the generic helper hosting the network
+	     service (browser-196): ad-hoc signing ignores entitlements
+	     entirely, so a thinner set appeared to work until the daily build
+	     began signing with a real Developer ID identity, at which point the
+	     network service failed to start and every http/https navigation
+	     hung forever with no error shown. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
 </dict>
