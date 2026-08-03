@@ -904,6 +904,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if updateStrip {
             tabStripView.updateSelection(index)
         }
+        // refreshToolbar's own currentEditor() == nil guard exists to avoid
+        // clobbering a live, in-progress edit -- appropriate while staying on
+        // the *same* tab (a display-state ping from the page shouldn't steal
+        // whatever the user is mid-typing), but wrong here: index is always a
+        // genuinely different tab per selectTab's own guard above it, so any
+        // editor session still attached at this point belongs to the tab we
+        // just switched away from, not this one. Left alone, that guard would
+        // skip repopulating the field and leave the *previous* tab's stale
+        // (possibly mid-edit) text on screen -- most visibly, every
+        // genuinely-new tab (insertTab's own focusOmnibox path below) would
+        // inherit and re-select whatever text was already sitting there
+        // instead of its own URL, since focusOmnibox only selects, never
+        // sets, the field's text. Ending the stale session here (a no-op if
+        // nothing was being edited, and harmless if the omnibox wasn't first
+        // responder at all -- makeFirstResponder(nil) only resigns whatever
+        // currently *is* first responder) lets refreshToolbar populate the
+        // field with the tab we're actually switching to.
+        if omniboxField.currentEditor() != nil {
+            window?.makeFirstResponder(nil)
+        }
         refreshToolbar(for: tab)
         updateWindowTitle(for: tab)
     }
