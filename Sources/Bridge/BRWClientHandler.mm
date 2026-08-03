@@ -290,6 +290,12 @@ void BRWClientHandler::OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
   [delegate_ browserDidChangeFaviconURL:favicon];
 }
 
+void BRWClientHandler::OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) {
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidUpdateLoadingProgress:)]) {
+    [delegate_ browserDidUpdateLoadingProgress:progress];
+  }
+}
+
 namespace {
 // Finder/Safari-style de-duplication: "name.ext", then "name (1).ext",
 // "name (2).ext", ... -- so a second download of the same filename to
@@ -565,6 +571,18 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
   }
   std::string host = CefString(&parts.host).ToString();
   if (BRWContentBlockerShouldBlock(profile_name_, host)) {
+    // Report the block back to the delegate so the toolbar badge
+    // (Tab.blockedRequestCount) actually reflects it -- delegate_ is only
+    // safe to message on the UI thread, but reading a __weak reference
+    // itself is thread-safe (internally synchronized), so promote to a
+    // strong local here on the IO thread and hop to UI to deliver it, same
+    // pattern as the continue-marker/threat-list branches above.
+    id<BRWBrowserDelegate> strong_delegate = delegate_;
+    if (strong_delegate) {
+      CefPostTask(TID_UI, new BRWBlockTask(^{
+        [strong_delegate browserDidBlockRequest];
+      }));
+    }
     return RV_CANCEL;
   }
 
@@ -614,6 +632,17 @@ bool BRWClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   // override never itself blocks navigation (always returns false, "allow"),
   // so that condition is always satisfied here.
   BRWPageMessageRouter::Get().OnBeforeBrowse(browser, frame);
+  // browser-7z5 -- the earliest possible hook for a main-frame navigation
+  // (fires before it commits), so the omnibox can show optimistic feedback
+  // the instant a click/Enter registers instead of waiting for the real
+  // navigation to land. Only the main frame's own navigation is the tab's
+  // address; an iframe's own navigation must not touch the omnibox, same
+  // guard every other per-frame delegate forward in this file already uses
+  // (OnLoadStart/OnLoadEnd/OnAddressChange above).
+  if (frame->IsMain() && delegate_ &&
+      [delegate_ respondsToSelector:@selector(browserWillStartMainFrameNavigationTo:)]) {
+    [delegate_ browserWillStartMainFrameNavigationTo:ToNSString(request->GetURL())];
+  }
   return false;
 }
 

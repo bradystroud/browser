@@ -53,13 +53,13 @@ final class TabButtonView: NSView {
         }
     }
 
-    /// Mirrors Tab.isMuted (browser-rhi.4) -- see updateAudioIndicator() for
-    /// how this and isAudible below combine into the speaker glyph shown in
-    /// place of the favicon.
+    /// Mirrors Tab.isMuted (browser-rhi.4) -- see updateIconState() for
+    /// how this and isAudible/isLoading below combine into the icon shown
+    /// in the shared favicon slot.
     var isMuted = false {
         didSet {
             guard oldValue != isMuted else { return }
-            updateAudioIndicator()
+            updateIconState()
         }
     }
 
@@ -67,7 +67,18 @@ final class TabButtonView: NSView {
     var isAudible = false {
         didSet {
             guard oldValue != isAudible else { return }
-            updateAudioIndicator()
+            updateIconState()
+        }
+    }
+
+    /// Mirrors Tab.isLoading (browser-7z5, Brady's ask -- background tabs
+    /// currently give no visible sign anything's happening). Shares the
+    /// favicon's slot -- see updateIconState() for the full audio > spinner
+    /// > favicon precedence when more than one could apply at once.
+    var isLoading = false {
+        didSet {
+            guard oldValue != isLoading else { return }
+            updateIconState()
         }
     }
 
@@ -124,7 +135,9 @@ final class TabButtonView: NSView {
     /// Speaker glyph shown in place of the favicon whenever isAudible ||
     /// isMuted (browser-rhi.4), matching Safari's own tab-icon convention --
     /// clicking it toggles mute, same as clicking Safari's tab speaker icon.
-    /// Hidden the rest of the time, in which case faviconView is what shows.
+    /// Hidden the rest of the time, in which case faviconView or the
+    /// spinner below is what shows -- see updateIconState() for the
+    /// precedence between all three.
     private let audioButton: NSButton = {
         let button = NSButton()
         button.isBordered = false
@@ -132,6 +145,20 @@ final class TabButtonView: NSView {
         button.imageScaling = .scaleProportionallyDown
         button.isHidden = true
         return button
+    }()
+
+    /// Shown in the favicon's slot while isLoading, unless isMuted/isAudible
+    /// also applies (browser-7z5, Brady's ask -- this is what makes a
+    /// loading *background* tab visible at all, which the old "no feedback
+    /// at all" behavior never gave). See updateIconState() for the
+    /// audio > spinner > favicon precedence.
+    private let loadingSpinner: NSProgressIndicator = {
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isIndeterminate = true
+        spinner.isHidden = true
+        return spinner
     }()
 
     private var trackingArea: NSTrackingArea?
@@ -161,6 +188,7 @@ final class TabButtonView: NSView {
 
         titleLabel.stringValue = title
         contentContainer.addSubview(faviconView)
+        contentContainer.addSubview(loadingSpinner)
         contentContainer.addSubview(titleLabel)
 
         audioButton.target = self
@@ -233,6 +261,7 @@ final class TabButtonView: NSView {
             )
             faviconView.frame = iconFrame
             audioButton.frame = iconFrame
+            loadingSpinner.frame = iconFrame
             closeButton.frame = .zero
             titleLabel.frame = .zero
             return
@@ -253,6 +282,7 @@ final class TabButtonView: NSView {
         )
         faviconView.frame = iconFrame
         audioButton.frame = iconFrame
+        loadingSpinner.frame = iconFrame
         let titleX = faviconLeading + faviconSize + 6
         // Vertically centered as its own row alongside the favicon above
         // (browser-0y1, Brady's ask) -- a plain NSTextField label renders
@@ -334,23 +364,35 @@ final class TabButtonView: NSView {
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
-    /// Shows audioButton (in faviconView's place) whenever muted or audible,
-    /// picking the glyph that matches -- muted takes precedence visually
-    /// (a tab you muted stays showing the slash even if it's also currently
-    /// trying to play, matching Safari's own tab-icon convention). Hides
-    /// back to the plain favicon otherwise.
-    private func updateAudioIndicator() {
-        guard isMuted || isAudible else {
-            audioButton.isHidden = true
-            faviconView.isHidden = false
-            return
+    /// Picks exactly one of audioButton / loadingSpinner / faviconView to
+    /// show in the shared icon slot, precedence audio > spinner > favicon
+    /// (browser-7z5, Brady's ask, documented explicitly since it wasn't
+    /// obvious which should win when more than one applies at once): a
+    /// muted/audible tab keeps showing that state even while also loading
+    /// (matching browser-rhi.4's own established "isMuted takes precedence
+    /// over isAudible" precedent -- the mute/audio state is something the
+    /// user acted on and is more persistent/important than a transient
+    /// loading spinner), and a merely-loading tab shows the spinner in
+    /// place of its favicon (which would otherwise just look frozen/stale
+    /// for however long the load takes, especially for a background tab).
+    private func updateIconState() {
+        audioButton.isHidden = true
+        loadingSpinner.isHidden = true
+        loadingSpinner.stopAnimation(nil)
+        faviconView.isHidden = false
+
+        if isMuted || isAudible {
+            audioButton.image = NSImage(
+                systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+                accessibilityDescription: isMuted ? "Muted -- click to unmute" : "Playing audio -- click to mute"
+            )
+            audioButton.isHidden = false
+            faviconView.isHidden = true
+        } else if isLoading {
+            loadingSpinner.isHidden = false
+            loadingSpinner.startAnimation(nil)
+            faviconView.isHidden = true
         }
-        audioButton.image = NSImage(
-            systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
-            accessibilityDescription: isMuted ? "Muted -- click to unmute" : "Playing audio -- click to mute"
-        )
-        audioButton.isHidden = false
-        faviconView.isHidden = true
     }
 
     @objc private func muteToggleTapped() {

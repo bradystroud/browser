@@ -137,6 +137,11 @@ class BRWClientHandler : public CefClient,
                         const CefString& url) override;
   void OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
                            const std::vector<CefString>& icon_urls) override;
+  // browser-7z5 -- a real, native CEF progress percentage (0.0-1.0) for the
+  // omnibox's progress bar, confirmed present in this project's pinned CEF
+  // 150.0.14 headers (cef_display_handler.h) rather than assumed; no
+  // fake/eased animation needed.
+  void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) override;
 
   // CefDownloadHandler methods:
   bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,

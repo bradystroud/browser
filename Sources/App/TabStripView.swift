@@ -66,10 +66,12 @@ final class TabStripView: NSView {
         /// reload just to pick up the newly-active tab's color.
         let themeColorHex: String?
         /// Mirrors Tab.isMuted/isAudible (browser-rhi.4) -- see
-        /// TabButtonView.updateAudioIndicator() for how these combine into
-        /// the speaker glyph shown in place of the favicon.
+        /// TabButtonView.updateIconState() for how these and isLoading
+        /// below combine into the icon shown in the shared favicon slot.
         let isMuted: Bool
         let isAudible: Bool
+        /// Mirrors Tab.isLoading (browser-7z5).
+        let isLoading: Bool
     }
 
     struct GroupDisplayInfo {
@@ -214,6 +216,13 @@ final class TabStripView: NSView {
         button.isAudible = isAudible
     }
 
+    /// Cheaper than a full reload -- see updateTitle. Called on every
+    /// Tab.isLoading change (browser-7z5), i.e. the start/end of every
+    /// navigation for this tab.
+    func updateLoadingState(at index: Int, isLoading: Bool) {
+        tabButton(forTabIndex: index)?.isLoading = isLoading
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for item in stripItems {
@@ -263,6 +272,7 @@ final class TabStripView: NSView {
             button.themeColorHex = info.themeColorHex
             button.isMuted = info.isMuted
             button.isAudible = info.isAudible
+            button.isLoading = info.isLoading
             button.availableGroups = availableGroups
             button.isSelected = index == selectedIndex
             button.onSelect = { [weak self] in
