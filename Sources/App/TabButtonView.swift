@@ -1,5 +1,21 @@
 import AppKit
 
+/// Drag-to-reorder hand-off (browser-rhi.6). A tab button knows nothing about
+/// ordering or layout -- it just reports "the user pressed me", and whoever
+/// owns the strip's geometry (TabStripView) takes over the rest of the mouse
+/// sequence and does all the reflow work.
+///
+/// Deliberately plain event tracking rather than NSDraggingSession: the
+/// reorder is entirely within one strip, and a dragging session would mean
+/// giving up direct control of the dragged pill's position (what moves is a
+/// drag image, not the real view) for pasteboard machinery this doesn't need.
+/// Tearing a tab out into another window would want that machinery -- adding
+/// it later means adding a second, drag-session path here, not unpicking this
+/// one, since this protocol says nothing about where a drag may end.
+protocol TabButtonDragDelegate: AnyObject {
+    func tabButton(_ button: TabButtonView, didBeginDragWith event: NSEvent)
+}
+
 /// One tab's visual representation in the strip: title + a close button that
 /// only appears on hover (Safari-style), selected/unselected background.
 final class TabButtonView: NSView {
@@ -24,6 +40,9 @@ final class TabButtonView: NSView {
     /// onPinToggle above; BrowserWindowController owns the actual
     /// Tab.toggleMuted() call.
     var onMuteToggle: (() -> Void)?
+
+    /// Drag-to-reorder (browser-rhi.6) -- set by TabStripView.rebuildButtons.
+    weak var dragDelegate: TabButtonDragDelegate?
 
     /// Which group (if any) this tab currently belongs to -- gates whether
     /// "Remove from Group" appears in the context menu. Set by
@@ -324,8 +343,18 @@ final class TabButtonView: NSView {
         closeButton.isHidden = true
     }
 
+    /// Selection happens on mouse *down*, before any drag is known about --
+    /// same as Safari, and what makes "a click that never moved still selects
+    /// the tab" fall out for free rather than needing a movement threshold to
+    /// resolve first (browser-rhi.6). Dragging a background tab therefore also
+    /// activates it, which is again Safari's behavior.
+    ///
+    /// The close and speaker buttons are real NSButtons inside contentContainer
+    /// and swallow their own mouse-downs, so neither selection nor a drag ever
+    /// starts from clicking one.
     override func mouseDown(with event: NSEvent) {
         onSelect?()
+        dragDelegate?.tabButton(self, didBeginDragWith: event)
     }
 
     /// Right-click/Control-click context menu -- built fresh each time (not
@@ -333,7 +362,7 @@ final class TabButtonView: NSView {
     /// and "Remove from Group" all reflect current state. Kept minimal per
     /// scope: Pin/Unpin, Move to Group > (existing groups…, New Group…),
     /// Remove from Group (only if currently grouped), Close Tab, Close
-    /// Other Tabs -- no icons, no drag-reorder (see browser-rhi.1's notes).
+    /// Other Tabs -- no icons (see browser-rhi.1's notes).
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(pinToggleTapped), keyEquivalent: "").target = self

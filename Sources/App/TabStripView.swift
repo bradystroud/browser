@@ -38,6 +38,13 @@ protocol TabStripViewDelegate: AnyObject {
 
     /// Group header context menu -- "Close Group".
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseGroup groupId: UUID)
+
+    /// Drag-to-reorder committed (browser-rhi.6). `destinationIndex` is the
+    /// tab's *final* position in BrowserWindowController.tabs -- i.e. remove
+    /// the tab at `sourceIndex`, then insert it at `destinationIndex` -- not
+    /// an insertion point measured against the pre-removal array, which is
+    /// ambiguous by one for a rightward move.
+    func tabStripView(_ tabStripView: TabStripView, didMoveTabAt sourceIndex: Int, toIndex destinationIndex: Int)
 }
 
 /// Compact Safari-like tab strip: fixed-height row of TabButtonViews (plus
@@ -88,12 +95,81 @@ final class TabStripView: NSView {
     private enum StripItem {
         case tab(TabButtonView)
         case groupHeader(TabGroupHeaderView)
+
+        var view: NSView {
+            switch self {
+            case .tab(let button): return button
+            case .groupHeader(let header): return header
+            }
+        }
+
+        func isTabButton(_ button: TabButtonView) -> Bool {
+            if case .tab(let candidate) = self { return candidate === button }
+            return false
+        }
+    }
+
+    /// Which contiguous run of the strip a tab belongs to. The [pinned][group
+    /// sections][loose] ordering invariant BrowserWindowController maintains
+    /// on `tabs` means each of these is one unbroken run of `stripItems`, and
+    /// drag-to-reorder confines a tab to its own run (see sectionRange).
+    private enum SectionKey: Equatable {
+        case pinned
+        case group(UUID)
+        case loose
     }
 
     private var infos: [DisplayInfo] = []
     private var groups: [GroupDisplayInfo] = []
     private var selectedIndex = 0
     private var stripItems: [StripItem] = []
+
+    /// In-flight drag-to-reorder (browser-rhi.6), nil the rest of the time.
+    private var drag: DragSession?
+
+    /// Bumped by every reload. A drop's commit is deferred by the length of
+    /// its settle animation, so this is what tells that deferred commit its
+    /// captured tab indices went stale underneath it (the strip was rebuilt
+    /// from a model that moved on its own in the meantime) and it must not
+    /// apply a move computed against the old order.
+    private var reloadGeneration = 0
+
+    private struct DragSession {
+        let button: TabButtonView
+        /// Position in `stripItems` the dragged pill currently occupies --
+        /// moves as the drag swaps it past its neighbours.
+        var itemIndex: Int
+        /// The `stripItems` range the pill may travel within: its own section
+        /// (see SectionKey), so a drag can never reorder a tab across the
+        /// pinned/grouped/loose boundaries the ordering invariant depends on,
+        /// nor past a group header.
+        let range: ClosedRange<Int>
+        /// Mouse location in this view's coordinates at mouse-down, and the
+        /// pill's frame then -- the drag positions the pill from these plus
+        /// the live delta, never from the raw pointer, so the pill keeps the
+        /// same grab point under the cursor throughout.
+        let startPoint: NSPoint
+        let startFrame: NSRect
+        /// `stripItems` exactly as it was at mouse-down, restored verbatim if
+        /// the drag is cancelled with Escape.
+        let originalItems: [StripItem]
+        /// Still false until the pointer has travelled far enough to be a
+        /// drag rather than a click with a shaky hand -- nothing moves, and
+        /// nothing is committed, while this is false.
+        var didMove = false
+        /// The one local event monitor the whole drag runs off, installed at
+        /// mouse-down and removed however the drag ends -- see
+        /// tabButton(_:didBeginDragWith:).
+        var eventMonitor: Any?
+    }
+
+    /// How far the pointer must travel horizontally before a mouse-down is
+    /// treated as a drag at all.
+    private static let dragMovementThreshold: CGFloat = 4
+    /// Neighbours sliding aside as the dragged pill passes them.
+    private static let reflowAnimationDuration: TimeInterval = 0.14
+    /// The dropped pill settling into its slot.
+    private static let dropAnimationDuration: TimeInterval = 0.12
 
     private let newTabButton: NSButton = {
         let button = NSButton()
@@ -180,6 +256,13 @@ final class TabStripView: NSView {
     }
 
     func reload(tabs: [DisplayInfo], groups: [GroupDisplayInfo], selectedIndex: Int) {
+        // Every button a live drag is holding on to is about to be thrown
+        // away, so abandon the drag outright rather than let it keep moving
+        // detached views around. No restore of the pre-drag order is needed
+        // (or wanted): the incoming order is the model's, which is now the
+        // only truth about where these tabs go.
+        abandonDrag()
+        reloadGeneration &+= 1
         infos = tabs
         self.groups = groups
         self.selectedIndex = selectedIndex
@@ -275,6 +358,7 @@ final class TabStripView: NSView {
             button.isLoading = info.isLoading
             button.availableGroups = availableGroups
             button.isSelected = index == selectedIndex
+            button.dragDelegate = self
             button.onSelect = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didSelectTabAt: index)
@@ -368,12 +452,48 @@ final class TabStripView: NSView {
         layoutTabs()
     }
 
-    /// Walks `stripItems` once, left to right, in the same render order
-    /// rebuildButtons already established. Pinned tabs and group headers get
-    /// fixed widths off the top; every other tab button (loose, or a member
-    /// of an expanded group) shares whatever width remains, same
-    /// even-width-down-to-a-minimum scheme as before groups existed.
     private func layoutTabs() {
+        let frames = slotFrames()
+        for (position, item) in stripItems.enumerated() {
+            let view = item.view
+            if let session = drag, session.didMove, view === session.button {
+                // The dragged pill belongs to the cursor, not to the layout,
+                // for as long as the drag lasts -- take only the slot's
+                // vertical geometry (which a window resize can genuinely
+                // change mid-drag) and leave its x alone.
+                view.frame = NSRect(
+                    x: view.frame.minX, y: frames[position].minY,
+                    width: frames[position].width, height: frames[position].height
+                )
+            } else {
+                view.frame = frames[position]
+            }
+        }
+
+        newTabButton.frame = NSRect(
+            x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
+            y: (bounds.height - 20) / 2,
+            width: 20,
+            height: 20
+        )
+    }
+
+    /// The frame each entry of `stripItems` should occupy, in the same
+    /// left-to-right render order rebuildButtons established. Pinned tabs and
+    /// group headers get fixed widths off the top; every other tab button
+    /// (loose, or a member of an expanded group) shares whatever width
+    /// remains, same even-width-down-to-a-minimum scheme as before groups
+    /// existed.
+    ///
+    /// Pure geometry, deliberately: drag-to-reorder needs to know where slots
+    /// *are* without moving anything into them (to decide when the dragged
+    /// pill has crossed a neighbour) and needs to animate views into them
+    /// rather than assign frames outright, neither of which the old
+    /// compute-and-assign-in-one-pass layout could express. It also means
+    /// every slot width within one section is identical by construction,
+    /// which is what lets a drag compare against fixed slot midpoints and
+    /// swap only with immediate neighbours.
+    private func slotFrames() -> [NSRect] {
         let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
         let itemCount = stripItems.count
         let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
@@ -396,31 +516,235 @@ final class TabStripView: NSView {
         let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
         let flexibleWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenFlexibleWidth))
 
+        var frames: [NSRect] = []
+        frames.reserveCapacity(itemCount)
         var x = leadingInset + Self.sidePadding
         for item in stripItems {
             let width: CGFloat
-            let view: NSView
             switch item {
             case .tab(let button):
                 width = button.isPinned ? Self.pinnedTabWidth : flexibleWidth
-                view = button
             case .groupHeader(let header):
                 width = header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
-                view = header
             }
-            view.frame = NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8))
+            frames.append(NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8)))
             x += width + Self.tabSpacing
         }
+        return frames
+    }
 
-        newTabButton.frame = NSRect(
-            x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
-            y: (bounds.height - 20) / 2,
-            width: 20,
-            height: 20
-        )
+    /// Moves every item into its slot, optionally sliding rather than
+    /// snapping. `skipping` is how the dragged pill is left under the cursor
+    /// while its neighbours reflow around it.
+    private func applySlotFrames(animated: Bool, skipping skipped: NSView? = nil) {
+        let frames = slotFrames()
+        func assign(_ context: NSAnimationContext?) {
+            for (position, item) in stripItems.enumerated() {
+                let view = item.view
+                guard view !== skipped else { continue }
+                if context != nil {
+                    view.animator().frame = frames[position]
+                } else {
+                    view.frame = frames[position]
+                }
+            }
+        }
+        guard animated else {
+            assign(nil)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.reflowAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            assign(context)
+        }
     }
 
     @objc private func newTabTapped() {
         delegate?.tabStripViewDidClickNewTab(self)
+    }
+}
+
+// MARK: - Drag to reorder (browser-rhi.6)
+
+extension TabStripView: TabButtonDragDelegate {
+    /// Takes over the rest of the mouse sequence a tab button just started.
+    ///
+    /// Everything after this mouse-down is tracked through one local event
+    /// monitor rather than the pressed button's own mouseDragged/mouseUp, for
+    /// two reasons: the drag raises the pill above its siblings (which
+    /// reshuffles the view hierarchy the button is being routed through mid-
+    /// sequence), and Escape-to-cancel needs key events that can't reach a
+    /// view through the responder chain while the mouse is down anyway. One
+    /// monitor covers all three event kinds and can't get out of step with
+    /// itself. Deliberately *not* a nested nextEvent tracking loop: that would
+    /// block the main run loop for the length of the drag, and CEF's message
+    /// pump (BRWMessagePump) drives the whole engine off that same run loop.
+    func tabButton(_ button: TabButtonView, didBeginDragWith event: NSEvent) {
+        // A Control-click is a context-menu gesture, and the menu it opens
+        // runs its own event loop that a local monitor doesn't see -- the
+        // drag would never be told the mouse came back up, and its monitor
+        // would outlive it, swallowing every later Escape in the app.
+        guard !event.modifierFlags.contains(.control) else { return }
+        // Any session still standing here never saw its mouse-up; unwind it
+        // rather than refuse to start (which would wedge dragging for good).
+        endDrag(commit: false)
+        guard let itemIndex = stripItems.firstIndex(where: { $0.isTabButton(button) }) else { return }
+        let range = sectionRange(around: itemIndex)
+        // A section of one has nowhere to go; don't arm a drag (or a monitor)
+        // that could only ever be a no-op.
+        guard range.count > 1 else { return }
+
+        var session = DragSession(
+            button: button,
+            itemIndex: itemIndex,
+            range: range,
+            startPoint: convert(event.locationInWindow, from: nil),
+            startFrame: button.frame,
+            originalItems: stripItems
+        )
+        session.eventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDragged, .leftMouseUp, .keyDown]
+        ) { [weak self] event in
+            guard let self, let button = self.drag?.button else { return event }
+            switch event.type {
+            case .leftMouseDragged:
+                self.continueDrag(button, with: event)
+                return event
+            case .leftMouseUp:
+                self.endDrag(commit: true)
+                return event
+            case .keyDown where event.keyCode == 53:
+                self.endDrag(commit: false)
+                return nil
+            default:
+                return event
+            }
+        }
+        drag = session
+    }
+
+    private func continueDrag(_ button: TabButtonView, with event: NSEvent) {
+        guard let session = drag, session.button === button else { return }
+        let deltaX = convert(event.locationInWindow, from: nil).x - session.startPoint.x
+        if !session.didMove {
+            guard abs(deltaX) >= Self.dragMovementThreshold else { return }
+            drag?.didMove = true
+            // Above its neighbours for the rest of the drag, so the pill it
+            // slides over never renders on top of the one being dragged.
+            glassContentHost.addSubview(button, positioned: .above, relativeTo: nil)
+        }
+
+        let frames = slotFrames()
+        let width = button.frame.width
+        let lowerLimit = frames[session.range.lowerBound].minX
+        let upperLimit = max(lowerLimit, frames[session.range.upperBound].maxX - width)
+        let x = min(max(session.startFrame.minX + deltaX, lowerLimit), upperLimit)
+        button.frame.origin.x = x
+
+        // Swap past whichever neighbours the pill's centre has crossed. Slot
+        // geometry is identical for every item in one section (see
+        // slotFrames), so `frames` stays valid across these swaps and the
+        // comparison never needs recomputing mid-loop.
+        let center = x + width / 2
+        var itemIndex = session.itemIndex
+        while itemIndex < session.range.upperBound, center > frames[itemIndex + 1].midX {
+            stripItems.swapAt(itemIndex, itemIndex + 1)
+            itemIndex += 1
+        }
+        while itemIndex > session.range.lowerBound, center < frames[itemIndex - 1].midX {
+            stripItems.swapAt(itemIndex, itemIndex - 1)
+            itemIndex -= 1
+        }
+        guard itemIndex != session.itemIndex else { return }
+        drag?.itemIndex = itemIndex
+        applySlotFrames(animated: true, skipping: button)
+    }
+
+    /// The contiguous run of `stripItems` holding every tab in the same
+    /// section as the one at `itemIndex` -- see SectionKey. Group headers
+    /// never match, which is what keeps a group's members from being dragged
+    /// out past their own header.
+    private func sectionRange(around itemIndex: Int) -> ClosedRange<Int> {
+        guard case .tab(let button) = stripItems[itemIndex] else { return itemIndex...itemIndex }
+        let key = sectionKey(for: button)
+        var lower = itemIndex
+        while lower > 0, case .tab(let candidate) = stripItems[lower - 1], sectionKey(for: candidate) == key {
+            lower -= 1
+        }
+        var upper = itemIndex
+        while upper < stripItems.count - 1, case .tab(let candidate) = stripItems[upper + 1], sectionKey(for: candidate) == key {
+            upper += 1
+        }
+        return lower...upper
+    }
+
+    private func sectionKey(for button: TabButtonView) -> SectionKey {
+        if button.isPinned { return .pinned }
+        if let groupId = button.groupId { return .group(groupId) }
+        return .loose
+    }
+
+    /// Ends the current drag: settles everything into its slot, and (when
+    /// committing a drag that actually moved) tells the delegate the new
+    /// model position once that settle animation finishes, so the strip isn't
+    /// torn down and rebuilt underneath a pill still in flight.
+    private func endDrag(commit: Bool) {
+        guard let session = drag else { return }
+        if let monitor = session.eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        drag = nil
+
+        // A click that never moved needs nothing: selection already happened
+        // on mouse-down, and no view left its slot.
+        guard session.didMove else { return }
+        if !commit {
+            stripItems = session.originalItems
+        }
+
+        let source = session.button.index
+        var destination = source
+        if commit {
+            // Every tab in the section, in the order they now render. That
+            // section occupies one contiguous run of BrowserWindowController.
+            // tabs (the [pinned][groups][loose] invariant), so the dragged
+            // tab's new offset within the run, added to the run's first model
+            // index, is exactly its final index in `tabs`.
+            let sectionIndices: [Int] = session.range.compactMap { position in
+                if case .tab(let candidate) = stripItems[position] { return candidate.index }
+                return nil
+            }
+            if let base = sectionIndices.min(), let offset = sectionIndices.firstIndex(of: source) {
+                destination = base + offset
+            }
+        }
+
+        let generation = reloadGeneration
+        let frames = slotFrames()
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Self.dropAnimationDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            for (position, item) in stripItems.enumerated() {
+                item.view.animator().frame = frames[position]
+            }
+        }, completionHandler: { [weak self] in
+            guard let self, commit, destination != source else { return }
+            // A reload during the settle animation means these indices
+            // describe an order the model has already left behind -- the
+            // reload's own layout is authoritative, so drop the move.
+            guard generation == self.reloadGeneration else { return }
+            self.delegate?.tabStripView(self, didMoveTabAt: source, toIndex: destination)
+        })
+    }
+
+    /// Drops drag state without touching any view -- for when the buttons the
+    /// drag refers to are about to stop existing (see reload).
+    private func abandonDrag() {
+        guard let session = drag else { return }
+        if let monitor = session.eventMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
+        drag = nil
     }
 }

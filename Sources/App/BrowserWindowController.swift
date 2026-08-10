@@ -1097,6 +1097,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         reloadAfterReorder(activeTabObject: activeTabObject)
     }
 
+    /// Drag-to-reorder's model change (browser-rhi.6): moves the tab at
+    /// `index` so it ends up at `destination` in `tabs`. `destination` is the
+    /// tab's position in the *final* array, so a rightward move needs no
+    /// off-by-one adjustment at the call site.
+    ///
+    /// The [pinned][group sections][loose] ordering invariant is upheld by
+    /// TabStripView refusing to drag a tab out of its own section, not
+    /// re-derived here; a destination outside the tab's section would quietly
+    /// break the invariant, so this deliberately isn't a general-purpose
+    /// "move a tab anywhere" entry point (pin/group changes go through
+    /// movePinState/moveTab(at:toGroup:), which do maintain it).
+    func reorderTab(at index: Int, toIndex destination: Int) {
+        guard tabs.indices.contains(index), tabs.indices.contains(destination), index != destination else { return }
+        let activeTabObject = activeTab
+        let tab = tabs.remove(at: index)
+        tabs.insert(tab, at: destination)
+        reloadAfterReorder(activeTabObject: activeTabObject)
+    }
+
     /// Common tail of every operation that removes-and-reinserts a tab
     /// elsewhere in `tabs` (movePinState, moveTab(at:toGroup:), ungroupAll):
     /// recomputes activeTabIndex by object identity (the move may have
@@ -1480,6 +1499,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseGroup groupId: UUID) {
         closeGroup(groupId: groupId)
+    }
+
+    func tabStripView(_ tabStripView: TabStripView, didMoveTabAt sourceIndex: Int, toIndex destinationIndex: Int) {
+        reorderTab(at: sourceIndex, toIndex: destinationIndex)
     }
 
     // MARK: - Menu / keyboard actions (reached via the responder chain --
