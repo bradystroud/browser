@@ -1,17 +1,24 @@
 import Foundation
 import BrowserCLIProtocol
 
-/// `browser open <url> [--profile <name>]` -- talks to a running instance's
-/// `CLIServer` (Sources/App/CLI/CLIServer.swift); there is no disk-only
-/// fallback, since actually opening a window/tab requires the live app.
+/// `browser open <url> [--profile <name>] [--new-window]` -- talks to a
+/// running instance's `CLIServer` (Sources/App/CLI/CLIServer.swift); there is
+/// no disk-only fallback, since actually opening a window/tab requires the
+/// live app.
 public enum OpenCommand {
     public static func run(args: ParsedArgs) -> Bool {
         guard let url = args.positionals.first else {
-            return Output.emitError("usage: browser open <url> [--profile <name>]", json: args.jsonOutput)
+            return Output.emitError("usage: browser open <url> [--profile <name>] [--new-window]", json: args.jsonOutput)
         }
 
         var requestArgs = ["url": url]
         if let profile = args.flags["profile"] { requestArgs["profile"] = profile }
+        // A bare switch, so ArgParser parsed it as `--new-window` with an
+        // empty value (or, if a value followed, whatever that was) -- its
+        // mere presence is the signal, hence `!= nil` rather than a value
+        // comparison. The wire format keeps args a flat [String: String]
+        // (see CLIRequest), so "true" is how a boolean travels.
+        if args.flags["new-window"] != nil { requestArgs["new-window"] = "true" }
 
         let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {

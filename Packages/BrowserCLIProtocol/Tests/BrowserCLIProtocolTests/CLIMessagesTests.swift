@@ -45,6 +45,43 @@ final class CLIMessagesTests: XCTestCase {
         XCTAssertEqual(decoded.tabs?.first?.isActive, true)
     }
 
+    func testResponseRoundTripsWithWindows() throws {
+        let response = CLIResponse(
+            ok: true,
+            message: "2 window(s)",
+            windows: [
+                CLIWindowInfo(
+                    profileName: "work", profileId: "abc", windowIndex: 0, tabCount: 3,
+                    isPrivate: false, activeTabTitle: "Example", activeTabURL: "https://example.com"
+                ),
+                CLIWindowInfo(
+                    profileName: "Private", profileId: "private-xyz", windowIndex: 1, tabCount: 1,
+                    isPrivate: true, activeTabTitle: "", activeTabURL: "about:blank"
+                ),
+            ]
+        )
+        let data = try JSONEncoder().encode(response)
+        let decoded = try JSONDecoder().decode(CLIResponse.self, from: data)
+        XCTAssertEqual(decoded.windows?.count, 2)
+        XCTAssertEqual(decoded.windows?[0].tabCount, 3)
+        XCTAssertEqual(decoded.windows?[1].isPrivate, true)
+        XCTAssertNil(decoded.tabs)
+        XCTAssertNil(decoded.profiles)
+    }
+
+    /// An older `browser` binary talking to a newer app (or vice versa)
+    /// shouldn't fail to decode just because one side doesn't know about
+    /// `windows` yet -- every payload field is optional precisely so the
+    /// two halves can be updated independently (they're separately signed
+    /// artifacts: the CLI is symlinked onto PATH, the app is replaced by
+    /// scripts/install.sh).
+    func testResponseWithoutWindowsFieldStillDecodes() throws {
+        let json = Data(#"{"ok":true,"message":"1 profile(s)"}"#.utf8)
+        let decoded = try JSONDecoder().decode(CLIResponse.self, from: json)
+        XCTAssertTrue(decoded.ok)
+        XCTAssertNil(decoded.windows)
+    }
+
     func testFailureFactory() {
         let response = CLIResponse.failure("no running instance found")
         XCTAssertFalse(response.ok)

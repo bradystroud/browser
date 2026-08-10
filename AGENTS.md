@@ -48,7 +48,9 @@ open build/Sources/App/Release/Browser.app --args --profile default
 A companion terminal tool (browser-82d) for controlling and inspecting a running instance without UI automation -- see the UI verification protocol above; this is the sanctioned way for agents to exercise the app instead. Lives at `browser-cli/` (a standalone SwiftPM package, entirely outside the Xcode/CMake app build), built by `scripts/build.sh` and signed into `Browser.app/Contents/Resources/bin/browser` -- put it on your `PATH` once with `ln -sf ".../Browser.app/Contents/Resources/bin/browser" /usr/local/bin/browser`.
 
 ```
-browser open <url> [--profile <name>]
+browser open <url> [--profile <name>] [--new-window]
+browser window new [<url>] [--profile <name>]
+browser windows [--profile <name>]
 browser route-test <url> [--from-app <bundle-id>]
 browser profiles
 browser tabs [--profile <name>]
@@ -56,6 +58,8 @@ browser history search <query> [--limit N] [--profile <name>]
 browser bookmarks list [--folder <path>] [--profile <name>]
 ```
 
-Every command accepts `--json` for machine-readable output and `--profiles-root <path>` to target a scratch instance instead of the real one (matches the app's own launch argument). `open`/`profiles`/`tabs` talk to the running app's `CLIServer` socket (`Sources/App/CLI/CLIServer.swift`) and fail with a clear error if no instance is running at that `--profiles-root`; `route-test`/`history search`/`bookmarks list` read `routing.json`/`profiles.json`/a profile's real `browser.db` directly and work with no app running at all. `open` with no `--profile` routes through the same `RoutingCoordinator`/`RuleMatcher` path a real clicked link would (with no attributable source app, so `sourceBundleIds`-scoped rules never match a CLI-issued open); with `--profile`, it bypasses routing rules entirely. `route-test` is the one built specifically for debugging a rule that silently isn't matching -- it reports which rule (1-based) decided the result, or that the default profile was used.
+Every command accepts `--json` for machine-readable output and `--profiles-root <path>` to target a scratch instance instead of the real one (matches the app's own launch argument). **`--profiles-root` must be two separate argv entries** -- anything else (`--profiles-root=/path`, or a single quoted `"--profiles-root /path"` token, which is what zsh's not-word-splitting an unquoted `$VAR` produces) is now a hard error, because the resolver's own fallback for an unrecognised flag is Brady's *real* instance; browser-4xc's own testing opened tabs in his live browser exactly that way. `open`/`profiles`/`tabs`/`window new`/`windows` talk to the running app's `CLIServer` socket (`Sources/App/CLI/CLIServer.swift`) and fail with a clear error if no instance is running at that `--profiles-root`; `route-test`/`history search`/`bookmarks list` read `routing.json`/`profiles.json`/a profile's real `browser.db` directly and work with no app running at all. `open` with no `--profile` routes through the same `RoutingCoordinator`/`RuleMatcher` path a real clicked link would (with no attributable source app, so `sourceBundleIds`-scoped rules never match a CLI-issued open); with `--profile`, it bypasses routing rules entirely. `open --new-window` keeps that profile resolution but forces a brand-new window instead of a tab in the profile's frontmost one; `window new` is the no-URL form of the same idea (the start page, not `WindowManager.openNewWindow`'s stale `https://example.com` default that ⌘N still inherits). `route-test` is the one built specifically for debugging a rule that silently isn't matching -- it reports which rule (1-based) decided the result, or that the default profile was used.
 
 Never gains a command or field that surfaces passwords/credentials, in any form, even behind `--json` -- a deliberate, permanent scope boundary, not a gap to fill in later.
+
+`raycast-extension/` is a local-only Raycast extension wrapping exactly these commands (browser-4xc) -- open a link or an empty window in a chosen profile, plus history/bookmark search. Never published; see its own README and `docs/ai-tasks/raycast-extension-notes.md`.

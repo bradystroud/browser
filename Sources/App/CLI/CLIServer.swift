@@ -139,6 +139,8 @@ final class CLIServer {
         case "open": return handleOpen(request)
         case "profiles": return handleProfiles()
         case "tabs": return handleTabs(request)
+        case "window-new": return handleWindowNew(request)
+        case "windows": return handleWindows(request)
         default: return .failure("unknown command: \(request.command)")
         }
     }
@@ -155,11 +157,12 @@ final class CLIServer {
         guard let url = request.args["url"], !url.isEmpty else {
             return .failure("open requires a url")
         }
+        let forceNewWindow = request.args["new-window"] == "true"
 
         if let profileName = request.args["profile"] {
             let profile = ProfileManager.shared.profileOrCreate(named: profileName)
-            RoutingCoordinator.shared.openURL(url, in: profile)
-            return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (explicit --profile).")
+            let placement = open(url, in: profile, forceNewWindow: forceNewWindow)
+            return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (explicit --profile, \(placement)).")
         }
 
         let store = RoutingRulesStore.shared
@@ -168,10 +171,79 @@ final class CLIServer {
         let profileId = RuleMatcher.resolveProfileId(for: context, rules: store.rules, defaultProfileId: store.defaultProfileId)
         let profile = ProfileManager.shared.profile(id: profileId)
             ?? ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
-        RoutingCoordinator.shared.openURL(url, in: profile)
+        let placement = open(url, in: profile, forceNewWindow: forceNewWindow)
 
         let matchNote = matchedIndex.map { "matched rule #\($0 + 1)" } ?? "no rule matched, used default profile"
-        return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (\(matchNote)).")
+        return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (\(matchNote), \(placement)).")
+    }
+
+    /// `--new-window` deliberately bypasses `RoutingCoordinator.openURL`'s
+    /// "reuse the frontmost window of this profile" step -- that reuse is
+    /// exactly what the flag exists to opt out of -- but keeps everything
+    /// upstream of it (profile resolution, routing rules) identical, so the
+    /// only difference between the two placements is where the page lands.
+    /// Returns the phrase describing which happened, for the response
+    /// message. No explicit `NSApp.activate` on the new-window branch:
+    /// `WindowManager.registerAndShow` already does it (respecting
+    /// `--test-no-activate`), which is also why this doesn't just call
+    /// `RoutingCoordinator.openURL` and then open a window.
+    @discardableResult
+    private static func open(_ url: String, in profile: Profile, forceNewWindow: Bool) -> String {
+        guard forceNewWindow else {
+            RoutingCoordinator.shared.openURL(url, in: profile)
+            return "new tab"
+        }
+        WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
+        return "new window"
+    }
+
+    /// `window new` -- always a brand-new `WindowManager`-owned window, never
+    /// a tab in an existing one, and never routed through `RuleMatcher`
+    /// (there's no URL to match on in the common no-URL case, and an explicit
+    /// "open a window in profile X" request has already decided the profile).
+    ///
+    /// With no URL, opens `about:blank` -- `Tab`'s sentinel for the internal
+    /// start page -- rather than `WindowManager.openNewWindow`'s own
+    /// `initialURL` default, which is still the M1-era `https://example.com`
+    /// placeholder that ⌘N inherits. A CLI/Raycast "new empty window" should
+    /// land on the start page, not navigate to a real external site.
+    private static func handleWindowNew(_ request: CLIRequest) -> CLIResponse {
+        let url = request.args["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
+        let profileName = request.args["profile"] ?? ProfileManager.defaultProfileName
+        let profile = ProfileManager.shared.profileOrCreate(named: profileName)
+        WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
+        let target = url == "about:blank" ? "the start page" : url
+        return CLIResponse(ok: true, message: "Opened a new window in profile '\(profile.name)' showing \(target).")
+    }
+
+    /// `windows` -- one row per open window. `windowIndex` is numbered over
+    /// the windows actually listed, so a `--profile`-filtered listing starts
+    /// at 0 -- deliberately identical to `handleTabs`' own numbering, so the
+    /// two commands never disagree about what "window 1" means for the same
+    /// filter.
+    private static func handleWindows(_ request: CLIRequest) -> CLIResponse {
+        let profileNameFilter = request.args["profile"]
+        var windowInfos: [CLIWindowInfo] = []
+        var windowIndex = 0
+        for controller in WindowManager.shared.windowControllers {
+            if let profileNameFilter, controller.profile.name != profileNameFilter { continue }
+            let activeTab = controller.activeTabIndex.flatMap { index in
+                controller.tabs.indices.contains(index) ? controller.tabs[index] : nil
+            }
+            // Same "" -> about:blank sentinel translation as handleTabs.
+            let activeURL = activeTab.map { $0.urlString.isEmpty ? "about:blank" : $0.urlString } ?? ""
+            windowInfos.append(CLIWindowInfo(
+                profileName: controller.profile.name,
+                profileId: controller.profile.id,
+                windowIndex: windowIndex,
+                tabCount: controller.tabs.count,
+                isPrivate: controller.isPrivate,
+                activeTabTitle: activeTab?.title ?? "",
+                activeTabURL: activeURL
+            ))
+            windowIndex += 1
+        }
+        return CLIResponse(ok: true, message: "\(windowInfos.count) window(s)", windows: windowInfos)
     }
 
     private static func handleProfiles() -> CLIResponse {

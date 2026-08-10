@@ -20,10 +20,20 @@ public struct ParsedArgs: Equatable {
 }
 
 public enum ArgParser {
-    /// `--json` is a bare switch (no value). Every other `--name` consumes
-    /// the following token as its value; a trailing `--name` with nothing
-    /// after it gets an empty string rather than crashing or silently
-    /// dropping the flag.
+    /// Switches that never take a value. Every flag not listed here consumes
+    /// the following token, so a bare switch missing from this set silently
+    /// eats whatever came after it -- `browser open <url> --new-window
+    /// --profile work` would parse `--profile` as `--new-window`'s value and
+    /// then lose the profile entirely. Any new valueless flag must be added
+    /// here.
+    static let valuelessFlags: Set<String> = ["new-window"]
+
+    /// `--json` is a bare switch (no value), as is anything in
+    /// `valuelessFlags` (recorded with an empty-string value -- callers test
+    /// for presence, not the value). Every other `--name` consumes the
+    /// following token as its value; a trailing `--name` with nothing after
+    /// it gets an empty string rather than crashing or silently dropping the
+    /// flag.
     public static func parse(_ args: [String]) -> ParsedArgs {
         var positionals: [String] = []
         var flags: [String: String] = [:]
@@ -33,6 +43,9 @@ public enum ArgParser {
             let arg = args[index]
             if arg == "--json" {
                 json = true
+                index += 1
+            } else if arg.hasPrefix("--"), valuelessFlags.contains(String(arg.dropFirst(2))) {
+                flags[String(arg.dropFirst(2))] = ""
                 index += 1
             } else if arg.hasPrefix("--") {
                 let key = String(arg.dropFirst(2))

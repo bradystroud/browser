@@ -39,19 +39,23 @@ public struct CLIResponse: Codable {
     public var profiles: [CLIProfileInfo]?
     /// Populated by `tabs`.
     public var tabs: [CLITabInfo]?
+    /// Populated by `windows`.
+    public var windows: [CLIWindowInfo]?
 
     public init(
         ok: Bool,
         error: String? = nil,
         message: String? = nil,
         profiles: [CLIProfileInfo]? = nil,
-        tabs: [CLITabInfo]? = nil
+        tabs: [CLITabInfo]? = nil,
+        windows: [CLIWindowInfo]? = nil
     ) {
         self.ok = ok
         self.error = error
         self.message = message
         self.profiles = profiles
         self.tabs = tabs
+        self.windows = windows
     }
 
     public static func failure(_ error: String) -> CLIResponse {
@@ -97,5 +101,42 @@ public struct CLITabInfo: Codable {
         self.isActive = isActive
         self.title = title
         self.url = url
+    }
+}
+
+/// One open window, as reported by the `windows` command. `windowIndex`
+/// carries the same caveats as `CLITabInfo`'s: a position among the windows
+/// actually listed (so a `--profile`-filtered listing renumbers from 0),
+/// valid at the moment of the request, not a persistent identifier.
+///
+/// `isPrivate` windows report a synthetic per-window profile (see
+/// `WindowManager.openNewPrivateWindow`) whose id/name are not real profiles
+/// and will never appear in `profiles` output -- the flag is what tells a
+/// caller not to treat `profileName` as addressable.
+public struct CLIWindowInfo: Codable {
+    public let profileName: String
+    public let profileId: String
+    public let windowIndex: Int
+    public let tabCount: Int
+    public let isPrivate: Bool
+    public let activeTabTitle: String
+    public let activeTabURL: String
+
+    public init(
+        profileName: String,
+        profileId: String,
+        windowIndex: Int,
+        tabCount: Int,
+        isPrivate: Bool,
+        activeTabTitle: String,
+        activeTabURL: String
+    ) {
+        self.profileName = profileName
+        self.profileId = profileId
+        self.windowIndex = windowIndex
+        self.tabCount = tabCount
+        self.isPrivate = isPrivate
+        self.activeTabTitle = activeTabTitle
+        self.activeTabURL = activeTabURL
     }
 }
