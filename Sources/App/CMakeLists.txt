@@ -76,6 +76,8 @@ set(BROWSER_SWIFT_SRCS
   Routing/LinkHandlingPreferences.swift
   Routing/URLUnshortener.swift
   ProfilesPaneController.swift
+  ProfileSwitcher/ProfileSwitcherListView.swift
+  ProfileSwitcher/ProfileSwitcherController.swift
   Furniture/ProfileDataStores.swift
   Furniture/OmniboxAutocompleteController.swift
   Furniture/HistoryWindowController.swift

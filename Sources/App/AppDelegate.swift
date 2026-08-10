@@ -201,6 +201,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         WindowManager.shared.openNewWindow(profile: profile)
     }
 
+    /// ⌃⌘N -- Profiles > Switch Profile… (browser-sdj.2). The panel is
+    /// anchored on whichever browser window is key, and also reads that
+    /// window's profile to decide where its selection starts.
+    @objc func showProfileSwitcher(_ sender: Any?) {
+        ProfileSwitcherController.shared.toggle(relativeTo: WindowManager.shared.keyBrowserWindowController?.window)
+    }
+
     @objc func openProfileWindow(_ sender: NSMenuItem) {
         guard let profile = sender.representedObject as? Profile else { return }
         WindowManager.shared.openNewWindow(profile: profile)

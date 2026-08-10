@@ -49,6 +49,7 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.goBackAction(_:)): .navigation,
         #selector(BrowserWindowController.goForwardAction(_:)): .navigation,
         #selector(AppDelegate.newWindow(_:)): .windowsAndProfiles,
+        #selector(AppDelegate.showProfileSwitcher(_:)): .windowsAndProfiles,
         #selector(NSWindow.performClose(_:)): .windowsAndProfiles,
         #selector(BrowserWindowController.copyCurrentURL(_:)): .links,
         #selector(BrowserWindow.toggleFindBar(_:)): .navigation,

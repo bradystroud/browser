@@ -58,6 +58,14 @@ final class MainMenuBuilder {
     /// it without rebuilding the whole menu bar.
     func rebuildProfilesMenu() {
         profilesMenu.removeAllItems()
+        // ⌃⌘N -- the keyboard quick-switcher (browser-sdj.2). A real menu
+        // item, not just an event monitor, so the shortcut is registered the
+        // normal way and is discoverable next to the profiles it switches
+        // between. ⌘N (New Window) and ⇧⌘N (New Private Window) are taken;
+        // ⌃⌘N is free across this menu bar and the app's event monitors.
+        profilesMenu.addItem(withTitle: "Switch Profile…", action: #selector(AppDelegate.showProfileSwitcher(_:)), keyEquivalent: "n")
+            .keyEquivalentModifierMask = [.command, .control]
+        profilesMenu.addItem(.separator())
         for profile in ProfileManager.shared.profiles {
             let item = NSMenuItem(title: profile.name, action: #selector(AppDelegate.openProfileWindow(_:)), keyEquivalent: "")
             item.representedObject = profile
