@@ -17,6 +17,9 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     private let profilePopup = NSPopUpButton()
     private let credentialsTableView = NSTableView()
+    private let autofillCheckbox = NSButton(
+        checkboxWithTitle: "Fill saved passwords automatically", target: nil, action: nil
+    )
 
     private var selectedProfile: Profile?
     private var credentials: [SavedCredential] = []
@@ -86,7 +89,15 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(deleteButton)
 
-        let profileRowY = margin + buttonRowHeight + rowGap
+        let autofillRowY = margin + buttonRowHeight + rowGap
+        autofillCheckbox.frame = NSRect(x: margin, y: autofillRowY, width: view.bounds.width - margin * 2, height: 20)
+        autofillCheckbox.autoresizingMask = [.width, .maxYMargin]
+        autofillCheckbox.target = self
+        autofillCheckbox.action = #selector(autofillPreferenceChanged)
+        autofillCheckbox.state = PasswordAutofillPreference.isAutomaticFillEnabled ? .on : .off
+        view.addSubview(autofillCheckbox)
+
+        let profileRowY = autofillRowY + 20 + rowGap
         let profileLabel = NSTextField(labelWithString: "Profile:")
         profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
         profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
@@ -143,6 +154,10 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     // MARK: - Actions
+
+    @objc private func autofillPreferenceChanged() {
+        PasswordAutofillPreference.isAutomaticFillEnabled = autofillCheckbox.state == .on
+    }
 
     @objc private func profileSelectionChanged() {
         selectedProfile = profilePopup.selectedItem?.representedObject as? Profile

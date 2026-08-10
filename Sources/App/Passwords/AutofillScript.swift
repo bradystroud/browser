@@ -1,12 +1,13 @@
 import Foundation
 
-/// Builds the one-shot script executed when the user clicks the omnibox key
-/// icon (browser-ojh.1) -- never run automatically on page load; only ever
-/// in direct response to that explicit click (see PasswordManagerCoordinator's
-/// key-icon handling), since silently filling credentials into a page
-/// without a user gesture is a clickjacking/leak risk (a malicious page
-/// could position an invisible form to harvest an auto-filled credential
-/// without the user ever intending to submit it there).
+/// Builds the one-shot script that fills a saved credential into the page
+/// (browser-ojh.1). Two callers, both in PasswordManagerCoordinator: the
+/// omnibox key icon's click handler, and -- when
+/// PasswordAutofillPreference.isAutomaticFillEnabled, which is the default
+/// -- once per navigation to a page with a saved credential for its host.
+/// See that preference's own doc comment for the clickjacking trade-off
+/// automatic filling accepts, and why click-only turned out to be
+/// indistinguishable in practice from not remembering the password at all.
 enum AutofillScript {
     /// Fills the page's password field (and its best-guess paired username
     /// field, same heuristic as PasswordDetectionScript's own) with

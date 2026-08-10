@@ -85,6 +85,7 @@ set(BROWSER_SWIFT_SRCS
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
+  Passwords/PasswordAutofillPreference.swift
   Passwords/AutofillScript.swift
   Passwords/PasswordStore.swift
   Passwords/PasswordNeverStore.swift

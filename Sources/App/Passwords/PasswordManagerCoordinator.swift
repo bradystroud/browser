@@ -10,6 +10,26 @@ private struct PasswordFieldsPresentPayload: Decodable {
     let present: Bool
 }
 
+/// A credential the user has typed into a page but that hasn't produced a
+/// recognizable login attempt yet. Held per tab until either the page
+/// reports a submit-like gesture or the tab navigates away from
+/// `capturedAtURL` -- see PasswordDetectionScript's own doc comment on why
+/// "the tab navigated" has to be a trigger at all (plenty of real login
+/// pages never fire a submit event).
+private final class PendingCredential {
+    let origin: String
+    let username: String
+    let password: String
+    let capturedAtURL: String
+
+    init(origin: String, username: String, password: String, capturedAtURL: String) {
+        self.origin = origin
+        self.username = username
+        self.password = password
+        self.capturedAtURL = capturedAtURL
+    }
+}
+
 /// App-wide singleton that registers with PageMessageDispatcher for the
 /// password-manager's page-message types, and owns the one save-password
 /// popover shown at a time across the whole app.
@@ -61,11 +81,43 @@ final class PasswordManagerCoordinator: NSObject {
     /// user clicking it can't fill the wrong page.
     private var windowForKeyButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
 
-    /// Matches FindBarController/ReaderModeController's hardcoded
-    /// tab-strip (32) + toolbar (36) height constant -- see
-    /// FindBarController.contentTopInset's doc comment for why this is
-    /// duplicated rather than shared across files.
-    private static let contentTopInset: CGFloat = 32 + 36
+    /// The credential each tab has typed but not yet visibly submitted, and
+    /// the URL each tab was last seen at, so the poll can spot "this tab
+    /// navigated while holding a pending credential" -- the signal that
+    /// stands in for a submit event on pages that never fire one.
+    private var pendingCredentials = NSMapTable<Tab, PendingCredential>.weakToStrongObjects()
+    private var lastKnownURL = NSMapTable<Tab, NSString>.weakToStrongObjects()
+
+    /// The URL each tab was last automatically filled at, so a single page
+    /// is filled once rather than every 0.5s tick. Keyed by URL rather than
+    /// a plain flag so navigating to a second login page in the same tab
+    /// fills again.
+    private var autofilledURL = NSMapTable<Tab, NSString>.weakToStrongObjects()
+
+    /// Recently-prompted credential keys, to collapse the duplicate reports
+    /// a single login gesture can legitimately produce (Enter in a password
+    /// field usually fires the script's keydown handler *and* a real submit
+    /// event milliseconds later). Time-based rather than permanent so a user
+    /// who dismisses a prompt with "Not Now" and submits again still gets
+    /// asked the second time.
+    private var recentlyPromptedAt: [String: Date] = [:]
+    private static let duplicatePromptWindow: TimeInterval = 3
+
+    /// Cached Keychain lookups, keyed "profileName\\0host". `nil` value means
+    /// "looked up, no credential" -- distinct from absent, which means "not
+    /// looked up yet".
+    ///
+    /// Every Keychain read happens on `keychainQueue`, never the main
+    /// thread: a credential saved under a different code-signing identity
+    /// makes SecItemCopyMatching block on a real, modal SecurityAgent
+    /// confirmation dialog, which on the main thread is a hard UI freeze for
+    /// as long as the dialog goes unanswered (browser-le4.1 -- reproduced
+    /// live at 120+ seconds). The poll below reads only this cache, so the
+    /// worst case is now a key icon that appears a tick late.
+    private var credentialCache: [String: (username: String, password: String)?] = [:]
+    private var credentialLookupsInFlight: Set<String> = []
+    private let keychainQueue = DispatchQueue(label: "dev.stroud.browser.password-keychain")
+
     private static let keyButtonSize: CGFloat = 26
 
     private override init() {}
@@ -78,8 +130,15 @@ final class PasswordManagerCoordinator: NSObject {
     func activate() {
         PageMessageDispatcher.shared.activate()
         if pollTimer == nil {
-            PageMessageDispatcher.shared.register(types: ["passwordFormSubmit", "passwordFieldsPresent"]) { [weak self] type, request, requestId, tab in
+            PageMessageDispatcher.shared.register(
+                types: ["passwordFormSubmit", "passwordFieldsPresent", "passwordCredentialCandidate"]
+            ) { [weak self] type, request, requestId, tab in
                 self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+            }
+            NotificationCenter.default.addObserver(
+                forName: .passwordStoreDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.credentialCache.removeAll()
             }
             pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 self?.poll()
@@ -89,8 +148,40 @@ final class PasswordManagerCoordinator: NSObject {
 
     private func poll() {
         for controller in WindowManager.shared.windowControllers {
+            for tab in controller.tabs {
+                flushPendingCredentialIfNavigated(tab)
+                autofillIfNeeded(tab)
+            }
             updateKeyButton(for: controller)
         }
+    }
+
+    // MARK: - Keychain lookups (never on the main thread)
+
+    private func cacheKey(profileName: String, host: String) -> String {
+        "\(profileName)\u{0}\(host)"
+    }
+
+    /// The cached credential for this profile/host, kicking off a background
+    /// lookup the first time one is asked for. Returns nil while that
+    /// lookup is still outstanding -- callers are all poll-driven, so they
+    /// simply pick the answer up on a later tick.
+    private func cachedCredential(profileName: String, host: String) -> (username: String, password: String)? {
+        let key = cacheKey(profileName: profileName, host: host)
+        if let cached = credentialCache[key] {
+            return cached
+        }
+        guard !credentialLookupsInFlight.contains(key) else { return nil }
+        credentialLookupsInFlight.insert(key)
+        keychainQueue.async { [weak self] in
+            let found = PasswordStore.credential(profileName: profileName, origin: host)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.credentialCache[key] = found
+                self.credentialLookupsInFlight.remove(key)
+            }
+        }
+        return nil
     }
 
     private func handlePageMessage(type: String, request: String, requestId: Int64, tab: Tab) {
@@ -108,7 +199,23 @@ final class PasswordManagerCoordinator: NSObject {
         switch type {
         case "passwordFormSubmit":
             guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data) else { return }
-            handleFormSubmit(payload, tab: tab)
+            // A recognizable login gesture -- this supersedes whatever the
+            // tab was holding, so the navigation path below can't ask a
+            // second time about the same credential.
+            pendingCredentials.removeObject(forKey: tab)
+            maybePrompt(origin: payload.origin, username: payload.username, password: payload.password, tab: tab)
+        case "passwordCredentialCandidate":
+            guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data),
+                  !payload.password.isEmpty else { return }
+            pendingCredentials.setObject(
+                PendingCredential(
+                    origin: payload.origin,
+                    username: payload.username,
+                    password: payload.password,
+                    capturedAtURL: tab.urlString
+                ),
+                forKey: tab
+            )
         case "passwordFieldsPresent":
             guard let payload = try? JSONDecoder().decode(PasswordFieldsPresentPayload.self, from: data) else { return }
             passwordFieldPresence.setObject(NSNumber(value: payload.present), forKey: tab)
@@ -117,31 +224,44 @@ final class PasswordManagerCoordinator: NSObject {
         }
     }
 
-    /// SECURITY: `payload.password` only ever flows into PasswordStore.save
-    /// (a Keychain write) or is dropped -- never logged, never written to
-    /// any plaintext file, never included in a notification/pasteboard.
-    private func handleFormSubmit(_ payload: PasswordFormSubmitPayload, tab: Tab) {
-        guard !payload.password.isEmpty else { return }
+    /// The other half of the "sites that never fire a submit event" fix (see
+    /// PasswordDetectionScript's doc comment): a tab holding a typed-but-
+    /// unsubmitted credential that has since navigated somewhere else was,
+    /// as far as anyone can tell from outside the page, a login attempt.
+    private func flushPendingCredentialIfNavigated(_ tab: Tab) {
+        let current = tab.urlString
+        defer { lastKnownURL.setObject(current as NSString, forKey: tab) }
+        guard let pending = pendingCredentials.object(forKey: tab), pending.capturedAtURL != current else {
+            return
+        }
+        pendingCredentials.removeObject(forKey: tab)
+        maybePrompt(origin: pending.origin, username: pending.username, password: pending.password, tab: tab)
+    }
+
+    /// SECURITY: `password` only ever flows into PasswordStore.save (a
+    /// Keychain write) or is dropped -- never logged, never written to any
+    /// plaintext file, never included in a notification/pasteboard.
+    private func maybePrompt(origin: String, username: String, password: String, tab: Tab) {
+        guard !password.isEmpty else { return }
         let profileName = tab.profileName
 
-        guard !PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).isNeverForSite(payload.origin) else {
+        // One login gesture can legitimately report itself twice (Enter in a
+        // password field fires the script's keydown handler and then a real
+        // submit event); collapse those into a single prompt.
+        let key = "\(profileName)\u{0}\(origin)\u{0}\(username)\u{0}\(password)"
+        if let promptedAt = recentlyPromptedAt[key], Date().timeIntervalSince(promptedAt) < Self.duplicatePromptWindow {
             return
         }
 
-        if let existing = PasswordStore.credential(profileName: profileName, origin: payload.origin),
-           existing.username == payload.username, existing.password == payload.password {
-            // Identical to what's already saved -- nothing new to ask about.
+        guard !PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).isNeverForSite(origin) else {
             return
         }
 
-        // v1 only prompts if this tab is currently the window's visible
-        // tab at the moment the page's submit fires -- a background tab's
-        // credentials are still captured up through the check above (so a
-        // *changed* password isn't silently missed if the user switches
-        // back to this tab and submits again), but this particular
-        // submission doesn't get a queued prompt of its own. Queuing a
-        // prompt for a tab that isn't visible yet is deferred past v1 --
-        // see docs/ai-tasks/password-manager-notes.md's Deviations.
+        // Only prompts if this tab is the window's visible tab right now --
+        // a background tab's credentials are still captured (so a *changed*
+        // password isn't silently missed once the user returns to that tab),
+        // but this particular attempt doesn't get a queued prompt of its
+        // own. See docs/ai-tasks/password-manager-notes.md's Deviations.
         guard let controller = WindowManager.shared.windowControllers.first(where: { windowController in
             windowController.tabs.contains(where: { $0 === tab })
         }), controller.activeTab === tab,
@@ -150,17 +270,56 @@ final class PasswordManagerCoordinator: NSObject {
             return
         }
 
-        let anchor = anchorView(in: contentView)
-        savePrompt.show(
-            origin: payload.origin,
-            anchorView: anchor,
-            onSave: {
-                PasswordStore.save(profileName: profileName, origin: payload.origin, username: payload.username, password: payload.password)
-            },
-            onNever: {
-                PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).setNeverForSite(payload.origin)
+        // The "is this already saved?" check is a Keychain read, so it has
+        // to happen off the main thread (browser-le4.1) -- hence deciding
+        // and showing asynchronously rather than inline.
+        keychainQueue.async { [weak self] in
+            let existing = PasswordStore.credential(profileName: profileName, origin: origin)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let existing, existing.username == username, existing.password == password {
+                    // Identical to what's already saved -- nothing to ask about.
+                    // (Also the normal outcome right after an automatic fill.)
+                    return
+                }
+                guard controller.activeTab === tab else { return }
+                self.recentlyPromptedAt[key] = Date()
+                let anchor = self.anchorView(in: contentView, controller: controller)
+                self.savePrompt.show(
+                    origin: origin,
+                    anchorView: anchor,
+                    onSave: {
+                        self.keychainQueue.async {
+                            PasswordStore.save(profileName: profileName, origin: origin, username: username, password: password)
+                        }
+                    },
+                    onNever: {
+                        PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).setNeverForSite(origin)
+                    }
+                )
             }
-        )
+        }
+    }
+
+    // MARK: - Automatic fill
+
+    /// Fills a saved credential into a matching page once per navigation,
+    /// when PasswordAutofillPreference allows it (on by default -- see that
+    /// enum's doc comment for the security trade-off this reverses from v1
+    /// and why). The key icon remains the manual path, both for when the
+    /// preference is off and for re-filling a page the user has since
+    /// cleared.
+    private func autofillIfNeeded(_ tab: Tab) {
+        guard PasswordAutofillPreference.isAutomaticFillEnabled,
+              passwordFieldPresence.object(forKey: tab)?.boolValue == true
+        else { return }
+        let url = tab.urlString
+        guard (autofilledURL.object(forKey: tab) as String?) != url,
+              let host = URL(string: url)?.host,
+              let credential = cachedCredential(profileName: tab.profileName, host: host)
+        else { return }
+        autofilledURL.setObject(url as NSString, forKey: tab)
+        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password))
     }
 
     /// A thin, invisible positioning view near the omnibox's on-screen
@@ -171,22 +330,22 @@ final class PasswordManagerCoordinator: NSObject {
     /// BrowserWindowController's own PermissionPromptController gets one.
     /// Approximate rather than exact -- see docs/ai-tasks/
     /// password-manager-notes.md's Deviations for the honest caveat.
-    private func anchorView(in contentView: NSView) -> NSView {
+    private func anchorView(in contentView: NSView, controller: BrowserWindowController) -> NSView {
         if let existing = anchorViews.object(forKey: contentView) {
-            existing.frame = Self.anchorFrame(in: contentView)
+            existing.frame = Self.anchorFrame(in: contentView, controller: controller)
             return existing
         }
-        let anchor = NSView(frame: Self.anchorFrame(in: contentView))
+        let anchor = NSView(frame: Self.anchorFrame(in: contentView, controller: controller))
         anchor.autoresizingMask = [.minYMargin, .width]
         contentView.addSubview(anchor)
         anchorViews.setObject(anchor, forKey: contentView)
         return anchor
     }
 
-    private static func anchorFrame(in contentView: NSView) -> NSRect {
+    private static func anchorFrame(in contentView: NSView, controller: BrowserWindowController) -> NSRect {
         NSRect(
             x: contentView.bounds.width / 2 - 150,
-            y: contentView.bounds.height - contentTopInset,
+            y: controller.contentAreaTopY,
             width: 300,
             height: 1
         )
@@ -205,15 +364,15 @@ final class PasswordManagerCoordinator: NSObject {
         guard let tab = controller.activeTab,
               passwordFieldPresence.object(forKey: tab)?.boolValue == true,
               let host = URL(string: tab.urlString)?.host,
-              PasswordStore.credential(profileName: tab.profileName, origin: host) != nil
+              cachedCredential(profileName: tab.profileName, host: host) != nil
         else {
-            setKeyButtonVisible(false, in: contentView, window: window)
+            setKeyButtonVisible(false, in: contentView, window: window, controller: controller)
             return
         }
-        setKeyButtonVisible(true, in: contentView, window: window)
+        setKeyButtonVisible(true, in: contentView, window: window, controller: controller)
     }
 
-    private func setKeyButtonVisible(_ visible: Bool, in contentView: NSView, window: NSWindow) {
+    private func setKeyButtonVisible(_ visible: Bool, in contentView: NSView, window: NSWindow, controller: BrowserWindowController) {
         let button: NSButton
         if let existing = keyButtons.object(forKey: contentView) {
             button = existing
@@ -230,10 +389,18 @@ final class PasswordManagerCoordinator: NSObject {
             // floating button (which sits at width - size - 12) so the two
             // don't overlap on a page that happens to be both readerable
             // and have a saved login (rare, but not impossible -- an
-            // article site with a comments login form, say).
+            // article site with a comments login form, say). Vertically
+            // centered within the toolbar row itself, not hanging into the
+            // content area or the tab strip -- see
+            // BrowserWindowController.toolbarRowHeight's own doc comment
+            // and ReaderModeController.setButtonVisible's matching comment
+            // for why (content area is covered by CEF's own compositing
+            // regardless of AppKit z-order; the tab strip is exactly where
+            // this button was reported overlapping the mute/close buttons).
+            let toolbarHeight = controller.toolbarRowHeight
             button.frame = NSRect(
                 x: contentView.bounds.width - size * 2 - 24,
-                y: contentView.bounds.height - Self.contentTopInset + (36 - size) / 2,
+                y: contentView.bounds.height - (toolbarHeight + size) / 2,
                 width: size,
                 height: size
             )
@@ -255,11 +422,14 @@ final class PasswordManagerCoordinator: NSObject {
         guard let window = windowForKeyButton.object(forKey: sender),
               let controller = window.windowController as? BrowserWindowController,
               let tab = controller.activeTab,
-              let host = URL(string: tab.urlString)?.host,
-              let credential = PasswordStore.credential(profileName: tab.profileName, origin: host)
+              let host = URL(string: tab.urlString)?.host
         else {
             return
         }
+        // Cached (the poll that made this icon visible already warmed it) --
+        // and never a blocking Keychain call on the main thread regardless,
+        // per browser-le4.1.
+        guard let credential = cachedCredential(profileName: tab.profileName, host: host) else { return }
         tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password))
     }
 }

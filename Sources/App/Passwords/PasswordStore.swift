@@ -1,6 +1,15 @@
 import Foundation
 import Security
 
+extension Notification.Name {
+    /// Posted after any successful PasswordStore write (save or delete).
+    /// PasswordManagerCoordinator caches Keychain lookups (they happen on a
+    /// 0.5s poll and a blocking Keychain call must never reach the main
+    /// thread -- see browser-le4.1), so it needs to know when a cached
+    /// answer has gone stale.
+    static let passwordStoreDidChange = Notification.Name("dev.stroud.browser.passwordStoreDidChange")
+}
+
 /// One saved credential, as listed in the Passwords settings pane -- never
 /// carries the password itself (see PasswordStore.password(profileName:
 /// origin:username:) for the one place that's read back, gated by Touch ID).
@@ -85,7 +94,25 @@ enum PasswordStore {
         var addQuery = query
         addQuery[kSecValueData as String] = Data(password.utf8)
         addQuery[kSecAttrLabel as String] = "\(profileName): \(server)"
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        let saved = SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        if saved {
+            postDidChange()
+        }
+        return saved
+    }
+
+    /// Always delivered on the main thread -- `save`/`delete` may be called
+    /// from the background queue PasswordManagerCoordinator uses to keep
+    /// blocking Keychain calls off the main thread, and every observer of
+    /// this notification is UI-layer state.
+    private static func postDidChange() {
+        if Thread.isMainThread {
+            NotificationCenter.default.post(name: .passwordStoreDidChange, object: nil)
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .passwordStoreDidChange, object: nil)
+            }
+        }
     }
 
     /// The single saved credential for `origin` in this profile, if any --
@@ -164,6 +191,10 @@ enum PasswordStore {
             kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
         ]
         let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        let deleted = status == errSecSuccess || status == errSecItemNotFound
+        if deleted {
+            postDidChange()
+        }
+        return deleted
     }
 }
