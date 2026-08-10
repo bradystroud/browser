@@ -53,10 +53,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before anything else happened to touch either singleton.
         _ = ShortcutsOverlayController.shared
         _ = TabCyclingController.shared
-        // Same reasoning, one layer removed: this one registers notification
-        // observers in its own init() and must be listening before the first
-        // click into an omnibox (browser-5kq.9).
-        _ = OmniboxStartPanelController.shared
+        // DISABLED (browser-5kq.10). The omnibox start panel crashes the whole
+        // browser on omnibox focus and neither attempt at a fix survived real
+        // use. Ordering *any* window on screen while the omnibox holds focus
+        // walks the window ordering group, which notifies macOS's own
+        // out-of-process completion-list view (attached to the focused
+        // NSTextField) about a window that isn't its own; it asserts, and the
+        // uncaught exception is fatal. addChildWindow was blamed first; a
+        // standalone panel ordered front by window level crashed identically,
+        // which is what rules out the whole "show a window on focus" approach
+        // rather than one API within it. The code is left in place, and
+        // deliberately unreferenced, for whoever solves this properly.
 
         // History/Bookmarks menus are single global NSMenus (the menu bar
         // isn't per-window) but their dynamic sections are per-profile --
