@@ -120,20 +120,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// The Y coordinate, in window.contentView's own coordinate space, of
     /// the real web content area's top edge -- i.e. immediately below all
     /// chrome (toolbar/omnibox row + tab strip), whichever one of those
-    /// currently sits on top. Every floating overlay that positions itself
-    /// directly against window.contentView rather than as a proper sibling
-    /// of contentContainerView (the Reader button, the find bar, the
-    /// password/autofill key & fill icons and their save-prompt anchors)
-    /// should derive its top inset from this instead of hardcoding its own
-    /// copy of the tab-strip/toolbar heights -- several of those drifted out
-    /// of sync here before (toolbarHeight grew 36 -> 44, and browser-0y1
-    /// flipped the chrome order) and silently pushed every one of them
-    /// down into the tab strip, overlapping the mute/close buttons living
-    /// there. contentContainerView's own [.width, .height] autoresizing
-    /// mask keeps its frame correct across window resizes with no
-    /// recomputation needed here -- this is just a read of that live frame,
-    /// never a cached/duplicated constant.
+    /// currently sits on top. contentContainerView's own [.width, .height]
+    /// autoresizing mask keeps its frame correct across window resizes with
+    /// no recomputation needed here -- this is just a read of that live
+    /// frame, never a cached/duplicated constant.
+    ///
+    /// NOT a safe home for a floating overlay added directly to
+    /// window.contentView: anything positioned *below* this line overlaps
+    /// contentContainerView's own bounds, where CEF's own hosted content
+    /// view lives, and CEF's compositing surface silently paints over any
+    /// AppKit sibling occupying that same region regardless of normal
+    /// addSubview z-order -- confirmed by trial (browser-qpy-overlay-notes:
+    /// a button positioned here never appeared in a real screenshot, the
+    /// identical button positioned above this line, inside the chrome,
+    /// rendered immediately). Use toolbarRowHeight below to stay inside the
+    /// toolbar band instead, which does render reliably.
     var contentAreaTopY: CGFloat { contentContainerView.frame.maxY }
+
+    /// The toolbar/omnibox row's own height. The toolbar always occupies
+    /// the top toolbarRowHeight points of window.contentView regardless of
+    /// where the tab strip sits relative to it (see setUpViews), so
+    /// `contentView.bounds.height - toolbarRowHeight` is always that band's
+    /// own bottom edge -- this is the one safe place left for a small
+    /// floating icon overlay (the Reader button, the password/autofill key
+    /// & fill icons) to live: unlike the tab strip, it has no per-tab
+    /// controls (mute/close) to collide with, and unlike the content area
+    /// below contentAreaTopY, it isn't covered by CEF's own compositing.
+    /// Stay clear of the far-left (traffic lights, back/forward, the
+    /// profile pill -- see layoutProfilePill) and the far-right in a
+    /// Private window (privateLabel) when choosing an X position here.
+    var toolbarRowHeight: CGFloat { toolbarView.frame.height }
 
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
@@ -798,10 +814,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// ⌘L's makeFirstResponder call trigger it identically) and from
     /// commitOmniboxNavigation/Escape's own makeFirstResponder(nil) calls,
     /// which resign the field the same way.
-    private func setOmniboxFocused(_ focused: Bool, animated: Bool) {
+    /// `updatesText: false` expands/collapses the pill without touching what
+    /// the field currently displays. That matters when the transition was
+    /// triggered by the user *typing*: NSTextField begins an editing session
+    /// on the first keystroke, so rewriting stringValue here would throw away
+    /// the character they just typed and put the current page's URL back,
+    /// leaving Enter to "navigate" to the page already open. The full URL is
+    /// instead written explicitly by focusOmnibox(_:), the one place focus is
+    /// taken programmatically (⌘L / a new tab), before the editor exists.
+    private func setOmniboxFocused(_ focused: Bool, animated: Bool, updatesText: Bool = true) {
         guard isOmniboxFocused != focused else { return }
         isOmniboxFocused = focused
-        if let tab = activeTab {
+        if updatesText, let tab = activeTab {
             omniboxField.stringValue = focused ? tab.urlString : Self.collapsedOmniboxDisplay(for: tab)
         }
         if animated {
@@ -1521,6 +1545,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     @objc func focusOmnibox(_ sender: Any?) {
+        // Put the full, editable URL in before taking focus: once the field
+        // editor exists, controlTextDidBeginEditing deliberately leaves the
+        // text alone so a keystroke-initiated edit isn't clobbered, so this
+        // is the only place the expanded form gets written.
+        if let tab = activeTab {
+            omniboxField.stringValue = tab.urlString
+        }
         window?.makeFirstResponder(omniboxField)
         omniboxField.currentEditor()?.selectAll(nil)
     }
@@ -1703,7 +1734,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// (a click into the field, or ⌘L's makeFirstResponder call in
     /// focusOmnibox(_:) below) -- expands the omnibox pill (browser-qpy).
     func controlTextDidBeginEditing(_ obj: Notification) {
-        setOmniboxFocused(true, animated: true)
+        // Expand the pill only -- never rewrite the text here. This fires on
+        // the user's first keystroke as well as on a click, and replacing
+        // stringValue mid-edit discards what they just typed (see
+        // setOmniboxFocused's own note).
+        setOmniboxFocused(true, animated: true, updatesText: false)
     }
 
     /// NSTextFieldDelegate -- fires when the field editor resigns (Escape's
