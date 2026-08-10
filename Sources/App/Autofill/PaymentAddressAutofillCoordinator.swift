@@ -53,7 +53,43 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     private static let fillButtonSize: CGFloat = 26
 
+    /// Cached card summaries per profile name. Absent means "not looked up
+    /// yet"; an empty array means "looked up, this profile has no cards."
+    ///
+    /// Every CardStore read happens on `keychainQueue`, never the main
+    /// thread: a card saved under a different code-signing identity makes
+    /// SecItemCopyMatching block on a modal SecurityAgent confirmation
+    /// dialog, which on the main thread is a hard UI freeze for as long as
+    /// that dialog goes unanswered (browser-le4.1 -- reproduced live at 120+
+    /// seconds against PasswordStore, whose fix this mirrors; CardStore uses
+    /// the identical no-explicit-ACL pattern). The 0.5s poll below reads
+    /// only this cache, so the worst case is a fill icon one tick late.
+    private var cardSummariesCache: [String: [StoredCardSummary]] = [:]
+    private var cardLookupsInFlight: Set<String> = []
+    private let keychainQueue = DispatchQueue(label: "dev.stroud.browser.autofill-keychain")
+
     private override init() {}
+
+    /// The cached card summaries for this profile, kicking off a background
+    /// lookup the first time one is asked for. Returns an empty array while
+    /// that lookup is outstanding -- every caller is poll- or click-driven,
+    /// so they pick the real answer up a tick later.
+    private func cachedCards(profileName: String) -> [StoredCardSummary] {
+        if let cached = cardSummariesCache[profileName] {
+            return cached
+        }
+        guard !cardLookupsInFlight.contains(profileName) else { return [] }
+        cardLookupsInFlight.insert(profileName)
+        keychainQueue.async { [weak self] in
+            let cards = CardStore.allCards(profileName: profileName)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.cardSummariesCache[profileName] = cards
+                self.cardLookupsInFlight.remove(profileName)
+            }
+        }
+        return []
+    }
 
     /// Idempotent -- called from BrowserWindow.swift's init, matching
     /// PasswordManagerCoordinator/PageMessageDispatcher's own activation.
@@ -64,6 +100,11 @@ final class PaymentAddressAutofillCoordinator: NSObject {
                 types: ["autofillFieldFocused", "autofillFieldBlurred", "paymentFormSubmit", "addressFormSubmit"]
             ) { [weak self] type, request, requestId, tab in
                 self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+            }
+            NotificationCenter.default.addObserver(
+                forName: .cardStoreDidChange, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.cardSummariesCache.removeAll()
             }
             pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
                 self?.poll()
@@ -121,20 +162,31 @@ final class PaymentAddressAutofillCoordinator: NSObject {
         // just an occasional missed re-prompt for a genuinely different
         // card, never a wrongly-skipped save of a first-time one.
         let last4 = String(digitsOnly.suffix(4))
-        let alreadySaved = CardStore.allCards(profileName: profileName).contains { $0.last4 == last4 }
-        guard !alreadySaved else { return }
 
+        // Resolved before the Keychain hop below, while still on the main
+        // thread -- both are main-thread-only AppKit reads.
         guard let expiry = Self.splitExpiry(month: payload.expMonth, year: payload.expYear, combined: payload.expCombined),
               let controller = activeTabController(for: tab), let anchor = anchor(for: controller)
         else {
             return
         }
 
-        savePrompt.show(message: "Save this card ending \(last4)?", anchorView: anchor) {
-            CardStore.save(
-                profileName: profileName, cardholderName: payload.cardholderName,
-                cardNumber: digitsOnly, expMonth: expiry.month, expYear: expiry.year
-            )
+        // The "do we already have this card?" check is a Keychain read, so
+        // it can't happen inline on the main thread (browser-le4.1) -- hence
+        // deciding and showing asynchronously.
+        keychainQueue.async { [weak self] in
+            let alreadySaved = CardStore.allCards(profileName: profileName).contains { $0.last4 == last4 }
+            DispatchQueue.main.async {
+                guard let self, !alreadySaved, controller.activeTab === tab else { return }
+                self.savePrompt.show(message: "Save this card ending \(last4)?", anchorView: anchor) {
+                    self.keychainQueue.async {
+                        CardStore.save(
+                            profileName: profileName, cardholderName: payload.cardholderName,
+                            cardNumber: digitsOnly, expMonth: expiry.month, expYear: expiry.year
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -223,7 +275,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
             return
         }
         let hasSaved = group == "card"
-            ? !CardStore.allCards(profileName: tab.profileName).isEmpty
+            ? !cachedCards(profileName: tab.profileName).isEmpty
             : !AddressStoreManager.shared.store(forProfileId: tab.profileId).all().isEmpty
         setFillButtonVisible(hasSaved, in: contentView, window: window, group: group, controller: controller)
     }
@@ -283,7 +335,7 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
         let menu = NSMenu()
         if group == "card" {
-            for card in CardStore.allCards(profileName: tab.profileName) {
+            for card in cachedCards(profileName: tab.profileName) {
                 let item = NSMenuItem(
                     title: "\(card.cardholderName) ····\(card.last4)",
                     action: #selector(fillCard(_:)), keyEquivalent: ""
@@ -375,16 +427,27 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     @objc private func fillCard(_ sender: NSMenuItem) {
         guard let (tab, cardId) = sender.representedObject as? (Tab, String),
-              let number = CardStore.cardNumber(profileName: tab.profileName, id: cardId),
-              let summary = CardStore.allCards(profileName: tab.profileName).first(where: { $0.id == cardId })
+              let summary = cachedCards(profileName: tab.profileName).first(where: { $0.id == cardId })
         else {
             return
         }
-        tab.executeJavaScript(AutofillFillScript.fillCardScript(
-            cardholderName: summary.cardholderName, cardNumber: number,
-            expMonth: String(format: "%02d", summary.expMonth), expYear: String(summary.expYear),
-            combinedExpiry: String(format: "%02d/%02d", summary.expMonth, summary.expYear % 100)
-        ))
+        // Reading the full number is a Keychain read, and a click is no
+        // safer a place to block the main thread than a poll is
+        // (browser-le4.1) -- so it hops off and back before touching the
+        // page. SECURITY: `number` only ever flows into the fill script;
+        // never logged, never written anywhere.
+        let profileName = tab.profileName
+        keychainQueue.async { [weak tab] in
+            guard let number = CardStore.cardNumber(profileName: profileName, id: cardId) else { return }
+            DispatchQueue.main.async {
+                guard let tab else { return }
+                tab.executeJavaScript(AutofillFillScript.fillCardScript(
+                    cardholderName: summary.cardholderName, cardNumber: number,
+                    expMonth: String(format: "%02d", summary.expMonth), expYear: String(summary.expYear),
+                    combinedExpiry: String(format: "%02d/%02d", summary.expMonth, summary.expYear % 100)
+                ))
+            }
+        }
     }
 
     @objc private func fillAddress(_ sender: NSMenuItem) {

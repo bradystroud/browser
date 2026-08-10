@@ -96,7 +96,22 @@ public enum CardStore {
         addQuery[kSecAttrGeneric as String] = metadataData
         addQuery[kSecAttrLabel as String] = "\(profileName): \(cardholderName) ····\(metadata.last4)"
         guard SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess else { return nil }
+        postDidChange()
         return id
+    }
+
+    /// Always delivered on the main thread -- `save`/`delete` may be called
+    /// from a background queue (the app keeps blocking Keychain calls off the
+    /// main thread; see browser-le4.1), and every observer of this
+    /// notification is UI-layer state.
+    private static func postDidChange() {
+        if Thread.isMainThread {
+            NotificationCenter.default.post(name: .cardStoreDidChange, object: nil)
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .cardStoreDidChange, object: nil)
+            }
+        }
     }
 
     /// Every saved card's non-secret summary in this profile, for the
@@ -160,6 +175,17 @@ public enum CardStore {
             kSecAttrService as String: service(profileName: profileName),
         ]
         let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        let deleted = status == errSecSuccess || status == errSecItemNotFound
+        if deleted {
+            postDidChange()
+        }
+        return deleted
     }
+}
+
+extension Notification.Name {
+    /// Posted after any successful CardStore write. Callers that cache card
+    /// summaries to keep Keychain reads off the main thread (see
+    /// browser-le4.1) use this to know when a cached answer is stale.
+    public static let cardStoreDidChange = Notification.Name("dev.stroud.browser.cardStoreDidChange")
 }
