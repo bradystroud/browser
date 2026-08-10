@@ -509,6 +509,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             menu.addItem(.separator())
             menu.addItem(self.moveToProfileMenuItem())
         }
+        // Focus (a click or ⌘L) swaps the collapsed display for the full,
+        // selected URL -- see OmniboxField.becomeFirstResponder().
+        omniboxField.expandedTextProvider = { [weak self] in self?.activeTab?.urlString }
         // Real content lives in contentContainer, not omniboxContainerView
         // itself (browser-0y1) -- see GlassBackgroundView.contentContainer's
         // own doc comment for why a plain sibling subview of the glass view

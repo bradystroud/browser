@@ -14,6 +14,28 @@ final class OmniboxField: NSTextField {
     /// onPageMessage for the same shape).
     var onBuildContextMenu: ((NSMenu) -> Void)?
 
+    /// Supplies the full, editable URL to show once this field takes focus.
+    /// Set by BrowserWindowController; same lightweight closure pattern as
+    /// onBuildContextMenu above.
+    var expandedTextProvider: (() -> String?)?
+
+    /// Swaps in the full URL and selects it the moment focus arrives -- so a
+    /// click (or ⌘L) behaves like Safari's address bar: the whole URL is
+    /// selected and the next keystroke replaces it.
+    ///
+    /// This has to happen here rather than in controlTextDidBeginEditing,
+    /// which fires on the first *keystroke* too: rewriting the text there
+    /// discards the character the user just typed and restores the old URL,
+    /// so Enter would re-navigate to the page already open.
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted, let text = expandedTextProvider?() {
+            stringValue = text
+            currentEditor()?.selectAll(nil)
+        }
+        return accepted
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = super.menu(for: event) ?? NSMenu()
         onBuildContextMenu?(menu)
