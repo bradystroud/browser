@@ -114,8 +114,11 @@ set(BROWSER_SWIFT_SRCS
   Blocking/PrivacyPaneController.swift
   Blocking/ContentBlockerToolbarController.swift
   StartPage/StartPageSettings.swift
+  StartPage/StartPageSections.swift
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
+  Omnibox/OmniboxStartPanelView.swift
+  Omnibox/OmniboxStartPanelController.swift
   StartPage/StartPageSettingsPaneController.swift
   StartPage/StartPageSettingsCoordinator.swift
   Import/BookmarkImportCoordinator.swift
