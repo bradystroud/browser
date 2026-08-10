@@ -17,11 +17,6 @@ import AppKit
 /// chosen over the alternatives.
 final class ReaderModeController: NSObject {
     private static let buttonSize: CGFloat = 26
-    /// Must match BrowserWindow/FindBarController's own hardcoded tab-strip
-    /// (32) + toolbar (36) height constant -- see
-    /// FindBarController.contentTopInset's doc comment for why this is
-    /// duplicated rather than shared.
-    private static let contentTopInset: CGFloat = 32 + 36
 
     private weak var window: NSWindow?
     private var buttonView: NSButton?
@@ -42,8 +37,12 @@ final class ReaderModeController: NSObject {
         }
     }
 
+    private var windowController: BrowserWindowController? {
+        window?.windowController as? BrowserWindowController
+    }
+
     private func currentTab() -> Tab? {
-        (window?.windowController as? BrowserWindowController)?.activeTab
+        windowController?.activeTab
     }
 
     private func poll() {
@@ -137,6 +136,16 @@ final class ReaderModeController: NSObject {
         guard let window, let contentView = window.contentView else { return }
         if buttonView == nil {
             let size = Self.buttonSize
+            // Vertically centered within the toolbar row itself -- NOT
+            // hanging down into the content area (that region is covered by
+            // CEF's own hosted content view regardless of normal AppKit
+            // z-order, confirmed by trial: identical button, invisible
+            // there, visible here) and NOT reaching into the tab strip
+            // (where it would land right back on top of the mute/close
+            // buttons this was reported overlapping in the first place).
+            // See BrowserWindowController.toolbarRowHeight's own doc
+            // comment.
+            let toolbarHeight = windowController?.toolbarRowHeight ?? 44
             let button = NSButton(
                 image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: "Reader")!,
                 target: self, action: #selector(toggle)
@@ -144,7 +153,7 @@ final class ReaderModeController: NSObject {
             button.isBordered = false
             button.frame = NSRect(
                 x: contentView.bounds.width - size - 12,
-                y: contentView.bounds.height - Self.contentTopInset + (36 - size) / 2,
+                y: contentView.bounds.height - (toolbarHeight + size) / 2,
                 width: size,
                 height: size
             )

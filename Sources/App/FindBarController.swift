@@ -16,13 +16,6 @@ import AppKit
 /// action -- see docs/ai-tasks/find-in-page-notes.md.
 final class FindBarController: NSObject, NSTextFieldDelegate {
     private static let barSize = NSSize(width: 320, height: 32)
-    /// Must match BrowserWindowController.setUpViews()'s tabStripHeight (32)
-    /// + toolbarHeight (36) so the bar sits just below the toolbar, over the
-    /// top of the web content, rather than overlapping the toolbar/tab strip
-    /// -- duplicated here (not read from that controller) specifically to
-    /// avoid touching BrowserWindowController.swift; if that layout ever
-    /// changes, this constant needs updating too.
-    private static let contentTopInset: CGFloat = 32 + 36
 
     private weak var window: NSWindow?
     private var barView: NSView?
@@ -58,7 +51,11 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
     }
 
     private func currentTab() -> Tab? {
-        (window?.windowController as? BrowserWindowController)?.activeTab
+        windowController?.activeTab
+    }
+
+    private var windowController: BrowserWindowController? {
+        window?.windowController as? BrowserWindowController
     }
 
     // MARK: - View setup
@@ -67,9 +64,23 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
         guard let contentView = window.contentView else { return }
         let size = Self.barSize
         let margin: CGFloat = 12
+        // NOTE (browser-qpy-overlay-notes): positioning below
+        // contentAreaTopY -- i.e. overlapping contentContainerView's own
+        // bounds, where CEF's hosted content view lives -- was confirmed
+        // during that task to make a plain NSButton invisible regardless of
+        // normal AppKit z-order (CEF's compositing surface silently paints
+        // over it). This container is layer-backed (wantsLayer below)
+        // rather than a plain view, which may or may not composite
+        // differently -- not verified either way, since opening the find
+        // bar needs a real ⌘F keystroke this task couldn't send under the
+        // no-synthetic-input rule. If Brady's manual test finds the find
+        // bar doesn't actually appear, this is why -- see
+        // ReaderModeController.setButtonVisible for the toolbar-row
+        // placement that's confirmed to render.
+        let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
         let container = NSView(frame: NSRect(
             x: contentView.bounds.width - size.width - margin,
-            y: contentView.bounds.height - Self.contentTopInset - size.height - margin,
+            y: contentAreaTopY - size.height - margin,
             width: size.width,
             height: size.height
         ))

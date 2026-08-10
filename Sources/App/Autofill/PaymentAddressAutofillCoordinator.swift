@@ -51,7 +51,6 @@ final class PaymentAddressAutofillCoordinator: NSObject {
     private var windowForFillButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
     private var anchorViews = NSMapTable<NSView, NSView>.weakToWeakObjects()
 
-    private static let contentTopInset: CGFloat = 32 + 36
     private static let fillButtonSize: CGFloat = 26
 
     private override init() {}
@@ -196,23 +195,23 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     private func anchor(for controller: BrowserWindowController) -> NSView? {
         guard let window = controller.window, let contentView = window.contentView else { return nil }
-        return anchorView(in: contentView)
+        return anchorView(in: contentView, controller: controller)
     }
 
-    private func anchorView(in contentView: NSView) -> NSView {
+    private func anchorView(in contentView: NSView, controller: BrowserWindowController) -> NSView {
         if let existing = anchorViews.object(forKey: contentView) {
-            existing.frame = Self.anchorFrame(in: contentView)
+            existing.frame = Self.anchorFrame(in: contentView, controller: controller)
             return existing
         }
-        let anchor = NSView(frame: Self.anchorFrame(in: contentView))
+        let anchor = NSView(frame: Self.anchorFrame(in: contentView, controller: controller))
         anchor.autoresizingMask = [.minYMargin, .width]
         contentView.addSubview(anchor)
         anchorViews.setObject(anchor, forKey: contentView)
         return anchor
     }
 
-    private static func anchorFrame(in contentView: NSView) -> NSRect {
-        NSRect(x: contentView.bounds.width / 2 - 150, y: contentView.bounds.height - contentTopInset, width: 300, height: 1)
+    private static func anchorFrame(in contentView: NSView, controller: BrowserWindowController) -> NSRect {
+        NSRect(x: contentView.bounds.width / 2 - 150, y: controller.contentAreaTopY, width: 300, height: 1)
     }
 
     // MARK: - Fill icon
@@ -220,16 +219,16 @@ final class PaymentAddressAutofillCoordinator: NSObject {
     private func updateFillButton(for controller: BrowserWindowController) {
         guard let window = controller.window, let contentView = window.contentView else { return }
         guard let tab = controller.activeTab, let group = focusedGroup.object(forKey: tab) as String? else {
-            setFillButtonVisible(false, in: contentView, window: window, group: nil)
+            setFillButtonVisible(false, in: contentView, window: window, group: nil, controller: controller)
             return
         }
         let hasSaved = group == "card"
             ? !CardStore.allCards(profileName: tab.profileName).isEmpty
             : !AddressStoreManager.shared.store(forProfileId: tab.profileId).all().isEmpty
-        setFillButtonVisible(hasSaved, in: contentView, window: window, group: group)
+        setFillButtonVisible(hasSaved, in: contentView, window: window, group: group, controller: controller)
     }
 
-    private func setFillButtonVisible(_ visible: Bool, in contentView: NSView, window: NSWindow, group: String?) {
+    private func setFillButtonVisible(_ visible: Bool, in contentView: NSView, window: NSWindow, group: String?, controller: BrowserWindowController) {
         let button: NSButton
         if let existing = fillButtons.object(forKey: contentView) {
             button = existing
@@ -245,10 +244,12 @@ final class PaymentAddressAutofillCoordinator: NSObject {
             // Third icon slot from the right, after Reader's (width - size
             // - 12) and the password manager's key icon (width - size*2 -
             // 24) -- see PasswordManagerCoordinator's own doc comment on
-            // that spacing.
+            // that spacing, and on centering within the toolbar row rather
+            // than hanging into the content area or the tab strip.
+            let toolbarHeight = controller.toolbarRowHeight
             button.frame = NSRect(
                 x: contentView.bounds.width - size * 3 - 36,
-                y: contentView.bounds.height - Self.contentTopInset + (36 - size) / 2,
+                y: contentView.bounds.height - (toolbarHeight + size) / 2,
                 width: size,
                 height: size
             )
