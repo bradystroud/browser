@@ -81,12 +81,24 @@ final class OmniboxStartPanelTileView: NSView {
 
     private func loadFavicon(profileId: String) {
         guard let host = URL(string: tile.url)?.host, !host.isEmpty else { return }
+        // The cached case is resolved before the panel is ever drawn, so an
+        // already-known site never shows its monogram for a frame and then
+        // swaps -- FaviconLoader's async path always calls back at least one
+        // run-loop turn later, even on a hit.
+        if let cached = FaviconLoader.shared.cachedFaviconImage(host: host, profileId: profileId) {
+            showFavicon(cached)
+            return
+        }
         FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileId: profileId) { [weak self] image in
             guard let self, let image else { return }
-            self.iconImageView.image = image
-            self.iconImageView.isHidden = false
-            self.monogramLabel.isHidden = true
+            self.showFavicon(image)
         }
+    }
+
+    private func showFavicon(_ image: NSImage) {
+        iconImageView.image = image
+        iconImageView.isHidden = false
+        monogramLabel.isHidden = true
     }
 
     // MARK: - Hover / press feedback

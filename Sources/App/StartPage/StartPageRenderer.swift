@@ -10,12 +10,16 @@ import Foundation
 /// changes -- it flows through the exact same EngineTab.loadURL(_:) every
 /// other navigation already uses.
 ///
-/// Favicons are deliberately NOT fetched for tiles: FaviconLoader's fetch is
-/// async and happens after render, so embedding real favicons here would
-/// mean either blocking the page render on network calls or re-rendering
-/// after each one arrives. Each tile instead shows a plain colored-circle
-/// monogram (the title's first letter) -- the same fallback most browsers
-/// already show before a real favicon has loaded.
+/// Tile favicons come from FaviconLoader's per-profile on-disk cache, read
+/// synchronously at render time and inlined as `data:` URIs. Inlining is
+/// forced by the page being a `data:` URL itself: that is an opaque origin
+/// with no access to `file:` resources, so an icon it can display has to
+/// travel inside the document. The read is cache-hit-only and never fetches,
+/// which is what keeps a purely local render local -- a host with nothing
+/// cached falls back to the monogram (the title's first letter) rather than
+/// making the page wait on a network round trip or re-render as icons land.
+/// The fallback self-heals: ordinary browsing populates the cache, and
+/// everything in Frequently Visited has been visited by definition.
 enum StartPageRenderer {
     /// The tab title for every start-page tab, private or not -- also the
     /// generated HTML's own `<title>` element. Without a real `<title>`,
@@ -54,7 +58,7 @@ enum StartPageRenderer {
             // in this list at all when its own setting is on.
             sections += built.tiles.isEmpty
                 ? emptySection(title: built.title, message: built.emptyMessage)
-                : section(title: built.title, tiles: built.tiles)
+                : section(title: built.title, tiles: built.tiles, profileId: profileId)
         }
         if sections.isEmpty {
             // Both sections turned off in Settings -- the one case neither
@@ -105,13 +109,11 @@ enum StartPageRenderer {
         """
     }
 
-    private static func section(title: String, tiles: [StartPageTile]) -> String {
+    private static func section(title: String, tiles: [StartPageTile], profileId: String) -> String {
         let tileHTML = tiles.map { tile -> String in
-            let monogramSource = tile.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let monogram = monogramSource.isEmpty ? "?" : String(monogramSource.prefix(1)).uppercased()
             return """
             <a class="tile" href="\(escape(tile.url))">
-              <span class="monogram">\(escape(monogram))</span>
+              \(thumb(for: tile, profileId: profileId))
               <span class="tile-title">\(escape(tile.title))</span>
             </a>
             """
@@ -123,6 +125,20 @@ enum StartPageRenderer {
         <div class="grid">\(tileHTML)</div>
         </section>
         """
+    }
+
+    /// A tile's 56x56 icon well: the site's cached favicon when there is one,
+    /// otherwise the monogram. Both shapes carry the same box metrics so a
+    /// mixed grid stays on one baseline.
+    private static func thumb(for tile: StartPageTile, profileId: String) -> String {
+        if let host = URL(string: tile.url)?.host, !host.isEmpty,
+           let data = FaviconLoader.shared.cachedFaviconData(host: host, profileId: profileId) {
+            let base64 = data.base64EncodedString()
+            return "<span class=\"thumb\"><img class=\"icon\" src=\"data:image/png;base64,\(base64)\" alt=\"\"></span>"
+        }
+        let monogramSource = tile.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let monogram = monogramSource.isEmpty ? "?" : String(monogramSource.prefix(1)).uppercased()
+        return "<span class=\"thumb monogram\">\(escape(monogram))</span>"
     }
 
     /// A section header with an actionable message instead of a tile grid
@@ -193,7 +209,7 @@ enum StartPageRenderer {
           text-decoration: none;
           color: inherit;
         }
-        .monogram {
+        .thumb {
           width: 56px;
           height: 56px;
           border-radius: 14px;
@@ -201,9 +217,16 @@ enum StartPageRenderer {
           display: flex;
           align-items: center;
           justify-content: center;
+          margin-bottom: 8px;
+        }
+        .monogram {
           font-size: 22px;
           font-weight: 600;
-          margin-bottom: 8px;
+        }
+        .icon {
+          width: 32px;
+          height: 32px;
+          object-fit: contain;
         }
         .tile-title {
           font-size: 12px;
