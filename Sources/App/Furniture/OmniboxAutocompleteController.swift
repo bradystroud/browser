@@ -36,8 +36,14 @@ private final class SuggestionRowView: NSTableCellView {
 
 /// Keyboard-navigable omnibox autocomplete dropdown, fed by
 /// HistoryStore.autocomplete(query:) for the window's profile. Owned one per
-/// BrowserWindowController; positioned as a child window directly under the
-/// omnibox field so it moves/closes with the parent window automatically.
+/// BrowserWindowController; positioned directly under the omnibox field.
+///
+/// This used to attach the panel with `addChildWindow(_:ordered:)`, which is
+/// fatal in this app -- it rebuilds the browser window's whole ordering group
+/// and can take an out-of-process `NSRemoteView` down with it, killing the
+/// browser (browser-5kq.10; the same call crashed the omnibox start panel on
+/// Brady's machine). It's now a standalone panel kept in place by an
+/// AnchoredPanelTracker; see that class for the full crash story.
 final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private static let rowHeight: CGFloat = 36
     private static let maxVisibleRows = 6
@@ -46,6 +52,8 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
     private let tableView = NSTableView()
     private(set) var suggestions: [HistorySuggestion] = []
     private var selectedIndex: Int = -1
+    private var tracker: AnchoredPanelTracker?
+    private weak var anchorField: NSTextField?
 
     var isVisible: Bool { panel.isVisible }
 
@@ -60,9 +68,12 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
             defer: false
         )
         panel.hasShadow = true
+        // Floats above the browser window by level, not by parenthood
+        // (browser-5kq.10).
         panel.level = .popUpMenu
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.hidesOnDeactivate = true
         super.init()
         setUpTableView()
     }
@@ -103,14 +114,28 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         tableView.reloadData()
         position(below: field, in: window)
         if !isVisible {
-            window.addChildWindow(panel, ordered: .above)
             panel.orderFront(nil)
+            anchorField = field
+            tracker = AnchoredPanelTracker(
+                anchorWindow: window,
+                onReposition: { [weak self] in self?.reposition() },
+                onDismiss: { [weak self] in self?.dismiss() }
+            )
         }
     }
 
+    /// Re-anchors after the browser window moved or resized -- what the old
+    /// child-window relationship used to handle implicitly (browser-5kq.10).
+    private func reposition() {
+        guard isVisible, let field = anchorField, let window = field.window else { return }
+        position(below: field, in: window)
+    }
+
     func dismiss() {
+        tracker?.stop()
+        tracker = nil
+        anchorField = nil
         guard isVisible else { return }
-        panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
         suggestions = []
         selectedIndex = -1

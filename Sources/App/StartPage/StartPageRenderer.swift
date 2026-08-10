@@ -36,30 +36,25 @@ enum StartPageRenderer {
         return "data:text/html;charset=utf-8;base64,\(base64)"
     }
 
-    private struct Tile {
-        let title: String
-        let url: String
-    }
-
     private static func renderHTML(profileId: String) -> String {
         let settings = StartPageSettingsStore.load(forProfileId: profileId)
-        let (favorites, frequentlyVisited) = tileData(profileId: profileId, settings: settings)
+        // Content (and its empty-state wording) comes from StartPageSections,
+        // shared with the omnibox's native focus panel (browser-5kq.9) -- this
+        // file owns only the HTML presentation of it.
+        let content = StartPageSections.build(
+            profileId: profileId, settings: settings, historyKind: .frequentlyVisited
+        )
 
         var sections = ""
-        if settings.showFavorites {
+        for built in content {
             // Actionable even when empty (browser-5kq.7) -- rather than
             // hiding the section entirely, which left no discoverable path
             // from "I'm on a page I like" to "it's in my Favorites grid."
-            // Still says "yet," not e.g. "disabled," since this only shows
-            // when the setting itself is on.
-            sections += favorites.isEmpty
-                ? emptySection(title: "Favorites", message: "No favourites yet — press ⌘D on any page to add one.")
-                : section(title: "Favorites", tiles: favorites)
-        }
-        if settings.showFrequentlyVisited {
-            sections += frequentlyVisited.isEmpty
-                ? emptySection(title: "Frequently Visited", message: "Nothing here yet — browse a bit and your most-visited pages will show up.")
-                : section(title: "Frequently Visited", tiles: frequentlyVisited)
+            // Still says "yet," not e.g. "disabled," since a section is only
+            // in this list at all when its own setting is on.
+            sections += built.tiles.isEmpty
+                ? emptySection(title: built.title, message: built.emptyMessage)
+                : section(title: built.title, tiles: built.tiles)
         }
         if sections.isEmpty {
             // Both sections turned off in Settings -- the one case neither
@@ -110,29 +105,7 @@ enum StartPageRenderer {
         """
     }
 
-    private static func tileData(profileId: String, settings: StartPageSettings) -> (favorites: [Tile], frequentlyVisited: [Tile]) {
-        guard let profile = ProfileManager.shared.profile(id: profileId) else { return ([], []) }
-        let stores = ProfileDataStoreManager.shared.stores(for: profile)
-
-        var favorites: [Tile] = []
-        if settings.showFavorites, let folderId = FavoritesFolder.id(in: stores.bookmarks) {
-            let items = (try? stores.bookmarks.children(of: folderId)) ?? []
-            favorites = items.compactMap { item in
-                guard item.kind == .bookmark, let url = item.url else { return nil }
-                return Tile(title: item.title.isEmpty ? url : item.title, url: url)
-            }
-        }
-
-        var frequentlyVisited: [Tile] = []
-        if settings.showFrequentlyVisited {
-            let entries = (try? stores.history.topFrecent(limit: 8)) ?? []
-            frequentlyVisited = entries.map { Tile(title: $0.title.isEmpty ? $0.url : $0.title, url: $0.url) }
-        }
-
-        return (favorites, frequentlyVisited)
-    }
-
-    private static func section(title: String, tiles: [Tile]) -> String {
+    private static func section(title: String, tiles: [StartPageTile]) -> String {
         let tileHTML = tiles.map { tile -> String in
             let monogramSource = tile.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let monogram = monogramSource.isEmpty ? "?" : String(monogramSource.prefix(1)).uppercased()

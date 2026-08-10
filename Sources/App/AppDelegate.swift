@@ -53,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before anything else happened to touch either singleton.
         _ = ShortcutsOverlayController.shared
         _ = TabCyclingController.shared
+        // Same reasoning, one layer removed: this one registers notification
+        // observers in its own init() and must be listening before the first
+        // click into an omnibox (browser-5kq.9).
+        _ = OmniboxStartPanelController.shared
 
         // History/Bookmarks menus are single global NSMenus (the menu bar
         // isn't per-window) but their dynamic sections are per-profile --
