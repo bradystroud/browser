@@ -14,6 +14,11 @@ import AppKit
 /// one, since this protocol says nothing about where a drag may end.
 protocol TabButtonDragDelegate: AnyObject {
     func tabButton(_ button: TabButtonView, didBeginDragWith event: NSEvent)
+    /// Both of these are also driven by TabStripView's own event monitor, and
+    /// are idempotent for exactly that reason -- see TabStripView's
+    /// continueDrag/endDrag and the notes file's "two paths" section.
+    func tabButton(_ button: TabButtonView, didDragWith event: NSEvent)
+    func tabButton(_ button: TabButtonView, didEndDragWith event: NSEvent)
 }
 
 /// One tab's visual representation in the strip: title + a close button that
@@ -343,18 +348,106 @@ final class TabButtonView: NSView {
         closeButton.isHidden = true
     }
 
+    /// Makes the whole pill one mouse target, apart from its two real buttons.
+    ///
+    /// Without this, a press lands on whichever subview happens to be under
+    /// the pointer -- the `NSGlassEffectView`, its `contentView`, the favicon
+    /// `NSImageView`, or (over most of the pill's width) the title
+    /// `NSTextField`. Only some of those forward a mouse-down up the responder
+    /// chain: `NSTextField` is an `NSControl`, and a control consumes
+    /// `mouseDown` in its cell's tracking rather than passing it to the next
+    /// responder, so a press starting on the title text reached neither
+    /// selection nor a drag. Returning `self` for the whole pill means the
+    /// entire mouse sequence -- down, dragged, up -- is delivered here
+    /// directly, with no responder-chain forwarding to depend on.
+    ///
+    /// The close and speaker buttons are deliberately still their own targets;
+    /// they must keep receiving their own clicks.
+    /// The two nested buttons are matched against their own frames rather than
+    /// left to `super.hitTest`, because the glass view doesn't hand its
+    /// descendants back either -- a press over the close button resolves to
+    /// the `NSGlassEffectView` just like everywhere else on the pill, so
+    /// asking `super` "is this the close button?" would always answer no and
+    /// quietly make both buttons unclickable. Their frames live in
+    /// `contentContainer`, which fills these bounds at the same origin, so
+    /// they compare directly against a point in this view's coordinates.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return super.hitTest(point) }
+        let local = convert(point, from: superview)
+        guard bounds.contains(local) else { return nil }
+        if !closeButton.isHidden, closeButton.frame.contains(local) { return closeButton }
+        if !audioButton.isHidden, audioButton.frame.contains(local) { return audioButton }
+        return self
+    }
+
+    /// What AppKit's ordinary subview descent returns for `point`, i.e. what
+    /// a press here would have landed on before the override above existed.
+    /// Recorded by the diagnostics probe so the override's necessity stays
+    /// evidence rather than assertion.
+    func hitTestIgnoringOverride(_ point: NSPoint) -> NSView? {
+        super.hitTest(point)
+    }
+
+    /// The close button's centre in this view's coordinates, and whether it's
+    /// currently a hit-test candidate -- for the diagnostics probe, which
+    /// needs to check the one press the drag work must not break.
+    var closeButtonProbePoint: NSPoint { NSPoint(x: closeButton.frame.midX, y: closeButton.frame.midY) }
+
+    /// The frame the point above came from -- logged alongside it so a probe
+    /// that measured an un-laid-out button is obvious rather than misread as
+    /// a real hit-testing failure.
+    var closeButtonProbeFrame: NSRect { closeButton.frame }
+
+    /// Reveals the close button for the duration of `body`, so a probe can ask
+    /// what a press over it resolves to without waiting for a real hover.
+    func withCloseButtonVisible<T>(_ body: () -> T) -> T {
+        let wasHidden = closeButton.isHidden
+        closeButton.isHidden = false
+        defer { closeButton.isHidden = wasHidden }
+        return body()
+    }
+
+    /// Identifies a probe's hit result against this pill's own subviews, which
+    /// are otherwise private and would just read as "NSButton" in the log.
+    func describeHit(_ view: NSView?) -> String {
+        switch view {
+        case let hit where hit === self: return "TabButtonView"
+        case let hit where hit === closeButton: return "closeButton"
+        case let hit where hit === audioButton: return "audioButton"
+        case let hit?: return String(describing: type(of: hit))
+        default: return "nil"
+        }
+    }
+
     /// Selection happens on mouse *down*, before any drag is known about --
     /// same as Safari, and what makes "a click that never moved still selects
     /// the tab" fall out for free rather than needing a movement threshold to
     /// resolve first (browser-rhi.6). Dragging a background tab therefore also
     /// activates it, which is again Safari's behavior.
-    ///
-    /// The close and speaker buttons are real NSButtons inside contentContainer
-    /// and swallow their own mouse-downs, so neither selection nor a drag ever
-    /// starts from clicking one.
     override func mouseDown(with event: NSEvent) {
+        TabDragDiagnostics.record("mouseDown", [
+            "tabIndex": index,
+            "receiver": String(describing: type(of: self)),
+            "isPinned": isPinned,
+            "hasDragDelegate": dragDelegate != nil,
+            "locationInWindow": TabDragDiagnostics.describe(NSRect(origin: event.locationInWindow, size: .zero)),
+            "modifiers": event.modifierFlags.rawValue
+        ])
         onSelect?()
         dragDelegate?.tabButton(self, didBeginDragWith: event)
+    }
+
+    /// Belt and braces with TabStripView's event monitor: whichever of the two
+    /// delivers a given event first wins, and the second is a no-op. The
+    /// monitor alone was the original design and shipped not working; rather
+    /// than swap one single point of failure for another, both paths are live
+    /// and the handlers they call were made idempotent.
+    override func mouseDragged(with event: NSEvent) {
+        dragDelegate?.tabButton(self, didDragWith: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragDelegate?.tabButton(self, didEndDragWith: event)
     }
 
     /// Right-click/Control-click context menu -- built fresh each time (not

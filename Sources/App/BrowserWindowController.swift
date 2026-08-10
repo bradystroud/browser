@@ -1119,10 +1119,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// "move a tab anywhere" entry point (pin/group changes go through
     /// movePinState/moveTab(at:toGroup:), which do maintain it).
     func reorderTab(at index: Int, toIndex destination: Int) {
-        guard tabs.indices.contains(index), tabs.indices.contains(destination), index != destination else { return }
+        guard tabs.indices.contains(index), tabs.indices.contains(destination), index != destination else {
+            TabDragDiagnostics.record("modelMoveRejected", [
+                "sourceIndex": index, "destinationIndex": destination, "tabCount": tabs.count
+            ])
+            return
+        }
         let activeTabObject = activeTab
         let tab = tabs.remove(at: index)
         tabs.insert(tab, at: destination)
+        TabDragDiagnostics.record("modelMoveApplied", [
+            "sourceIndex": index, "destinationIndex": destination,
+            "order": tabs.map { $0.displayTitle }
+        ])
         reloadAfterReorder(activeTabObject: activeTabObject)
     }
 

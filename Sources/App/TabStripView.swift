@@ -127,6 +127,10 @@ final class TabStripView: NSView {
     /// In-flight drag-to-reorder (browser-rhi.6), nil the rest of the time.
     private var drag: DragSession?
 
+    /// `--drag-selftest` runs once per strip, from layout -- see
+    /// runDragSelfTestIfRequested.
+    private var hasRunDragSelfTest = false
+
     /// Bumped by every reload. A drop's commit is deferred by the length of
     /// its settle animation, so this is what tells that deferred commit its
     /// captured tab indices went stale underneath it (the strip was rebuilt
@@ -476,7 +480,59 @@ final class TabStripView: NSView {
             width: 20,
             height: 20
         )
+
+        if case .tab(let firstButton)? = stripItems.first {
+            TabDragDiagnostics.probeHitTestingOnce(button: firstButton)
+        }
+        runDragSelfTestIfRequested()
     }
+
+    /// `--drag-selftest`: drives a whole press-drag-release through the same
+    /// entry points AppKit calls, using fabricated events, and lets the
+    /// diagnostics file record what came out the far end.
+    ///
+    /// This is emphatically *not* a substitute for a real drag -- it cannot
+    /// prove AppKit delivers those events to this view in the first place,
+    /// which is precisely what was broken. What it does prove is everything
+    /// downstream of delivery: the threshold, the section clamp, the
+    /// neighbour swaps, the index arithmetic and the model move. None of that
+    /// was reachable by any other non-interactive means, and all of it
+    /// previously shipped on desk-checking alone.
+    private func runDragSelfTestIfRequested() {
+        guard !hasRunDragSelfTest, TabDragDiagnostics.isSelfTestRequested,
+              let window, stripItems.count >= 3,
+              case .tab(let button)? = stripItems.first, button.bounds.width > 0 else { return }
+        hasRunDragSelfTest = true
+
+        func event(_ type: NSEvent.EventType, x: CGFloat) -> NSEvent? {
+            let inWindow = convert(NSPoint(x: x, y: bounds.midY), to: nil)
+            return NSEvent.mouseEvent(
+                with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            )
+        }
+
+        let startX = button.frame.midX
+        // Far enough right to clear two whole slots, so the drag has to swap
+        // twice and the committed index can't accidentally match the source.
+        // +8 so the pill's centre lands clearly past the second slot's
+        // midpoint rather than exactly on it (an exact tie doesn't swap).
+        let endX = startX + button.frame.width * 2 + Self.tabSpacing * 2 + 8
+        TabDragDiagnostics.record("selfTestStart", [
+            "tabIndex": button.index, "startX": Double(startX), "endX": Double(endX),
+            "stripItemCount": stripItems.count
+        ])
+        guard let down = event(.leftMouseDown, x: startX) else { return }
+        tabButton(button, didBeginDragWith: down)
+        for step in 1...8 {
+            let x = startX + (endX - startX) * CGFloat(step) / 8
+            guard let dragged = event(.leftMouseDragged, x: x) else { continue }
+            tabButton(button, didDragWith: dragged)
+        }
+        guard let up = event(.leftMouseUp, x: endX) else { return }
+        tabButton(button, didEndDragWith: up)
+    }
+
 
     /// The frame each entry of `stripItems` should occupy, in the same
     /// left-to-right render order rebuildButtons established. Pinned tabs and
@@ -585,15 +641,29 @@ extension TabStripView: TabButtonDragDelegate {
         // runs its own event loop that a local monitor doesn't see -- the
         // drag would never be told the mouse came back up, and its monitor
         // would outlive it, swallowing every later Escape in the app.
-        guard !event.modifierFlags.contains(.control) else { return }
+        guard !event.modifierFlags.contains(.control) else {
+            TabDragDiagnostics.record("beginDragRefused", ["reason": "control-click", "tabIndex": button.index])
+            return
+        }
         // Any session still standing here never saw its mouse-up; unwind it
         // rather than refuse to start (which would wedge dragging for good).
         endDrag(commit: false)
-        guard let itemIndex = stripItems.firstIndex(where: { $0.isTabButton(button) }) else { return }
+        guard let itemIndex = stripItems.firstIndex(where: { $0.isTabButton(button) }) else {
+            TabDragDiagnostics.record("beginDragRefused", [
+                "reason": "button-not-in-stripItems", "tabIndex": button.index, "stripItemCount": stripItems.count
+            ])
+            return
+        }
         let range = sectionRange(around: itemIndex)
         // A section of one has nowhere to go; don't arm a drag (or a monitor)
         // that could only ever be a no-op.
-        guard range.count > 1 else { return }
+        guard range.count > 1 else {
+            TabDragDiagnostics.record("beginDragRefused", [
+                "reason": "section-of-one", "tabIndex": button.index, "itemIndex": itemIndex,
+                "section": String(describing: sectionKey(for: button))
+            ])
+            return
+        }
 
         var session = DragSession(
             button: button,
@@ -609,27 +679,60 @@ extension TabStripView: TabButtonDragDelegate {
             guard let self, let button = self.drag?.button else { return event }
             switch event.type {
             case .leftMouseDragged:
-                self.continueDrag(button, with: event)
+                self.continueDrag(button, with: event, source: "monitor")
                 return event
             case .leftMouseUp:
-                self.endDrag(commit: true)
+                self.endDrag(commit: true, source: "monitor")
                 return event
             case .keyDown where event.keyCode == 53:
-                self.endDrag(commit: false)
+                self.endDrag(commit: false, source: "escape")
                 return nil
             default:
                 return event
             }
         }
         drag = session
+        TabDragDiagnostics.record("beginDragArmed", [
+            "tabIndex": button.index,
+            "itemIndex": itemIndex,
+            "rangeLower": range.lowerBound,
+            "rangeUpper": range.upperBound,
+            "section": String(describing: sectionKey(for: button)),
+            "startFrame": TabDragDiagnostics.describe(button.frame),
+            "monitorInstalled": session.eventMonitor != nil
+        ])
+        TabDragDiagnostics.probeHitTesting(button: button)
     }
 
-    private func continueDrag(_ button: TabButtonView, with event: NSEvent) {
+    /// Also reachable from the pressed button's own `mouseDragged` -- both
+    /// paths are live on purpose (see TabButtonDragDelegate). Idempotent: the
+    /// pill's position is recomputed from the drag's start frame plus the
+    /// live delta rather than accumulated, and the neighbour swaps below are
+    /// conditional on midpoints already crossed, so handling the same event
+    /// twice lands on exactly the same state as handling it once.
+    func tabButton(_ button: TabButtonView, didDragWith event: NSEvent) {
+        continueDrag(button, with: event, source: "view")
+    }
+
+    func tabButton(_ button: TabButtonView, didEndDragWith event: NSEvent) {
+        endDrag(commit: true, source: "view")
+    }
+
+    private func continueDrag(_ button: TabButtonView, with event: NSEvent, source: String) {
         guard let session = drag, session.button === button else { return }
         let deltaX = convert(event.locationInWindow, from: nil).x - session.startPoint.x
         if !session.didMove {
-            guard abs(deltaX) >= Self.dragMovementThreshold else { return }
+            guard abs(deltaX) >= Self.dragMovementThreshold else {
+                TabDragDiagnostics.record("dragBelowThreshold", [
+                    "source": source, "tabIndex": button.index,
+                    "deltaX": Double(deltaX), "threshold": Double(Self.dragMovementThreshold)
+                ])
+                return
+            }
             drag?.didMove = true
+            TabDragDiagnostics.record("dragThresholdCrossed", [
+                "source": source, "tabIndex": button.index, "deltaX": Double(deltaX)
+            ])
             // Above its neighbours for the rest of the drag, so the pill it
             // slides over never renders on top of the one being dragged.
             glassContentHost.addSubview(button, positioned: .above, relativeTo: nil)
@@ -658,6 +761,10 @@ extension TabStripView: TabButtonDragDelegate {
         }
         guard itemIndex != session.itemIndex else { return }
         drag?.itemIndex = itemIndex
+        TabDragDiagnostics.record("dragReflow", [
+            "source": source, "tabIndex": button.index,
+            "fromItemIndex": session.itemIndex, "toItemIndex": itemIndex
+        ])
         applySlotFrames(animated: true, skipping: button)
     }
 
@@ -689,12 +796,16 @@ extension TabStripView: TabButtonDragDelegate {
     /// committing a drag that actually moved) tells the delegate the new
     /// model position once that settle animation finishes, so the strip isn't
     /// torn down and rebuilt underneath a pill still in flight.
-    private func endDrag(commit: Bool) {
+    private func endDrag(commit: Bool, source: String = "internal") {
         guard let session = drag else { return }
         if let monitor = session.eventMonitor {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        TabDragDiagnostics.record("endDrag", [
+            "source": source, "commit": commit,
+            "tabIndex": session.button.index, "didMove": session.didMove
+        ])
 
         // A click that never moved needs nothing: selection already happened
         // on mouse-down, and no view left its slot.
@@ -703,8 +814,8 @@ extension TabStripView: TabButtonDragDelegate {
             stripItems = session.originalItems
         }
 
-        let source = session.button.index
-        var destination = source
+        let sourceIndex = session.button.index
+        var destination = sourceIndex
         if commit {
             // Every tab in the section, in the order they now render. That
             // section occupies one contiguous run of BrowserWindowController.
@@ -715,7 +826,7 @@ extension TabStripView: TabButtonDragDelegate {
                 if case .tab(let candidate) = stripItems[position] { return candidate.index }
                 return nil
             }
-            if let base = sectionIndices.min(), let offset = sectionIndices.firstIndex(of: source) {
+            if let base = sectionIndices.min(), let offset = sectionIndices.firstIndex(of: sourceIndex) {
                 destination = base + offset
             }
         }
@@ -729,12 +840,21 @@ extension TabStripView: TabButtonDragDelegate {
                 item.view.animator().frame = frames[position]
             }
         }, completionHandler: { [weak self] in
-            guard let self, commit, destination != source else { return }
+            guard let self, commit, destination != sourceIndex else { return }
             // A reload during the settle animation means these indices
             // describe an order the model has already left behind -- the
             // reload's own layout is authoritative, so drop the move.
-            guard generation == self.reloadGeneration else { return }
-            self.delegate?.tabStripView(self, didMoveTabAt: source, toIndex: destination)
+            guard generation == self.reloadGeneration else {
+                TabDragDiagnostics.record("commitDropped", [
+                    "reason": "strip-reloaded-mid-settle",
+                    "sourceIndex": sourceIndex, "destinationIndex": destination
+                ])
+                return
+            }
+            TabDragDiagnostics.record("commit", [
+                "sourceIndex": sourceIndex, "destinationIndex": destination
+            ])
+            self.delegate?.tabStripView(self, didMoveTabAt: sourceIndex, toIndex: destination)
         })
     }
 
