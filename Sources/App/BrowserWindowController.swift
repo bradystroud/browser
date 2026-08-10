@@ -1748,7 +1748,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// or commitOmniboxNavigation's makeFirstResponder(nil) calls, or a
     /// click elsewhere) -- collapses the pill back to domain-only.
     func controlTextDidEndEditing(_ obj: Notification) {
-        setOmniboxFocused(false, animated: true)
+        // Collapse the pill, but do NOT rewrite the text synchronously:
+        // AppKit ends the editing session *before* sending the field's
+        // action, so replacing stringValue here would hand omniboxSubmitted
+        // the current page's URL instead of what the user typed -- Enter
+        // would then "navigate" straight back to the page already open.
+        //
+        // The restore is deferred a run-loop turn instead, by which point
+        // either omniboxSubmitted has run (and commitOmniboxNavigation has
+        // set the resolved URL, so refreshing to the tab's own display is
+        // correct) or the edit was simply abandoned (a click elsewhere),
+        // where restoring the collapsed display is exactly what's wanted.
+        setOmniboxFocused(false, animated: true, updatesText: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isOmniboxFocused, let tab = self.activeTab else { return }
+            self.omniboxField.stringValue = Self.collapsedOmniboxDisplay(for: tab)
+        }
     }
 
     // MARK: - Furniture: history / bookmarks / downloads
