@@ -28,23 +28,24 @@ private struct AddressFormSubmitPayload: Decodable {
 /// owns the one floating fill-icon + one save-prompt popover shown at a
 /// time across the whole app, same patterns PasswordManagerCoordinator
 /// already established for the password manager.
-final class PaymentAddressAutofillCoordinator: NSObject {
+///
+/// Event-driven throughout (browser-g6d): the fill icon is re-evaluated when
+/// a recognized field is focused/blurred, when the window's visible tab
+/// changes or its page navigates (TabLifecycleEvent), and when a background
+/// CardStore lookup lands. It used to be re-derived on a 0.5s poll, purely
+/// because switching *native* tabs fires no DOM blur event in the tab being
+/// left -- TabLifecycleEvent.becameActive is that missing signal.
+final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     static let shared = PaymentAddressAutofillCoordinator()
 
-    private var pollTimer: Timer?
+    private var isActivated = false
     private let savePrompt = SaveAutofillPromptController()
 
-    /// Which group ("card"/"address") the active tab's page currently has
-    /// a recognized field focused in, if any -- updated directly by the
-    /// autofillFieldFocused/autofillFieldBlurred messages (event-driven,
-    /// unlike the password key icon's own "does a credential exist"
-    /// check, which has to be polled since navigation alone can change it
-    /// with no message of its own). Still re-read on every poll tick
-    /// rather than immediately on the message itself, because switching
-    /// *native* tabs doesn't fire a DOM blur event in the tab being left
-    /// (there's no real DOM focus change, just an app-level UI selection),
-    /// so the icon still needs a periodic "is this even the active tab
-    /// anymore" reconciliation the same way the password icon does.
+    /// Which group ("card"/"address") each tab's page currently has a
+    /// recognized field focused in, if any -- set by the
+    /// autofillFieldFocused/autofillFieldBlurred messages, and cleared when
+    /// the tab navigates (a brand-new document has nothing focused until it
+    /// says otherwise).
     private var focusedGroup = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
     private var fillButtons = NSMapTable<NSView, NSButton>.weakToWeakObjects()
@@ -62,8 +63,9 @@ final class PaymentAddressAutofillCoordinator: NSObject {
     /// dialog, which on the main thread is a hard UI freeze for as long as
     /// that dialog goes unanswered (browser-le4.1 -- reproduced live at 120+
     /// seconds against PasswordStore, whose fix this mirrors; CardStore uses
-    /// the identical no-explicit-ACL pattern). The 0.5s poll below reads
-    /// only this cache, so the worst case is a fill icon one tick late.
+    /// the identical no-explicit-ACL pattern). Every main-thread caller
+    /// reads only this cache, so the worst case is a fill icon one Keychain
+    /// round-trip late.
     private var cardSummariesCache: [String: [StoredCardSummary]] = [:]
     private var cardLookupsInFlight: Set<String> = []
     private let keychainQueue = DispatchQueue(label: "dev.stroud.browser.autofill-keychain")
@@ -72,8 +74,9 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     /// The cached card summaries for this profile, kicking off a background
     /// lookup the first time one is asked for. Returns an empty array while
-    /// that lookup is outstanding -- every caller is poll- or click-driven,
-    /// so they pick the real answer up a tick later.
+    /// that lookup is outstanding, and refreshes the fill icon when it lands
+    /// -- with the 0.5s poll gone (browser-g6d) there's no later tick for
+    /// callers to pick the real answer up on.
     private func cachedCards(profileName: String) -> [StoredCardSummary] {
         if let cached = cardSummariesCache[profileName] {
             return cached
@@ -86,6 +89,12 @@ final class PaymentAddressAutofillCoordinator: NSObject {
                 guard let self else { return }
                 self.cardSummariesCache[profileName] = cards
                 self.cardLookupsInFlight.remove(profileName)
+                // Only when there's something to offer: an empty result can't
+                // make the icon appear, and refreshing on it would re-enter
+                // this method for every window on every miss.
+                if !cards.isEmpty {
+                    self.refresh()
+                }
             }
         }
         return []
@@ -94,25 +103,43 @@ final class PaymentAddressAutofillCoordinator: NSObject {
     /// Idempotent -- called from BrowserWindow.swift's init, matching
     /// PasswordManagerCoordinator/PageMessageDispatcher's own activation.
     func activate() {
+        guard !isActivated else { return }
+        isActivated = true
         PageMessageDispatcher.shared.activate()
-        if pollTimer == nil {
-            PageMessageDispatcher.shared.register(
-                types: ["autofillFieldFocused", "autofillFieldBlurred", "paymentFormSubmit", "addressFormSubmit"]
-            ) { [weak self] type, request, requestId, tab in
-                self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
-            }
-            NotificationCenter.default.addObserver(
-                forName: .cardStoreDidChange, object: nil, queue: .main
-            ) { [weak self] _ in
-                self?.cardSummariesCache.removeAll()
-            }
-            pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                self?.poll()
-            }
+        PageMessageDispatcher.shared.register(
+            types: ["autofillFieldFocused", "autofillFieldBlurred", "paymentFormSubmit", "addressFormSubmit"]
+        ) { [weak self] type, request, requestId, tab in
+            self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+        }
+        NotificationCenter.default.addObserver(
+            forName: .cardStoreDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.cardSummariesCache.removeAll()
+            self?.refresh()
+        }
+        TabLifecycleCenter.shared.addObserver(self)
+    }
+
+    func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+        switch event {
+        case .becameActive:
+            // The signal the 0.5s poll existed for: switching native tabs
+            // fires no DOM blur event in the tab being left, so nothing in
+            // the page ever tells us the icon now belongs to a different
+            // page's focus state.
+            updateFillButton(for: controller)
+        case .navigated:
+            // A new document has nothing focused until its own freshly
+            // injected script says so. (The poll never did this, so a stale
+            // icon could survive a navigation until the next blur.)
+            focusedGroup.removeObject(forKey: tab)
+            updateFillButton(for: controller)
+        case .opened, .finishedLoading, .closed:
+            break
         }
     }
 
-    private func poll() {
+    private func refresh() {
         for controller in WindowManager.shared.windowControllers {
             updateFillButton(for: controller)
         }
@@ -132,8 +159,10 @@ final class PaymentAddressAutofillCoordinator: NSObject {
         case "autofillFieldFocused":
             guard let payload = try? JSONDecoder().decode([String: String].self, from: data), let group = payload["group"] else { return }
             focusedGroup.setObject(group as NSString, forKey: tab)
+            updateFillButtonForWindow(of: tab)
         case "autofillFieldBlurred":
             focusedGroup.removeObject(forKey: tab)
+            updateFillButtonForWindow(of: tab)
         case "paymentFormSubmit":
             guard let payload = try? JSONDecoder().decode(PaymentFormSubmitPayload.self, from: data) else { return }
             handlePaymentSubmit(payload, tab: tab)
@@ -207,8 +236,13 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
         guard let controller = activeTabController(for: tab), let anchor = anchor(for: controller) else { return }
 
-        savePrompt.show(message: "Save this address?", anchorView: anchor) {
+        savePrompt.show(message: "Save this address?", anchorView: anchor) { [weak self] in
             store.save(candidate)
+            // AddressStore has no change notification of its own (unlike
+            // CardStore) and this window may still have an address field
+            // focused, whose icon was hidden a moment ago precisely because
+            // nothing was saved yet.
+            self?.refresh()
         }
     }
 
@@ -235,6 +269,14 @@ final class PaymentAddressAutofillCoordinator: NSObject {
 
     private static func normalizeYear(_ year: Int) -> Int {
         year < 100 ? 2000 + year : year
+    }
+
+    /// A page message can arrive from a tab in any window, including a
+    /// background one -- updateFillButton(for:) then decides for itself
+    /// whether that tab is the one on screen.
+    private func updateFillButtonForWindow(of tab: Tab) {
+        guard let controller = WindowManager.shared.windowControllers.first(where: { $0.tabs.contains { $0 === tab } }) else { return }
+        updateFillButton(for: controller)
     }
 
     private func activeTabController(for tab: Tab) -> BrowserWindowController? {

@@ -4,36 +4,48 @@ import AppKit
 /// when the active tab's page looks article-ish, toggling a client-side
 /// Readability.js transformation of the current page. One instance per
 /// `BrowserWindow` (see that file's own doc comments for why this owns its
-/// floating UI directly rather than anything in `BrowserWindowController`,
-/// which was hot with Tab Groups work throughout this task).
+/// floating UI directly rather than anything in `BrowserWindowController`).
 ///
-/// There's no push notification for "the active tab changed" or "the active
-/// tab's page finished loading" available without touching
-/// `BrowserWindowController`/`TabDelegate` (both off-limits) -- so this
-/// polls `activeTab` every 400ms, comparing tab identity + URL + loading
-/// state against what it last checked, and only re-runs the (real,
-/// non-trivial) readerable check when something actually changed. See
-/// docs/ai-tasks/reader-mode-notes.md for why this polling approach was
-/// chosen over the alternatives.
-final class ReaderModeController: NSObject {
+/// The three things that can change whether the button should be showing --
+/// the active tab changed, it navigated, it finished loading -- are all
+/// TabLifecycleEvents now (browser-g6d), so the button is re-evaluated
+/// exactly when one of them happens. This used to be a 400ms poll that
+/// re-derived those same three transitions by comparing tab identity + URL +
+/// loading state against what it last saw; see docs/ai-tasks/
+/// reader-mode-notes.md for that original reasoning and docs/ai-tasks/
+/// tab-lifecycle-notifications-notes.md for the move off it.
+///
+/// The 400ms settle delay in checkReaderable(for:) below is a different
+/// thing entirely and stays: it's waiting for a fire-and-forget injected
+/// script to run in the renderer, which no lifecycle event can tell us about.
+final class ReaderModeController: NSObject, TabLifecycleObserver {
     private static let buttonSize: CGFloat = 26
 
     private weak var window: NSWindow?
     private var buttonView: NSButton?
-    private var pollTimer: Timer?
-
-    private weak var lastCheckedTab: Tab?
-    private var lastCheckedURL: String?
-    private var lastCheckedWasLoading = false
 
     private var isReaderActive = false
     private weak var activeReaderTab: Tab?
 
     func attach(to window: NSWindow) {
         self.window = window
-        guard pollTimer == nil else { return }
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            self?.poll()
+        TabLifecycleCenter.shared.addObserver(self)
+    }
+
+    func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+        guard controller === windowController else { return }
+        switch event {
+        case .becameActive, .navigated, .finishedLoading:
+            evaluate(tab)
+        case .closed:
+            // Otherwise a stale isReaderActive would make the *next* tab to
+            // become active show its button in the active (tinted) state.
+            if tab === activeReaderTab {
+                isReaderActive = false
+                activeReaderTab = nil
+            }
+        case .opened:
+            break
         }
     }
 
@@ -45,20 +57,11 @@ final class ReaderModeController: NSObject {
         windowController?.activeTab
     }
 
-    private func poll() {
-        guard let tab = currentTab() else {
-            setButtonVisible(false)
-            return
-        }
-
-        let tabChanged = tab !== lastCheckedTab
-        let urlChanged = tab.urlString != lastCheckedURL
-        let finishedLoading = lastCheckedWasLoading && !tab.isLoading
-        lastCheckedWasLoading = tab.isLoading
-
-        guard tabChanged || urlChanged || finishedLoading else { return }
-        lastCheckedTab = tab
-        lastCheckedURL = tab.urlString
+    /// Decides what this window's Reader button should look like right now,
+    /// given `tab` (only ever the window's own active tab -- a background
+    /// tab's navigation/load says nothing about the button on screen).
+    private func evaluate(_ tab: Tab) {
+        guard tab === currentTab() else { return }
 
         if isReaderActive, tab === activeReaderTab {
             // Don't re-check readerability on our own generated reader page

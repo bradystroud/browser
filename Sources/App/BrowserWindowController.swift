@@ -890,6 +890,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tab.delegate = self
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
+        // Deliberately before activateTab below, which is what calls
+        // Tab.createBrowserIfNeeded: every observer that wires per-tab
+        // plumbing (PageMessageDispatcher above all) is therefore wired
+        // before this tab has an engine-side browser at all, let alone a page
+        // that could send a message into it. See browser-g6d.
+        TabLifecycleCenter.shared.post(.opened, tab: tab, in: self)
         if makeActive {
             activateTab(at: clampedIndex)
         } else {
@@ -974,6 +980,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
         refreshToolbar(for: tab)
         updateWindowTitle(for: tab)
+        TabLifecycleCenter.shared.post(.becameActive, tab: tab, in: self)
     }
 
     /// Snapshots `tab`'s current on-screen appearance into thumbnailCache,
@@ -1013,7 +1020,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabs[index].hostView.removeFromSuperview()
         thumbnailCache.removeImage(for: tabs[index].id)
         tabs[index].close()
-        tabs.remove(at: index)
+        let closedTab = tabs.remove(at: index)
+        // Posted before the tabs.isEmpty/window-closing early return below,
+        // so the last tab's close is never silently skipped.
+        TabLifecycleCenter.shared.post(.closed, tab: closedTab, in: self)
 
         if tabs.isEmpty {
             activeTabIndex = nil
@@ -1845,6 +1855,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         activeTab?.showDevTools()
     }
 
+    /// Both of these exist purely to republish a Tab-level signal as a
+    /// TabLifecycleEvent (browser-g6d) -- the window controller itself has
+    /// nothing to do with either. They live on TabDelegate rather than being
+    /// posted from Tab directly because a lifecycle event carries its owning
+    /// BrowserWindowController, which the Tab doesn't know.
+    func tab(_ tab: Tab, didChangeURLTo url: String) {
+        TabLifecycleCenter.shared.post(.navigated, tab: tab, in: self)
+    }
+
+    func tabDidFinishLoading(_ tab: Tab) {
+        TabLifecycleCenter.shared.post(.finishedLoading, tab: tab, in: self)
+    }
+
     // MARK: - TabDelegate (furniture)
 
     func tab(_ tab: Tab, didCommitNavigationTo url: String) {
@@ -1958,10 +1981,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         autocomplete.dismiss()
         dismissPermissionPromptIfShowing()
         tabOverview.dismiss()
+        let closedTabs = tabs
         for tab in tabs {
             tab.close()
         }
         tabs.removeAll()
+        for tab in closedTabs {
+            TabLifecycleCenter.shared.post(.closed, tab: tab, in: self)
+        }
         onWindowClosed?()
     }
 

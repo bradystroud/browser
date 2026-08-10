@@ -13,10 +13,10 @@ final class BrowserWindow: NSWindow {
     private let findBar = FindBarController()
 
     /// One Reader mode controller per window -- see ReaderModeController's
-    /// own doc comment for why it lives here too, and attach(to:) for why
-    /// it needs to be told about this window explicitly (it isn't created
-    /// lazily the way findBar is, since it needs to start polling for
-    /// readerable pages immediately, not only once the user first acts).
+    /// own doc comment for why it lives here too, and attach(to:) for why it
+    /// needs to be told about this window explicitly (it isn't created lazily
+    /// the way findBar is: it has to be observing tab lifecycle events from
+    /// this window's first tab onward, not only once the user first acts).
     private let readerMode = ReaderModeController()
 
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {

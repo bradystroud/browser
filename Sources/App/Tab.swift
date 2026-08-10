@@ -8,6 +8,18 @@ protocol TabDelegate: AnyObject {
     /// does and doesn't cover. This is the history-recording signal.
     func tab(_ tab: Tab, didCommitNavigationTo url: String)
 
+    /// The main-frame URL actually changed -- including a same-document
+    /// change (history.pushState), which never reaches
+    /// tab(_:didCommitNavigationTo:) above. Not fired for a redundant report
+    /// of the URL the tab is already on. This is the "the user is somewhere
+    /// else now" signal (TabLifecycleEvent.navigated), as opposed to the
+    /// history-recording one.
+    func tab(_ tab: Tab, didChangeURLTo url: String)
+
+    /// The main-frame load stopped, whether it succeeded or failed -- see
+    /// engineTabDidChangeLoadingState, which draws no distinction either.
+    func tabDidFinishLoading(_ tab: Tab)
+
     func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart)
     func tab(_ tab: Tab, didUpdateDownload info: TabDownloadUpdate)
 
@@ -409,12 +421,12 @@ final class Tab: NSObject, EngineTabDelegate {
         delegate?.tabDidChangeDisplayState(self)
     }
 
-    /// Set by whichever feature controller wants this tab's raw page
-    /// messages (browser-ojh.1's password-manager form-detection script is
-    /// the first user) -- a plain closure property for the same reason as
-    /// onFindResult just above: TabDelegate is implemented by the hot
-    /// BrowserWindowController, and this generic channel's messages are a
-    /// feature controller's concern, not the window controller's. `request`
+    /// Set by PageMessageDispatcher, and by nothing else -- it is the single
+    /// consumer slot for this tab's raw page messages, which is why one
+    /// central dispatcher owns it (see that class's doc comment). A plain
+    /// closure property rather than a TabDelegate method for the same reason
+    /// as onFindResult just above: these messages are a feature controller's
+    /// concern, not the window controller's. `request`
     /// is an opaque string the page passed to `window.cefQuery` -- callers
     /// parse their own payload shape out of it (see BRWBrowser.h's
     /// -browserDidReceivePageMessage:requestId: for the full contract,
@@ -480,11 +492,20 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidChangeURL(_ url: String) {
-        if url != engineURLString {
+        let changed = url != engineURLString
+        if changed {
             isShowingStartPage = false
         }
         engineURLString = url
         delegate?.tabDidChangeDisplayState(self)
+        // After the state above is committed, so an observer reading
+        // `urlString` from this call already sees the new address. Gated on a
+        // real change: CEF re-reports the current URL on some non-navigation
+        // events, and the password manager's navigate-away flush treats every
+        // one of these as "the user left the page they typed on."
+        if changed {
+            delegate?.tab(self, didChangeURLTo: urlString)
+        }
     }
 
     func engineTabDidChangeFaviconURL(_ faviconURL: String?) {
@@ -494,6 +515,7 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidChangeLoadingState(_ isLoading: Bool, canGoBack: Bool, canGoForward: Bool) {
+        let didFinishLoading = self.isLoading && !isLoading
         self.isLoading = isLoading
         self.canGoBack = canGoBack
         self.canGoForward = canGoForward
@@ -509,6 +531,9 @@ final class Tab: NSObject, EngineTabDelegate {
             pendingNavigationURL = nil
         }
         delegate?.tabDidChangeDisplayState(self)
+        if didFinishLoading {
+            delegate?.tabDidFinishLoading(self)
+        }
     }
 
     /// Fires the instant a main-frame navigation is requested, before it
@@ -536,9 +561,8 @@ final class Tab: NSObject, EngineTabDelegate {
     /// opportunity. The script itself is a no-op past its first run per
     /// document (see PasswordDetectionScript's own guard) and reports
     /// through the generic page-message channel (onPageMessage below),
-    /// which whichever PasswordManagerController is currently watching this
-    /// tab picks up -- see that class's own doc comment for why *that* part,
-    /// unlike injection, does need to be window-scoped.
+    /// which PageMessageDispatcher wired at this tab's construction and
+    /// routes to whichever feature registered for each message type.
     func engineTabDidStartMainFrameLoad() {
         // A brand-new document hasn't had anything blocked on it yet --
         // reset before the isShowingStartPage guard below so a freshly

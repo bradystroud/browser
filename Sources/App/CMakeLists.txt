@@ -48,6 +48,7 @@ set(BROWSER_SWIFT_SRCS
   ProfileDotView.swift
   ProfileManager.swift
   Tab.swift
+  TabLifecycleCenter.swift
   TabButtonView.swift
   TabStripView.swift
   TabGroup.swift

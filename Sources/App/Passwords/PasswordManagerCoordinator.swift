@@ -34,23 +34,27 @@ private final class PendingCredential {
 /// password-manager's page-message types, and owns the one save-password
 /// popover shown at a time across the whole app.
 ///
-/// Only owns its own lightweight per-window icon-refresh poll now -- tab
-/// discovery/wiring moved to PageMessageDispatcher once card/address
-/// autofill (browser-ojh.2) became a second consumer of tabs' page
-/// messages (see that class's own doc comment for why two independent
-/// pollers wiring the same Tab.onPageMessage closure would silently race).
-/// The icon-refresh poll still needs to exist here, separately: "does the
-/// active tab have a saved credential for its current origin" isn't
-/// something a page message tells this coordinator about on its own (it
-/// depends on navigation, not just form-field events), so it's re-checked
-/// every tick the same way ReaderModeController re-checks its own Reader
-/// button's visibility every tick -- see that class's own doc comment for
-/// why polling is the right call here with BrowserWindowController
-/// off-limits.
-final class PasswordManagerCoordinator: NSObject {
+/// Entirely event-driven (browser-g6d). Everything the key icon's visibility
+/// and the automatic fill depend on now has a signal of its own:
+///
+/// - the page's password fields appearing/disappearing -> the
+///   "passwordFieldsPresent" page message,
+/// - the tab navigating (including a same-document SPA navigation) ->
+///   TabLifecycleEvent.navigated, which is also what decides a pending
+///   credential is a login attempt (flushPendingCredentialIfNavigated),
+/// - the window's visible tab changing -> TabLifecycleEvent.becameActive,
+/// - a saved credential existing for the current origin -> a background
+///   Keychain lookup landing in `credentialCache`, or PasswordStore posting
+///   .passwordStoreDidChange.
+///
+/// The last of those is why refresh() is called from the lookup completion
+/// as well: cachedCredential(profileName:host:) deliberately answers "not
+/// yet" rather than blocking, and with the old 0.5s poll gone there is no
+/// later tick to pick the real answer up on.
+final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     static let shared = PasswordManagerCoordinator()
 
-    private var pollTimer: Timer?
+    private var isActivated = false
     private let savePrompt = SavePasswordPromptController()
     private var anchorViews = NSMapTable<NSView, NSView>.weakToWeakObjects()
 
@@ -81,17 +85,16 @@ final class PasswordManagerCoordinator: NSObject {
     /// user clicking it can't fill the wrong page.
     private var windowForKeyButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
 
-    /// The credential each tab has typed but not yet visibly submitted, and
-    /// the URL each tab was last seen at, so the poll can spot "this tab
-    /// navigated while holding a pending credential" -- the signal that
-    /// stands in for a submit event on pages that never fire one.
+    /// The credential each tab has typed but not yet visibly submitted, held
+    /// until that tab navigates -- the signal that stands in for a submit
+    /// event on pages that never fire one (see
+    /// flushPendingCredentialIfNavigated).
     private var pendingCredentials = NSMapTable<Tab, PendingCredential>.weakToStrongObjects()
-    private var lastKnownURL = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
-    /// The URL each tab was last automatically filled at, so a single page
-    /// is filled once rather than every 0.5s tick. Keyed by URL rather than
-    /// a plain flag so navigating to a second login page in the same tab
-    /// fills again.
+    /// The URL each tab was last automatically filled at, so a page is filled
+    /// once rather than on every event that re-runs autofillIfNeeded. Keyed
+    /// by URL rather than a plain flag so navigating to a second login page
+    /// in the same tab fills again.
     private var autofilledURL = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
     /// Recently-prompted credential keys, to collapse the duplicate reports
@@ -112,8 +115,9 @@ final class PasswordManagerCoordinator: NSObject {
     /// makes SecItemCopyMatching block on a real, modal SecurityAgent
     /// confirmation dialog, which on the main thread is a hard UI freeze for
     /// as long as the dialog goes unanswered (browser-le4.1 -- reproduced
-    /// live at 120+ seconds). The poll below reads only this cache, so the
-    /// worst case is now a key icon that appears a tick late.
+    /// live at 120+ seconds). Every main-thread caller reads only this
+    /// cache, so the worst case is a key icon that appears one Keychain
+    /// round-trip late.
     private var credentialCache: [String: (username: String, password: String)?] = [:]
     private var credentialLookupsInFlight: Set<String> = []
     private let keychainQueue = DispatchQueue(label: "dev.stroud.browser.password-keychain")
@@ -128,28 +132,54 @@ final class PasswordManagerCoordinator: NSObject {
     /// browser window created in the process starts this ticking, with no
     /// separate explicit call site needed anywhere else.
     func activate() {
+        guard !isActivated else { return }
+        isActivated = true
         PageMessageDispatcher.shared.activate()
-        if pollTimer == nil {
-            PageMessageDispatcher.shared.register(
-                types: ["passwordFormSubmit", "passwordFieldsPresent", "passwordCredentialCandidate"]
-            ) { [weak self] type, request, requestId, tab in
-                self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
-            }
-            NotificationCenter.default.addObserver(
-                forName: .passwordStoreDidChange, object: nil, queue: .main
-            ) { [weak self] _ in
-                self?.credentialCache.removeAll()
-            }
-            pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                self?.poll()
-            }
+        PageMessageDispatcher.shared.register(
+            types: ["passwordFormSubmit", "passwordFieldsPresent", "passwordCredentialCandidate"]
+        ) { [weak self] type, request, requestId, tab in
+            self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+        }
+        NotificationCenter.default.addObserver(
+            forName: .passwordStoreDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.credentialCache.removeAll()
+            // Saving/deleting a credential changes whether the key icon
+            // should be showing for whatever is on screen right now.
+            self?.refresh()
+        }
+        TabLifecycleCenter.shared.addObserver(self)
+    }
+
+    func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+        switch event {
+        case .navigated:
+            // A tab holding a typed-but-unsubmitted credential that has since
+            // navigated was, as far as anything outside the page can tell, a
+            // login attempt -- this is the trigger the 0.5s poll used to
+            // approximate by re-reading every tab's urlString.
+            flushPendingCredentialIfNavigated(tab)
+            // The new page will report its own field presence via
+            // PasswordDetectionScript's document-start injection, which is
+            // what actually drives the fill; this just clears/keeps the icon
+            // honest in the meantime.
+            updateKeyButton(for: controller)
+        case .becameActive:
+            updateKeyButton(for: controller)
+        case .opened, .finishedLoading, .closed:
+            break
         }
     }
 
-    private func poll() {
+    /// Re-evaluates everything that depends on state this coordinator can't
+    /// be pushed about per-tab -- a Keychain lookup landing, or the store
+    /// changing underneath. Autofill is re-tried for *every* tab, not just
+    /// each window's visible one: a background tab that finished loading a
+    /// login page before its credential lookup came back still deserves to
+    /// be filled by the time the user switches to it.
+    private func refresh() {
         for controller in WindowManager.shared.windowControllers {
             for tab in controller.tabs {
-                flushPendingCredentialIfNavigated(tab)
                 autofillIfNeeded(tab)
             }
             updateKeyButton(for: controller)
@@ -163,9 +193,10 @@ final class PasswordManagerCoordinator: NSObject {
     }
 
     /// The cached credential for this profile/host, kicking off a background
-    /// lookup the first time one is asked for. Returns nil while that
-    /// lookup is still outstanding -- callers are all poll-driven, so they
-    /// simply pick the answer up on a later tick.
+    /// lookup the first time one is asked for. Returns nil while that lookup
+    /// is still outstanding -- and calls refresh() when it lands, since with
+    /// the old 0.5s poll gone (browser-g6d) there's no later tick for callers
+    /// to pick the real answer up on.
     private func cachedCredential(profileName: String, host: String) -> (username: String, password: String)? {
         let key = cacheKey(profileName: profileName, host: host)
         if let cached = credentialCache[key] {
@@ -179,6 +210,13 @@ final class PasswordManagerCoordinator: NSObject {
                 guard let self else { return }
                 self.credentialCache[key] = found
                 self.credentialLookupsInFlight.remove(key)
+                // Only when the answer is a real credential: a "no credential
+                // here" result can't make any icon appear or any page fill,
+                // and refreshing on it would re-enter this method for every
+                // other unresolved host on every miss.
+                if found != nil {
+                    self.refresh()
+                }
             }
         }
         return nil
@@ -219,6 +257,14 @@ final class PasswordManagerCoordinator: NSObject {
         case "passwordFieldsPresent":
             guard let payload = try? JSONDecoder().decode(PasswordFieldsPresentPayload.self, from: data) else { return }
             passwordFieldPresence.setObject(NSNumber(value: payload.present), forKey: tab)
+            // The other half of what the 0.5s poll used to do: this message
+            // is the one that says a page has somewhere to fill into, so
+            // both the fill and the icon are decided here rather than on a
+            // later tick.
+            autofillIfNeeded(tab)
+            if let controller = controller(for: tab) {
+                updateKeyButton(for: controller)
+            }
         default:
             break
         }
@@ -230,7 +276,6 @@ final class PasswordManagerCoordinator: NSObject {
     /// as far as anyone can tell from outside the page, a login attempt.
     private func flushPendingCredentialIfNavigated(_ tab: Tab) {
         let current = tab.urlString
-        defer { lastKnownURL.setObject(current as NSString, forKey: tab) }
         guard let pending = pendingCredentials.object(forKey: tab), pending.capturedAtURL != current else {
             return
         }
@@ -309,6 +354,13 @@ final class PasswordManagerCoordinator: NSObject {
     /// and why). The key icon remains the manual path, both for when the
     /// preference is off and for re-filling a page the user has since
     /// cleared.
+    ///
+    /// Turning the preference on mid-session only takes effect from the next
+    /// event that re-runs this (a navigation, a tab switch, the page's next
+    /// presence report) rather than "within 0.5s" as it did while this was
+    /// poll-driven -- PasswordAutofillPreference posts no change
+    /// notification to hook, and an already-loaded page the user is looking
+    /// at still has the key icon as its manual path.
     private func autofillIfNeeded(_ tab: Tab) {
         guard PasswordAutofillPreference.isAutomaticFillEnabled,
               passwordFieldPresence.object(forKey: tab)?.boolValue == true
@@ -353,12 +405,16 @@ final class PasswordManagerCoordinator: NSObject {
 
     // MARK: - Autofill key icon
 
-    /// Shows/hides this window's key icon based on its *current* active
-    /// tab -- re-evaluated every poll tick (0.5s), so switching tabs or
-    /// navigating to a different page updates the icon within one tick,
-    /// same latency ReaderModeController accepts for its own Reader button
-    /// (see that class's doc comment on why polling is the right call here
-    /// with BrowserWindowController off-limits).
+    /// The window `tab` currently belongs to, if any -- a page message can
+    /// arrive from a tab in any window, and from a background tab whose
+    /// window isn't key.
+    private func controller(for tab: Tab) -> BrowserWindowController? {
+        WindowManager.shared.windowControllers.first { $0.tabs.contains { $0 === tab } }
+    }
+
+    /// Shows/hides this window's key icon based on its *current* active tab.
+    /// Called from every event that can change the answer -- see this
+    /// class's own doc comment for that list.
     private func updateKeyButton(for controller: BrowserWindowController) {
         guard let window = controller.window, let contentView = window.contentView else { return }
         guard let tab = controller.activeTab,
@@ -426,7 +482,7 @@ final class PasswordManagerCoordinator: NSObject {
         else {
             return
         }
-        // Cached (the poll that made this icon visible already warmed it) --
+        // Cached (whatever made this icon visible already warmed it) --
         // and never a blocking Keychain call on the main thread regardless,
         // per browser-le4.1.
         guard let credential = cachedCredential(profileName: tab.profileName, host: host) else { return }

@@ -4,9 +4,18 @@ import Foundation
 /// whatever AudioStateScript's marker attribute currently says (browser-
 /// rhi.4). Polls every tab in every window -- not just each window's active
 /// tab -- since the whole point of a per-tab audio indicator is finding
-/// *which* background tab is making noise; ReaderModeController's own
-/// active-tab-only polling (a fine choice for its own single floating
-/// button) would defeat that purpose here.
+/// *which* background tab is making noise; only ever looking at the active
+/// tab (as ReaderModeController does for its own single floating button)
+/// would defeat that purpose here.
+///
+/// Deliberately still a Timer after browser-g6d moved every other per-
+/// feature poller in this app onto TabLifecycleCenter: this one was never
+/// doing tab *discovery* or "is this still the active tab" reconciliation
+/// (the two things lifecycle events replace). It re-reads a page state that
+/// has no native event of any kind behind it -- audio can start or stop at
+/// any moment, with no navigation, focus change or CEF callback to hang off
+/// -- so periodic sampling is the mechanism, not a workaround for a missing
+/// signal. Left exactly as it was.
 ///
 /// Uses tab.getPageSource(completion:) + a marker-attribute substring check
 /// (AudioStateScript.isMarkedAudible(inSource:)), the same pattern
@@ -21,11 +30,11 @@ import Foundation
 /// cheaper CEF-native partial-read primitive available (confirmed by every
 /// other feature built on GetSource in this codebase -- Reader mode's
 /// readerable check, browser-rhi.5's theme-color extraction -- hitting the
-/// same limitation). The poll interval here (1.5s) is deliberately coarser
-/// than ReaderModeController's 400ms/PasswordManagerCoordinator's 500ms to
-/// keep that cost down, since a ~1.5s lag before a speaker icon appears/
-/// disappears is an acceptable trade for a background indicator, unlike
-/// Reader mode's user-facing toggle button.
+/// same limitation). The poll interval here (1.5s) was deliberately coarser
+/// than the 400-500ms pollers this app used to have elsewhere, to keep that
+/// cost down -- a ~1.5s lag before a speaker icon appears/disappears is an
+/// acceptable trade for a background indicator, unlike Reader mode's
+/// user-facing toggle button. This is now the only Timer of its kind left.
 final class TabAudioCoordinator {
     static let shared = TabAudioCoordinator()
 
