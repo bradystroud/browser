@@ -351,6 +351,21 @@ add_custom_command(
   VERBATIM
   )
 
+# Crash reporting (browser-6iv): CEF reads "crash_reporter.cfg" from exactly
+# this path -- the top-level app bundle's Contents/Resources -- and enables
+# Crashpad only if it's there (include/cef_crash_util.h). Copied here rather
+# than from scripts/build.sh so every route that produces a bundle gets it,
+# scripts/release.sh's separate build-release/ tree included, and so it's in
+# place before either script's signing pass seals Contents/Resources.
+add_custom_command(
+  TARGET ${CEF_TARGET}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy
+          "${CMAKE_CURRENT_SOURCE_DIR}/mac/crash_reporter.cfg"
+          "${CEF_APP}/Contents/Resources/crash_reporter.cfg"
+  VERBATIM
+  )
+
 # Map each helper's CMake target-name suffix to its entitlements file. Only
 # the GPU and Renderer helpers need JIT / unsigned-executable-memory; every
 # helper needs disable-library-validation because every helper dynamically
