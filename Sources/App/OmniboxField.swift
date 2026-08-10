@@ -7,17 +7,6 @@ import AppKit
 /// for customizing a view's right-click menu without replacing its default
 /// one, so the system editing items stay intact.
 final class OmniboxField: NSTextField {
-    /// Posted (with this field as the notification's object) once the field
-    /// has taken focus and its expanded text is in place. The Safari-style
-    /// Favourites/Recently Visited panel listens for this
-    /// (OmniboxStartPanelController, browser-5kq.9) -- a notification rather
-    /// than another closure property so the panel attaches without
-    /// BrowserWindowController having to own or even know about it. There's
-    /// no matching "did blur" notification: AppKit's own
-    /// NSControl.textDidEndEditingNotification, which this field already
-    /// posts, is exactly that signal.
-    static let didFocusNotification = Notification.Name("OmniboxFieldDidFocus")
-
     /// Set by BrowserWindowController -- called with the menu about to be
     /// shown so it can append its own items. A plain closure, not a
     /// delegate protocol, matching this app's existing lightweight
@@ -43,12 +32,6 @@ final class OmniboxField: NSTextField {
         if accepted, let text = expandedTextProvider?() {
             stringValue = text
             currentEditor()?.selectAll(nil)
-        }
-        // Posted last, after the expanded text is in place, so any observer
-        // sees the final focused text rather than whatever was displayed
-        // while collapsed.
-        if accepted {
-            NotificationCenter.default.post(name: Self.didFocusNotification, object: self)
         }
         return accepted
     }
