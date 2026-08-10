@@ -1,10 +1,22 @@
 import Foundation
 
 /// Persists the ordered rule list + default-profile fallback as JSON under
-/// ~/Library/Application Support/Browser/routing.json, mirroring
-/// ProfileManager's pattern. `RoutingRule`/`RoutingConfiguration` are the pure
-/// model types from RoutingCore (compiled directly into this target -- see
-/// Sources/App/CMakeLists.txt).
+/// `CommandLineArgs.sessionAndProfilesMetadataDirectory()`'s `routing.json`
+/// (`~/Library/Application Support/Browser/routing.json` for a normal,
+/// unflagged launch), mirroring ProfileManager's pattern. `RoutingRule`/
+/// `RoutingConfiguration` are the pure model types from RoutingCore (compiled
+/// directly into this target -- see Sources/App/CMakeLists.txt).
+///
+/// Previously computed its own `.applicationSupportDirectory` + "Browser"
+/// path directly, bypassing `CommandLineArgs`/`ProfilesRootResolver`
+/// entirely -- unlike every other per-launch store (browser-1rp fixed this
+/// exact class of bug for session.json/profiles.json, but missed this file,
+/// which was apparently added independently), so an agent's "isolated"
+/// `--profiles-root` scratch launch silently read *and wrote* Brady's real
+/// routing.json the whole time, while `browser route-test`
+/// (RouteTestEngine.swift) already correctly assumed routing.json lives
+/// under the profiles-root-scoped metadata directory -- found auditing
+/// every store's path resolution for browser-le4 (state durability).
 final class RoutingRulesStore {
     static let shared = RoutingRulesStore()
 
@@ -12,9 +24,7 @@ final class RoutingRulesStore {
     private(set) var configuration: RoutingConfiguration
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let dir = appSupport.appendingPathComponent("Browser")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dir = URL(fileURLWithPath: CommandLineArgs.sessionAndProfilesMetadataDirectory())
         fileURL = dir.appendingPathComponent("routing.json")
 
         if let data = try? Data(contentsOf: fileURL),
