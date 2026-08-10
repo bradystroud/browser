@@ -214,6 +214,21 @@ class BRWClientHandler : public CefClient,
                        CefRefPtr<CefRequest> request,
                        bool user_gesture,
                        bool is_redirect) override;
+
+  // The *plain*-link counterpart of OnBeforePopup above. A <a href> with no
+  // target never asks for a new browsing context, so OnBeforePopup is never
+  // called for it -- but Blink still turns a Cmd-click/Shift-click/middle-
+  // click on one into a non-current-tab disposition, which arrives here
+  // instead. Handled identically: cancel (return true) and forward the URL
+  // plus a translated BRWWindowOpenDisposition to the delegate. Anything
+  // this app doesn't open elsewhere (notably CEF_WOD_CURRENT_TAB, which
+  // this callback also fires with for certain renderer-initiated
+  // cross-origin navigations) returns false and proceeds normally.
+  bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefFrame> frame,
+                         const CefString& target_url,
+                         WindowOpenDisposition target_disposition,
+                         bool user_gesture) override;
   void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
                                   TerminationStatus status,
                                   int error_code,

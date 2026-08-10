@@ -677,27 +677,15 @@ final class Tab: NSObject, EngineTabDelegate {
         delegate?.tab(self, didDismissPermissionRequestWithId: promptId)
     }
 
-    /// CEF's OnBeforePopup gives no held-modifier-key state at all (its
-    /// CefPopupFeatures carries only position/size, see
-    /// docs/ai-tasks/link-click-new-tab-notes.md) -- so the standard macOS
-    /// Cmd-click (background tab) / Cmd+Shift-click (foreground tab) /
-    /// Shift-click (new window) overrides are read here instead, via a
-    /// synchronous point-in-time query of NSEvent.modifierFlags, the same
-    /// idiom AppDelegate's Shift-to-skip-restore check already uses. This is
-    /// safe because OnBeforePopup fires synchronously on the main thread in
-    /// direct response to the click, before any run-loop turn passes, so the
-    /// held modifiers are still exactly what the user pressed to trigger it.
-    /// With no modifier held, CEF's own reported disposition decides.
+    /// The disposition is authoritative: the engine has already resolved the
+    /// click's own modifiers (Cmd -> background tab, Cmd+Shift -> foreground
+    /// tab, Shift -> new window, middle-click -> background tab) against the
+    /// link's own target. Nothing here reads live keyboard state -- see
+    /// docs/ai-tasks/link-click-new-tab-notes.md for why an
+    /// NSEvent.modifierFlags query at this point was both wrong (these
+    /// callbacks arrive via renderer IPC, a later run-loop turn than the
+    /// click) and unnecessary.
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition) {
-        let modifiers = NSEvent.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if modifiers.contains(.shift) && !modifiers.contains(.command) {
-            delegate?.tab(self, didRequestNewWindowForURL: url)
-            return
-        }
-        if modifiers.contains(.command) {
-            delegate?.tab(self, didRequestNewTabForURL: url, foreground: modifiers.contains(.shift))
-            return
-        }
         switch disposition {
         case .foregroundTab:
             delegate?.tab(self, didRequestNewTabForURL: url, foreground: true)

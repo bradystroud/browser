@@ -534,7 +534,33 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
             webView.load(URLRequest(url: dataURL))
             return
         }
+        // Cmd/Cmd+Shift/Shift/middle-click on an ordinary <a href> -- the
+        // WebKit counterpart of BRWClientHandler::OnOpenURLFromTab. WebKit
+        // (unlike Blink) doesn't resolve these into a disposition itself, but
+        // WKNavigationAction does carry the originating event's own modifiers
+        // and button, so this stays race-free (no live keyboard-state query)
+        // and still respects a page's own preventDefault(), which suppresses
+        // the navigation before this is ever consulted.
+        if let disposition = Self.clickDisposition(for: navigationAction),
+           let url = navigationAction.request.url {
+            decisionHandler(.cancel)
+            delegate?.engineTabDidRequestNewTab(url: url.absoluteString, disposition: disposition)
+            return
+        }
         decisionHandler(.allow)
+    }
+
+    /// The standard macOS link-click modifier overrides, or nil for an
+    /// ordinary click that should just navigate in place.
+    private static func clickDisposition(for navigationAction: WKNavigationAction) -> EngineWindowOpenDisposition? {
+        guard navigationAction.navigationType == .linkActivated else { return nil }
+        // AppKit button numbers: 0 left, 1 right, 2 middle; -1 when the
+        // navigation wasn't caused by a mouse event at all.
+        if navigationAction.buttonNumber == 2 { return .backgroundTab }
+        let modifiers = navigationAction.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.contains(.command) { return modifiers.contains(.shift) ? .foregroundTab : .backgroundTab }
+        if modifiers.contains(.shift) { return .newWindow }
+        return nil
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
@@ -582,7 +608,9 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
         // Returning nil (rather than a real WKWebView) means WebKit does not
         // create its own child web view for it -- our own UI creates a real
         // tab instead, the same reason CEFTab's translation exists.
-        delegate?.engineTabDidRequestNewTab(url: navigationAction.request.url?.absoluteString ?? "", disposition: .foregroundTab)
+        delegate?.engineTabDidRequestNewTab(
+            url: navigationAction.request.url?.absoluteString ?? "",
+            disposition: Self.clickDisposition(for: navigationAction) ?? .foregroundTab)
         return nil
     }
 

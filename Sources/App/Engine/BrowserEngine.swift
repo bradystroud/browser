@@ -95,11 +95,13 @@ protocol EngineTabDelegate: AnyObject {
     /// `pageURL` actually are.
     func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String)
 
-    /// A page tried to open `url` in a new browsing context -- a
-    /// target="_blank" link or window.open() call -- see BRWBrowser.h's
-    /// -browserDidRequestNewTabForURL:disposition: for the full contract,
-    /// including why this always fires instead of CEF creating its own raw
-    /// popup window for it.
+    /// The engine wants `url` opened somewhere other than the current tab --
+    /// either because the page asked for a new browsing context (a
+    /// target="_blank" link or window.open() call) or because the user
+    /// Cmd/Cmd+Shift/Shift/middle-clicked an ordinary <a href>. The
+    /// disposition already accounts for the click's modifiers; see
+    /// BRWBrowser.h's -browserDidRequestNewTabForURL:disposition: for the
+    /// full contract and the two distinct CEF callbacks behind it.
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
 
     /// The content blocker cancelled a resource request to an ad/tracker

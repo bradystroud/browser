@@ -157,14 +157,25 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// for `imageURL` since some hosts reject image requests with no Referer.
 - (void)browserDidRequestVisualLookUpForImageURL:(NSString *)imageURL pageURL:(NSString *)pageURL;
 
-/// The page tried to open `url` in a new browsing context -- a
-/// target="_blank" link or window.open() call that CEF would otherwise
-/// satisfy by creating its own raw native popup window, entirely outside
-/// this app's window management (no toolbar/tab strip/session-restore/
-/// quit-sequencing integration -- see BrowserWindowController). This fires
-/// *instead* of that happening at all: BRWClientHandler::OnBeforePopup
-/// always cancels CEF's own creation and calls this instead, leaving the
-/// delegate to decide what "open" means -- a new tab in the same window for
+/// The engine wants `url` opened somewhere other than the current tab.
+///
+/// Two distinct CEF callbacks feed this, and both matter:
+///
+/// 1. `BRWClientHandler::OnBeforePopup` -- a target="_blank" link or
+///    window.open() call, i.e. the page asking for a new browsing context,
+///    which CEF would otherwise satisfy by creating its own raw native popup
+///    window entirely outside this app's window management (no toolbar/tab
+///    strip/session-restore/quit-sequencing integration -- see
+///    BrowserWindowController). This fires *instead* of that happening.
+/// 2. `BRWClientHandler::OnOpenURLFromTab` -- a Cmd-click, Cmd+Shift-click,
+///    Shift-click or middle-click on an *ordinary* <a href> with no target.
+///    Such a link never asks for a new browsing context, so callback (1) is
+///    never consulted for it; Blink resolves the click's own modifiers into
+///    a non-current-tab disposition that arrives here instead.
+///
+/// In both cases the reported disposition already reflects Chromium's own
+/// modifier interpretation, so no live keyboard state is ever read; the
+/// delegate just decides what "open" means -- a new tab in the same window for
 /// *ForegroundTab/*BackgroundTab, or a genuine new native window (via this
 /// app's own window-creation code) for *NewWindow/*NewPopup, matching
 /// standard browser behavior for a plain target="_blank" link vs. a

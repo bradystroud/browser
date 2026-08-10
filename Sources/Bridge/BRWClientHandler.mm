@@ -33,6 +33,28 @@ class BRWBlockTask : public CefTask {
   IMPLEMENT_REFCOUNTING(BRWBlockTask);
 };
 
+// CEF's rich cef_window_open_disposition_t collapsed onto the four cases this
+// app's UI actually distinguishes. Shared by OnBeforePopup (target="_blank" /
+// window.open()) and OnOpenURLFromTab (Cmd/Shift/middle-click on a plain
+// link) so both routes agree on what a disposition means.
+BRWWindowOpenDisposition TranslateDisposition(cef_window_open_disposition_t d) {
+  switch (d) {
+    case CEF_WOD_NEW_BACKGROUND_TAB:
+      return BRWWindowOpenDispositionBackgroundTab;
+    case CEF_WOD_NEW_POPUP:
+      return BRWWindowOpenDispositionNewPopup;
+    case CEF_WOD_NEW_WINDOW:
+      return BRWWindowOpenDispositionNewWindow;
+    default:
+      // Includes NEW_FOREGROUND_TAB (the common target="_blank" case) and
+      // every other value CEF's own richer enum has (singleton tab, save-to-
+      // disk, switch-to-tab, etc.) -- none of which this app distinguishes;
+      // a new foreground tab is the closest standard-browser match for all
+      // of them.
+      return BRWWindowOpenDispositionForegroundTab;
+  }
+}
+
 // Every handler constructed but not yet OnBeforeClose'd. Only ever touched on
 // the CEF UI thread (== main thread, given this app's single-threaded,
 // external-message-pump CefSettings), so no locking is needed.
@@ -117,29 +139,9 @@ bool BRWClientHandler::OnBeforePopup(
     return false;
   }
 
-  BRWWindowOpenDisposition disposition;
-  switch (target_disposition) {
-    case CEF_WOD_NEW_BACKGROUND_TAB:
-      disposition = BRWWindowOpenDispositionBackgroundTab;
-      break;
-    case CEF_WOD_NEW_POPUP:
-      disposition = BRWWindowOpenDispositionNewPopup;
-      break;
-    case CEF_WOD_NEW_WINDOW:
-      disposition = BRWWindowOpenDispositionNewWindow;
-      break;
-    default:
-      // Includes NEW_FOREGROUND_TAB (the common target="_blank" case) and
-      // every other value CEF's own richer enum has (singleton tab, save-to-
-      // disk, switch-to-tab, etc.) -- none of which this app distinguishes;
-      // a new foreground tab is the closest standard-browser match for all
-      // of them.
-      disposition = BRWWindowOpenDispositionForegroundTab;
-      break;
-  }
-
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestNewTabForURL:disposition:)]) {
-    [delegate_ browserDidRequestNewTabForURL:ToNSString(target_url) disposition:disposition];
+    [delegate_ browserDidRequestNewTabForURL:ToNSString(target_url)
+                                 disposition:TranslateDisposition(target_disposition)];
   }
 
   // Always cancel CEF's own popup/window creation -- the delegate above is
@@ -148,6 +150,48 @@ bool BRWClientHandler::OnBeforePopup(
   // raw CEF-created window with no toolbar/tab strip/session-restore/quit-
   // sequencing integration.
   return true;
+}
+
+bool BRWClientHandler::OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame,
+                                        const CefString& target_url,
+                                        WindowOpenDisposition target_disposition,
+                                        bool user_gesture) {
+  CEF_REQUIRE_UI_THREAD();
+
+  // A plain <a href> with no target is an ordinary same-frame navigation:
+  // Blink never asks for a new browsing context, so OnBeforePopup is never
+  // consulted for it. Cmd-click / Cmd+Shift-click / Shift-click / middle-
+  // click on such a link is resolved by Blink itself into a non-current-tab
+  // NavigationPolicy, which reaches the browser process as an OpenURLFromTab
+  // with the corresponding disposition -- here. That means Chromium's own
+  // modifier interpretation (which already matches macOS conventions, and
+  // already respects a page's own preventDefault(), since a cancelled click
+  // never starts a navigation at all) is the authority; nothing here reads
+  // the live keyboard state.
+  switch (target_disposition) {
+    case CEF_WOD_NEW_BACKGROUND_TAB:  // Cmd-click, middle-click
+    case CEF_WOD_NEW_FOREGROUND_TAB:
+    case CEF_WOD_NEW_WINDOW:          // Shift-click
+    case CEF_WOD_NEW_POPUP:
+      break;
+    default:
+      // Notably CEF_WOD_CURRENT_TAB: this callback also fires for certain
+      // renderer-initiated cross-origin navigations (e.g. to/from a file
+      // URL) that must simply proceed in the source browser, not spawn a
+      // tab. Same shape as cefclient's own reference OnOpenURLFromTab
+      // (tests/cefclient/browser/client_handler.cc).
+      return false;
+  }
+
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestNewTabForURL:disposition:)]) {
+    [delegate_ browserDidRequestNewTabForURL:ToNSString(target_url)
+                                 disposition:TranslateDisposition(target_disposition)];
+    // Cancel the source browser's own navigation -- the delegate is opening
+    // this URL somewhere else.
+    return true;
+  }
+  return false;
 }
 
 void BRWClientHandler::RequestClose() {
