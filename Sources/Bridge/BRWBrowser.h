@@ -176,6 +176,17 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// fetches nothing.
 - (void)browserDidRequestCopyImageLinkForImageURL:(NSString *)imageURL;
 
+/// The user chose "Download Image" from the native right-click context menu
+/// over an `<img>` element (browser-5kq.14) -- `imageURL` is the same
+/// `GetSourceUrl()` value the methods above report.
+///
+/// The delegate is expected to answer this with -startDownloadForURL: on the
+/// same browser, which routes into the very same -browserDidBeginDownload...
+/// pipeline a page-initiated download uses, so the saved file appears in the
+/// Downloads window like any other. No page URL, since CEF derives the
+/// referrer itself from the originating browser.
+- (void)browserDidRequestDownloadImageForImageURL:(NSString *)imageURL;
+
 /// The engine wants `url` opened somewhere other than the current tab.
 ///
 /// Two distinct CEF callbacks feed this, and both matter:
@@ -389,6 +400,33 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// actually exercised.
 - (void)downloadImageAtURL:(NSString *)imageURL
                  completion:(void (^)(NSData *_Nullable pngData, NSInteger httpStatusCode))completion;
+
+/// Starts a download of `url` originating from this tab (browser-5kq.14),
+/// wrapping CefBrowserHost::StartDownload -- whose own header says it
+/// downloads "using CefDownloadHandler", i.e. it arrives at the exact same
+/// -browserDidBeginDownloadWithId:... / -browserDidUpdateDownloadWithId:...
+/// delegate callbacks a page-initiated download does. That is the whole
+/// reason this method exists rather than a private fetch-and-write: a
+/// "Download Image" started here lands in DownloadStore and the Downloads
+/// window with the same progress/cancel/reveal behavior as everything else.
+///
+/// Originating from the tab also means the request carries this profile's
+/// cookies and a referrer, the same property that makes
+/// -downloadImageAtURL:completion: above work on auth-gated images.
+///
+/// Fire-and-forget: failures (a dead URL, an unsupported scheme) surface as
+/// an interrupted/cancelled download through the update callback, or as no
+/// callback at all, not as a return value.
+- (void)startDownloadForURL:(NSString *)url;
+
+/// Where completed downloads are written (browser-5kq.14). Process-wide, set
+/// once at launch before any browser exists; pass an empty string (or never
+/// call this) for the default `~/Downloads`, which is what every launch that
+/// isn't an isolated `--profiles-root` test gets. See
+/// BrowserCore's ProfilesRootResolver.downloadsDirectory for the resolution
+/// rule, and BRWClientHandler::SetDownloadDirectory for why it lives beside
+/// the visual-look-up flag rather than on a per-browser instance.
++ (void)setDownloadDirectory:(NSString *)directory;
 
 /// Process-wide (not per-browser), since whether Visual Look Up can work at
 /// all is a Mac hardware/OS capability (Swift-side ImageAnalyzer.isSupported,

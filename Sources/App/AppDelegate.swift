@@ -94,6 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let profilesRootPath = CommandLineArgs.profilesRootPath()
+        // Before initialize(), so no browser can ever exist with the engine
+        // still pointed at the default ~/Downloads (browser-5kq.14).
+        ActiveEngine.setDownloadDirectory(CommandLineArgs.downloadsDirectory())
         guard ActiveEngine.initialize(profilesRootPath: profilesRootPath) else {
             NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)
             NSApp.terminate(nil)

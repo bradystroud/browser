@@ -103,6 +103,25 @@ public enum ProfilesRootResolver {
         return (appSupportDirectory as NSString).appendingPathComponent("Browser")
     }
 
+    /// Where a completed download's file is written (browser-5kq.14). A
+    /// normal launch resolves to the user's real `~/Downloads`, exactly where
+    /// downloads have always gone; an explicit `--profiles-root <path>`
+    /// launch resolves to `<override>/Downloads` instead.
+    ///
+    /// Same reasoning as `sessionAndProfilesMetadataDirectory` above, applied
+    /// to the one remaining piece of state that still escaped an "isolated"
+    /// launch: before this, every agent test that exercised a download wrote
+    /// a real file into Brady's actual Downloads folder, and there was no way
+    /// to test the download path at all without doing so. `--profiles-root`
+    /// already means "contain this launch's state under one directory", and a
+    /// downloaded file is that launch's state.
+    public static func downloadsDirectory(arguments: [String], homeDirectory: String) -> String {
+        if let override = explicitOverride(arguments: arguments) {
+            return (override as NSString).appendingPathComponent("Downloads")
+        }
+        return (homeDirectory as NSString).appendingPathComponent("Downloads")
+    }
+
     /// A stable, CFPreferences-safe `UserDefaults(suiteName:)` value derived
     /// from an explicit `--profiles-root <path>` override (browser-xrq) --
     /// `UserDefaults.standard` is process-wide and, unlike session.json/

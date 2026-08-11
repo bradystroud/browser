@@ -371,7 +371,16 @@ bool BRWClientHandler::OnBeforeDownload(CefRefPtr<CefBrowser> browser,
                                          const CefString& suggested_name,
                                          CefRefPtr<CefBeforeDownloadCallback> callback) {
   CEF_REQUIRE_UI_THREAD();
-  NSString* downloads_dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"];
+  // Reached by page-initiated downloads *and* by -[BRWBrowser
+  // startDownloadForURL:] (browser-5kq.14) -- CefBrowserHost::StartDownload
+  // is documented as downloading "using CefDownloadHandler", i.e. through
+  // this very callback, so "Download Image" gets the app's whole existing
+  // download pipeline (unique-filename resolution below, DownloadStore, the
+  // Downloads window) with no second code path.
+  NSString* downloads_dir =
+      download_directory_.empty()
+          ? [NSHomeDirectory() stringByAppendingPathComponent:@"Downloads"]
+          : [NSString stringWithUTF8String:download_directory_.c_str()];
   [[NSFileManager defaultManager] createDirectoryAtPath:downloads_dir
                              withIntermediateDirectories:YES
                                               attributes:nil
@@ -528,10 +537,14 @@ namespace {
 const int kVisualLookUpCommandId = MENU_ID_USER_FIRST;
 const int kCopyImageCommandId = MENU_ID_USER_FIRST + 1;
 const int kCopyImageLinkCommandId = MENU_ID_USER_FIRST + 2;
+const int kDownloadImageCommandId = MENU_ID_USER_FIRST + 3;
 }  // namespace
 
 // static
 bool BRWClientHandler::visual_look_up_available_ = false;
+
+// static
+std::string BRWClientHandler::download_directory_;
 
 void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                                              CefRefPtr<CefFrame> frame,
@@ -546,11 +559,13 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
   if (model->GetCount() > 0) {
     model->AddSeparator();
   }
-  // Copy Image / Copy Image Link are unconditional (browser-5kq.13); "Look
-  // Up Image" additionally needs the Mac to support VisionKit analysis at
-  // all (browser-5kq.2), so it can be absent while the other two are there.
+  // Copy Image / Copy Image Link (browser-5kq.13) and Download Image
+  // (browser-5kq.14) are unconditional; "Look Up Image" additionally needs
+  // the Mac to support VisionKit analysis at all (browser-5kq.2), so it can
+  // be absent while the other three are there.
   model->AddItem(kCopyImageCommandId, "Copy Image");
   model->AddItem(kCopyImageLinkCommandId, "Copy Image Link");
+  model->AddItem(kDownloadImageCommandId, "Download Image");
   if (visual_look_up_available_) {
     model->AddItem(kVisualLookUpCommandId, "Look Up Image");
   }
@@ -580,6 +595,12 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       if (delegate_ &&
           [delegate_ respondsToSelector:@selector(browserDidRequestCopyImageLinkForImageURL:)]) {
         [delegate_ browserDidRequestCopyImageLinkForImageURL:ToNSString(params->GetSourceUrl())];
+      }
+      return true;
+    case kDownloadImageCommandId:
+      if (delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestDownloadImageForImageURL:)]) {
+        [delegate_ browserDidRequestDownloadImageForImageURL:ToNSString(params->GetSourceUrl())];
       }
       return true;
     default:

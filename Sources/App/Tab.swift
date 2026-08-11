@@ -467,6 +467,14 @@ final class Tab: NSObject, EngineTabDelegate {
         ImageCopyController.copyImageLink(imageURL: imageURL)
     }
 
+    /// "Download Image" from the native context menu (browser-5kq.14). Like
+    /// Copy Image this needs `browser` rather than just the URL, so the
+    /// download originates from this tab -- which is what makes it both
+    /// credentialed and visible in the Downloads window.
+    func engineTabDidRequestDownloadImage(imageURL: String) {
+        ImageDownloadController.downloadImage(imageURL: imageURL, tab: browser)
+    }
+
     /// Seeds a restored tab's display title immediately at launch, before
     /// its page has even started (re)loading, so the tab strip shows a real
     /// title right away instead of the raw URL -- the real page's own title

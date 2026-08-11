@@ -142,6 +142,18 @@ enum WebKitEngine: BrowserEngine {
         visualLookUpAvailable = available
     }
 
+    /// Honoured, unlike setVisualLookUpAvailable above -- this one has a real
+    /// destination on this engine: WKDownloadDelegate's
+    /// -download:decideDestinationUsing:... below picks the path itself, so
+    /// it just reads this instead of hardcoding ~/Downloads. That matters
+    /// for the same reason as on CEF: an isolated `--profiles-root` test
+    /// launch must not write into the real Downloads folder.
+    static func setDownloadDirectory(_ path: String) {
+        downloadDirectory = path
+    }
+
+    private(set) static var downloadDirectory = ""
+
     static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings]) {
         guard let store = contentRuleListStore else { return }
         for (profileName, settings) in profileSettings {
@@ -530,6 +542,23 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
         }
     }
 
+    /// WKWebView's `startDownload(using:completionHandler:)` is the real
+    /// equivalent of CefBrowserHost::StartDownload, and lands in the same
+    /// WKDownloadDelegate callbacks below that a page-initiated download
+    /// does -- so, as on CEF, a "Download Image" started here would appear
+    /// in DownloadStore alongside everything else. (Moot in practice: this
+    /// engine can't add the context-menu item that triggers it, see
+    /// setVisualLookUpAvailable's own comment.)
+    func startDownload(url: String) {
+        guard let parsed = URL(string: url) else {
+            NSLog("Browser: WebKit startDownload got an unparseable URL: %@", url)
+            return
+        }
+        webView.startDownload(using: URLRequest(url: parsed)) { download in
+            download.delegate = self
+        }
+    }
+
     func getPageSource(completion: @escaping (String?) -> Void) {
         webView.evaluateJavaScript("document.documentElement.outerHTML") { result, error in
             if let error {
@@ -694,8 +723,12 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
     // MARK: - WKDownloadDelegate
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let downloadsURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+        let configured = WebKitEngine.downloadDirectory
+        let downloadsURL = configured.isEmpty
+            ? (FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads"))
+            : URL(fileURLWithPath: configured)
+        try? FileManager.default.createDirectory(at: downloadsURL, withIntermediateDirectories: true)
         let destination = downloadsURL.appendingPathComponent(suggestedFilename)
         let id = DownloadIdentifiers.id(for: download)
         delegate?.engineTabDidBeginDownload(id: id, url: response.url?.absoluteString ?? "", suggestedName: suggestedFilename, destinationPath: destination.path)

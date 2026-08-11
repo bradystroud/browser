@@ -107,6 +107,14 @@ protocol EngineTabDelegate: AnyObject {
     /// the only thing this command needs.
     func engineTabDidRequestCopyImageLink(imageURL: String)
 
+    /// The user chose "Download Image" from the native context menu over an
+    /// image (browser-5kq.14) -- see BRWBrowser.h's
+    /// -browserDidRequestDownloadImageForImageURL:. Handled by starting a
+    /// real engine download (EngineTab.startDownload(url:)) so it flows
+    /// through the same DownloadCoordinator/DownloadStore path as any
+    /// page-initiated download, rather than writing bytes to disk privately.
+    func engineTabDidRequestDownloadImage(imageURL: String)
+
     /// The engine wants `url` opened somewhere other than the current tab --
     /// either because the page asked for a new browsing context (a
     /// target="_blank" link or window.open() call) or because the user
@@ -182,6 +190,14 @@ protocol EngineTab: AnyObject {
     /// `completion` runs exactly once, on the main thread; `pngData` is nil
     /// on any failure.
     func downloadImage(url: String, completion: @escaping (_ pngData: Data?, _ httpStatusCode: Int) -> Void)
+
+    /// Starts a real, user-visible download of `url` originating from this
+    /// tab -- see BRWBrowser.h's -startDownloadForURL: for why this reaches
+    /// the same engineTabDidBeginDownload/engineTabDidUpdateDownload
+    /// callbacks a page-initiated download does, which is the entire point
+    /// (browser-5kq.14). Fire-and-forget; progress and failure arrive
+    /// through those callbacks, not a completion block.
+    func startDownload(url: String)
 
     /// Searches the current page -- see BRWBrowser.h's -find:forward:
     /// matchCase:findNext: for CEF's exact semantics (browser-5kq.5).
@@ -287,6 +303,14 @@ protocol BrowserEngine {
     /// per-tab. Call once, before creating the first tab, with whatever
     /// VisionKit.ImageAnalyzer.isSupported reports.
     static func setVisualLookUpAvailable(_ available: Bool)
+
+    /// Where completed downloads are written (browser-5kq.14) -- process-
+    /// wide, set once at launch before any tab exists. See BrowserCore's
+    /// `ProfilesRootResolver.downloadsDirectory` for the rule: the user's
+    /// real `~/Downloads` normally, contained under an explicit
+    /// `--profiles-root` when one was passed, so an isolated test launch
+    /// can't drop files into the real Downloads folder.
+    static func setDownloadDirectory(_ path: String)
 
     /// Publishes a fresh content-blocking snapshot -- the shared blocked-
     /// domain list plus every existing profile's settings -- for the engine

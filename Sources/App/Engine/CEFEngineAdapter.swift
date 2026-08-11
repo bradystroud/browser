@@ -65,6 +65,10 @@ enum CEFEngine: BrowserEngine {
         BRWBrowser.setVisualLookUpAvailable(available)
     }
 
+    static func setDownloadDirectory(_ path: String) {
+        BRWBrowser.setDownloadDirectory(path)
+    }
+
     static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings]) {
         var bridgeSettings: [String: BRWProfileBlockingSettings] = [:]
         for (profileName, settings) in profileSettings {
@@ -132,6 +136,9 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         browser.downloadImage(atURL: url) { pngData, httpStatusCode in
             completion(pngData, httpStatusCode)
         }
+    }
+    func startDownload(url: String) {
+        browser.startDownload(forURL: url)
     }
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
         browser.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
@@ -225,6 +232,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidRequestCopyImageLink(forImageURL imageURL: String) {
         delegate?.engineTabDidRequestCopyImageLink(imageURL: imageURL)
+    }
+
+    func browserDidRequestDownloadImage(forImageURL imageURL: String) {
+        delegate?.engineTabDidRequestDownloadImage(imageURL: imageURL)
     }
 
     func browserDidRequestNewTab(forURL url: String, disposition: BRWWindowOpenDisposition) {

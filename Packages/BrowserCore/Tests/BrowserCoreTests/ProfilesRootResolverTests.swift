@@ -145,4 +145,38 @@ final class ProfilesRootResolverTests: XCTestCase {
             ProfilesRootResolver.profileDirectory(profilesRoot: "/tmp/profiles-root", profileId: "id-2")
         )
     }
+
+    // MARK: - downloadsDirectory (browser-5kq.14)
+
+    /// The whole point: a normal launch must keep writing downloads to the
+    /// user's real ~/Downloads, unchanged.
+    func testDownloadsDirectoryDefaultsToHomeDownloads() {
+        XCTAssertEqual(
+            ProfilesRootResolver.downloadsDirectory(arguments: ["Browser"], homeDirectory: "/Users/someone"),
+            "/Users/someone/Downloads"
+        )
+    }
+
+    /// ...and an explicit --profiles-root launch must not, or an agent's
+    /// test download lands in Brady's actual Downloads folder.
+    func testDownloadsDirectoryIsContainedByExplicitProfilesRoot() {
+        XCTAssertEqual(
+            ProfilesRootResolver.downloadsDirectory(
+                arguments: ["Browser", "--profiles-root", "/tmp/scratch-root"],
+                homeDirectory: "/Users/someone"
+            ),
+            "/private/tmp/scratch-root/Downloads"
+        )
+    }
+
+    /// A trailing "--profiles-root" with no value is not an override -- it
+    /// must fall back to the real home directory rather than resolving to
+    /// something like "/Downloads".
+    func testDownloadsDirectoryIgnoresValuelessProfilesRootFlag() {
+        XCTAssertEqual(
+            ProfilesRootResolver.downloadsDirectory(
+                arguments: ["Browser", "--profiles-root"], homeDirectory: "/Users/someone"),
+            "/Users/someone/Downloads"
+        )
+    }
 }

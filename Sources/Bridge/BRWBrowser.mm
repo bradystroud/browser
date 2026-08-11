@@ -331,6 +331,12 @@ class DownloadImageCallback : public CefDownloadImageCallback {
                                                     callback);
 }
 
+- (void)startDownloadForURL:(NSString *)url {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->StartDownload(ToStdString(url));
+  }
+}
+
 - (void)find:(NSString *)searchText forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->Find(ToStdString(searchText), forward, matchCase, findNext);
@@ -369,6 +375,10 @@ class DownloadImageCallback : public CefDownloadImageCallback {
 
 + (void)setVisualLookUpAvailable:(BOOL)available {
   BRWClientHandler::SetVisualLookUpAvailable(available);
+}
+
++ (void)setDownloadDirectory:(NSString *)directory {
+  BRWClientHandler::SetDownloadDirectory(ToStdString(directory));
 }
 
 @end

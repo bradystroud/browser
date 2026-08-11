@@ -137,6 +137,7 @@ set(BROWSER_SWIFT_SRCS
   VisualLookUp/VisualLookUpController.swift
   VisualLookUp/VisualLookUpPanelController.swift
   ImageCopy/ImageCopyController.swift
+  ImageCopy/ImageDownloadController.swift
   PictureInPicture/PictureInPictureScript.swift
   Notifications/NotificationOverrideScript.swift
   Notifications/WebPushCoordinator.swift

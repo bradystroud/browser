@@ -58,6 +58,20 @@ enum CommandLineArgs {
         return profilesRoot
     }
 
+    /// Where completed downloads are written (browser-5kq.14). A normal
+    /// launch resolves to the user's real `~/Downloads`, exactly as before
+    /// this existed; an explicit `--profiles-root <path>` launch resolves to
+    /// `<path>/Downloads`, so an isolated test launch can exercise the real
+    /// download pipeline without dropping files into the actual Downloads
+    /// folder. Rule itself lives in BrowserCore's `ProfilesRootResolver`
+    /// (unit-tested there); this enum just supplies the machine's home
+    /// directory, the same way `profilesRootPath()` supplies Application
+    /// Support.
+    static func downloadsDirectory() -> String {
+        ProfilesRootResolver.downloadsDirectory(
+            arguments: CommandLine.arguments, homeDirectory: NSHomeDirectory())
+    }
+
     /// One profile's own directory under `profilesRootPath()`, keyed by its
     /// immutable `id` (browser-ojw) -- the single call every per-profile
     /// store (CEF's own cache_path, BlockingSettingsStore, PermissionStore,

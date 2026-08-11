@@ -311,6 +311,15 @@ class BRWClientHandler : public CefClient,
   // offering a menu item that would do nothing on an unsupported Mac.
   static void SetVisualLookUpAvailable(bool available) { visual_look_up_available_ = available; }
 
+  // Where OnBeforeDownload writes completed downloads (browser-5kq.14).
+  // Process-wide for the same reason as the flag above -- it's a launch-time
+  // decision, not per-tab. Empty (the default) means "~/Downloads", exactly
+  // the behavior that shipped before this setter existed; Swift passes a
+  // different directory only when the launch used an explicit
+  // --profiles-root, so an isolated test launch can't write into the real
+  // user's Downloads folder. See ProfilesRootResolver.downloadsDirectory.
+  static void SetDownloadDirectory(const std::string& directory) { download_directory_ = directory; }
+
  private:
   NSView* host_view_;
   // Which profile's BlockingSettings apply to this browser's requests --
@@ -340,6 +349,8 @@ class BRWClientHandler : public CefClient,
 
   // See SetVisualLookUpAvailable's own doc comment for why this is static.
   static bool visual_look_up_available_;
+  // See SetDownloadDirectory's own doc comment.
+  static std::string download_directory_;
 
   IMPLEMENT_REFCOUNTING(BRWClientHandler);
 };
