@@ -617,9 +617,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             width: blockerWidth, height: 20
         )
         let fieldX = innerMargin + blockerWidth + (blockerWidth > 0 ? 4 : 0)
+        // A borderless NSTextField draws its single line at the top of an
+        // oversized frame. Size the field to its real one-line height, then
+        // center that frame in the pill so both the empty placeholder and
+        // the focused/editable URL share the same vertically centred baseline.
+        let fieldHeight = omniboxField.intrinsicContentSize.height
         omniboxField.frame = NSRect(
-            x: fieldX, y: (Self.omniboxPillHeight - 20) / 2,
-            width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: 20
+            x: fieldX, y: (Self.omniboxPillHeight - fieldHeight) / 2,
+            width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: fieldHeight
         )
     }
 
