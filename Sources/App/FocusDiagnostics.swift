@@ -14,25 +14,35 @@ import Carbon.HIToolbox
 /// user-initiated, the always-on `NSEvent` monitors are local-only, and the
 /// panels that install global monitors are mouse-only and short-lived.
 ///
-/// That leaves several mutually exclusive stories, and the reproduction is a
-/// global hotkey no agent here is allowed to press (see AGENTS.md's UI
-/// verification protocol), so this records enough per event to tell them
-/// apart from a single reproduction:
+/// The first capture settled the shape of it, and it was not any of the three
+/// app-level stories this file was originally built around. **Raycast never
+/// deactivates this app at all.** It is an accessory (`LSUIElement`) process
+/// showing a non-activating panel, so it takes the *key window* without ever
+/// becoming the frontmost application: `NSApp.isActive` stays true, no
+/// `didResignActive` is posted, and `NSWorkspace` never reports it. The entire
+/// trace it leaves in this process is a lone `NSWindow` key transition.
 ///
-///  1. **We never deactivate.** `appDidResignActive` is absent, or is
-///     followed immediately by `appDidBecomeActive` and/or
-///     `appRequestedActivation`. Fault is in our shell -- something
-///     re-activates us out from under Raycast.
-///  2. **We deactivate, but keys still arrive here.** `appDidResignActive`
-///     is present *and* `keyEventWhileAppInactive` records follow. The
-///     window server is still routing keystrokes to this process; look at
-///     `keyWindow`/`firstResponder` in the surrounding snapshots.
-///  3. **We deactivate cleanly and no keys arrive.** `appDidResignActive` is
-///     present, `frontmostApp` is Raycast, no `keyEventWhileAppInactive`
-///     records. Then the keystrokes are being swallowed *before* app
-///     dispatch -- and the field to read is `secureEventInput`, which is the
-///     one system-wide keyboard state a Chromium-hosting app can leave stuck
-///     and which nothing else on the machine would touch.
+/// That was confirmed rather than assumed, by building a throwaway accessory
+/// app with exactly that window style and pointing it at a real instance of
+/// this browser: the panel took key status, kept it for the full six seconds
+/// it was up, and all this browser recorded was one bare `windowDidResignKey`.
+///
+/// Which makes the diagnosis a question about key-window transitions, not
+/// activation:
+///
+///  1. **We take the key window straight back.** A `windowDidBecomeKey`
+///     carrying `reclaimedKeyAfterSeconds` -- our window regaining key status
+///     within milliseconds of losing it, snatching keyboard focus from the
+///     panel that just took it. Its `callStack` names whoever asked. Brady's
+///     first capture holds three of these at 0-10 ms, against seven benign
+///     summons that held key for 1.6-7 s.
+///  2. **We never lose it.** The panel appears and no key transition is
+///     recorded at all. Then focus never moved and the fault is upstream of
+///     AppKit's window server handoff.
+///  3. **We lose it cleanly but keys still arrive here.** A key transition
+///     followed by `suspiciousKeyEvent` records whose `destinationWindow` is
+///     a `BrowserWindow`. That is the user's typing landing in the browser,
+///     proven outright.
 ///
 /// Deliberately records no typed characters and no key codes -- only that a
 /// key event arrived, and its modifier flags. A diagnostic for a keyboard bug
@@ -60,6 +70,13 @@ enum FocusDiagnostics {
     private static var flushScheduled = false
     private static var isInstalled = false
     private static var keyMonitor: Any?
+
+    /// When each window last resigned key status. Drives both the
+    /// "took key back within milliseconds" detector and the key-event
+    /// monitor's notion of a suspicious moment.
+    private static var lastKeyResign: [ObjectIdentifier: Date] = [:]
+
+    private static let ourPid = ProcessInfo.processInfo.processIdentifier
 
     private static var directory: String {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
@@ -97,9 +114,17 @@ enum FocusDiagnostics {
         guard !isInstalled else { return }
         isInstalled = true
 
+        // `queue: nil` throughout, deliberately -- these observers run
+        // synchronously on the thread that posted, which is what makes
+        // `Thread.callStackSymbols` inside them worth reading: AppKit posts
+        // each of these from inside the call that caused it, so the stack
+        // names whoever asked. Handing the block to `.main` instead (as the
+        // first version of this file did) defers it to a later run-loop turn,
+        // by which point the frames that matter have returned -- and that cost
+        // us the answer once already.
         let center = NotificationCenter.default
-        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
-            record("appDidResignActive", snapshot())
+        center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: nil) { _ in
+            record("appDidResignActive", snapshot(["callStack": callStack()]))
             // The interesting state is not the instant AppKit posts this --
             // it's a beat later, once the other app's window is up and the
             // user has started typing into it. Three samples bracket a
@@ -111,14 +136,41 @@ enum FocusDiagnostics {
                 }
             }
         }
-        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
-            record("appDidBecomeActive", snapshot())
+        center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: nil) { _ in
+            record("appDidBecomeActive", snapshot(["callStack": callStack()]))
         }
-        center.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { note in
-            record("windowDidResignKey", windowSnapshot(note.object as? NSWindow))
+        center.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: nil) { note in
+            let window = note.object as? NSWindow
+            if let window { lastKeyResign[ObjectIdentifier(window)] = Date() }
+            record("windowDidResignKey", windowSnapshot(window, ["callStack": callStack()]))
+            // A window resigning key with no accompanying app-level
+            // deactivation is the *only* trace an accessory app's
+            // non-activating panel leaves in this process -- confirmed by
+            // reproducing it with a purpose-built probe app. Everything
+            // hanging off `didResignActive` above stays silent through it, so
+            // it gets its own sampling here or the whole episode is invisible.
+            for delay in [0.25, 1.0, 3.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    guard NSApp.keyWindow == nil else { return }
+                    record("whileNoKeyWindow", snapshot(["afterResignKeySeconds": delay]))
+                }
+            }
         }
-        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { note in
-            record("windowDidBecomeKey", windowSnapshot(note.object as? NSWindow))
+        center.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: nil) { note in
+            let window = note.object as? NSWindow
+            var extra: [String: Any] = ["callStack": callStack()]
+            // The pathological case, and the reason for the synchronous stack
+            // above: a window that takes key status back within a few
+            // milliseconds of losing it has snatched keyboard focus from
+            // whatever just took it. Brady's first capture contains three of
+            // these at 0-10 ms, against seven benign summons in the 1.6-7 s
+            // range, and they are the failed Raycast summons.
+            if let window,
+               let resigned = lastKeyResign[ObjectIdentifier(window)],
+               Date().timeIntervalSince(resigned) < 0.3 {
+                extra["reclaimedKeyAfterSeconds"] = Date().timeIntervalSince(resigned)
+            }
+            record("windowDidBecomeKey", windowSnapshot(window, extra))
         }
         // Posted by -[BRWApplication activateIgnoringOtherApps:]. Answers the
         // one question the notifications above can't: when this app comes back
@@ -143,27 +195,39 @@ enum FocusDiagnostics {
             record("workspaceDidActivateApp", [
                 "bundleId": app?.bundleIdentifier ?? "nil",
                 "name": app?.localizedName ?? "nil",
-                "isUs": app?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                "pid": Int(app?.processIdentifier ?? -1),
+                "isUs": app?.processIdentifier == ourPid,
                 "secureEventInput": IsSecureEventInputEnabled()
             ])
         }
 
         // A *local* monitor sees events dispatched into this process's own
-        // event stream. If one fires while `NSApp.isActive` is false, the
-        // window server is still routing the user's keystrokes here rather
-        // than to the app they think they're typing into -- which is exactly
-        // story 2 in the type's doc comment, and cannot be observed any other
-        // way from inside this process.
+        // event stream, and a key event arriving here when it shouldn't is the
+        // most direct evidence available that the user's typing is landing in
+        // the browser rather than in the app they're looking at.
         //
-        // Nothing is recorded while the app is active: that's the normal case,
-        // and skipping it keeps both the log and the privacy surface small.
+        // The trigger deliberately is NOT `!NSApp.isActive`, which is what the
+        // first version of this file used and which recorded precisely nothing
+        // through ten real reproductions: an accessory app's non-activating
+        // panel takes the key window without this app ever deactivating, so
+        // `NSApp.isActive` stays true for the whole episode. What actually
+        // marks the episode is a key window transition, so a key event counts
+        // as suspicious if either the app is inactive *or* one of our windows
+        // lost key status within the last few seconds -- which covers both the
+        // "we never deactivated" and "we took key straight back" shapes.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
-            if !NSApp.isActive {
-                record("keyEventWhileAppInactive", snapshot([
+            let recentlyLostKey = lastKeyResign.values.contains { Date().timeIntervalSince($0) < 5 }
+            if !NSApp.isActive || recentlyLostKey {
+                record("suspiciousKeyEvent", snapshot([
                     "eventType": event.type == .keyDown ? "keyDown" : "flagsChanged",
                     // Modifier flags only -- never characters or key codes.
                     "modifiers": event.modifierFlags.intersection(.deviceIndependentFlagsMask).rawValue,
-                    "isARepeat": event.type == .keyDown && event.isARepeat
+                    "isARepeat": event.type == .keyDown && event.isARepeat,
+                    "reason": NSApp.isActive ? "windowRecentlyLostKey" : "appInactive",
+                    // Where the keystroke is about to be delivered. If this
+                    // names a BrowserWindow while the user believes they are
+                    // typing into a launcher, the bug is proven outright.
+                    "destinationWindow": NSApp.keyWindow.map { describe($0) } ?? "nil"
                 ]))
             }
             return event
@@ -186,8 +250,20 @@ enum FocusDiagnostics {
         // is also the only entry here that would explain "no other app on my
         // Mac has this issue" without any bug in our own AppKit code.
         fields["secureEventInput"] = IsSecureEventInputEnabled()
-        fields["frontmostApp"] = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil"
+        // Recorded by pid as well as bundle id, and never by bundle id alone.
+        // Agents run scratch instances of this very app, which share its
+        // bundle identifier exactly -- so a plain `frontmostApp` of
+        // "dev.stroud.browser" cannot distinguish "we are still frontmost"
+        // (the signature of another app's non-activating panel taking focus)
+        // from "a different copy of us took the front" (an ordinary app
+        // switch). Reading the first capture without this field produced
+        // exactly that misdiagnosis, on four records out of fourteen.
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        fields["frontmostApp"] = frontmost?.bundleIdentifier ?? "nil"
+        fields["frontmostPid"] = Int(frontmost?.processIdentifier ?? -1)
+        fields["frontmostIsUs"] = frontmost?.processIdentifier == ourPid
         fields["menuBarOwningApp"] = NSWorkspace.shared.menuBarOwningApplication?.bundleIdentifier ?? "nil"
+        fields["ourPid"] = Int(ourPid)
         fields["appKeyWindow"] = NSApp.keyWindow.map { describe($0) } ?? "nil"
         fields["appMainWindow"] = NSApp.mainWindow.map { describe($0) } ?? "nil"
         fields["hasTextInputContext"] = NSTextInputContext.current != nil
@@ -198,17 +274,27 @@ enum FocusDiagnostics {
         return fields
     }
 
-    private static func windowSnapshot(_ window: NSWindow?) -> [String: Any] {
+    /// Frames worth keeping from a synchronously-delivered notification: the
+    /// AppKit/CEF path that caused it. Trimmed because the tail is always the
+    /// same run-loop boilerplate, and the answer is always near the top.
+    private static func callStack() -> [String] {
+        Thread.callStackSymbols.prefix(18).map { $0 }
+    }
+
+    private static func windowSnapshot(_ window: NSWindow?, _ extra: [String: Any] = [:]) -> [String: Any] {
         guard let window else { return ["window": "nil"] }
         let responder = window.firstResponder
-        var fields: [String: Any] = [
-            "window": describe(window),
-            "isKey": window.isKeyWindow,
-            "isMain": window.isMainWindow,
-            "level": window.level.rawValue,
-            "firstResponder": responder.map { String(describing: type(of: $0)) } ?? "nil",
-            "firstResponderChain": responderChain(from: responder)
-        ]
+        var fields: [String: Any] = extra
+        fields["window"] = describe(window)
+        fields["isKey"] = window.isKeyWindow
+        fields["isMain"] = window.isMainWindow
+        fields["level"] = window.level.rawValue
+        fields["firstResponder"] = responder.map { String(describing: type(of: $0)) } ?? "nil"
+        fields["firstResponderChain"] = responderChain(from: responder)
+        // The window that took keyboard focus instead of this one, if any.
+        // An accessory app's non-activating panel is invisible to
+        // NSWorkspace, so this is the only handle on "who took it".
+        fields["appKeyWindowNow"] = NSApp.keyWindow.map { describe($0) } ?? "nil"
         if let hosting = webContentHost(for: responder, in: window) {
             fields["firstResponderInsideWebContent"] = true
             fields["webContentTabIndex"] = hosting
