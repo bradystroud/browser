@@ -216,7 +216,6 @@ final class TabStripView: NSView {
     }()
 
     private static let minTabWidth: CGFloat = 80
-    private static let maxTabWidth: CGFloat = 200
     /// Pinned tabs render at this fixed, narrow width regardless of strip
     /// width or tab count -- just enough for a centered favicon, no title,
     /// no close button (Safari-style).
@@ -570,7 +569,12 @@ final class TabStripView: NSView {
         }
         let remainingForFlexible = max(0, available - totalSpacing - fixedWidthTotal)
         let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
-        let flexibleWidth = min(Self.maxTabWidth, max(Self.minTabWidth, evenFlexibleWidth))
+        // No upper bound: unpinned tabs stretch to fill the whole strip, so two
+        // tabs take half the bar each, Safari-style. Only the lower bound
+        // survives -- past minTabWidth the tabs stop shrinking and the strip
+        // overflows instead, which is what keeps a tab legible once there are
+        // enough of them.
+        let flexibleWidth = max(Self.minTabWidth, evenFlexibleWidth)
 
         var frames: [NSRect] = []
         frames.reserveCapacity(itemCount)
