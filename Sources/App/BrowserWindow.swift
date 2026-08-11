@@ -41,14 +41,37 @@ final class BrowserWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
            let characters = event.charactersIgnoringModifiers,
-           let digit = Int(characters), (1...9).contains(digit),
            let controller = windowController as? BrowserWindowController {
-            // Position among *visible* tabs (browser-rhi.1: a collapsed tab
-            // group's members don't count), not a raw index into `tabs` --
-            // matches Ctrl+Tab cycling's same "visible tabs as one sequence"
-            // rule (see BrowserWindowController.visibleTabIndices).
-            controller.selectVisibleTab(atPosition: digit - 1)
-            return true
+            if let digit = Int(characters), (1...9).contains(digit) {
+                // Position among *visible* tabs (browser-rhi.1: a collapsed tab
+                // group's members don't count), not a raw index into `tabs` --
+                // matches Ctrl+Tab cycling's same "visible tabs as one sequence"
+                // rule (see BrowserWindowController.visibleTabIndices).
+                controller.selectVisibleTab(atPosition: digit - 1)
+                return true
+            }
+            // Plain ⌘= -- the unshifted chord almost everyone actually presses
+            // for "zoom in", since + is shifted-= on a US layout (browser-5kq.15).
+            // It lives here, alongside ⌘1-9, for the same reason those do: the
+            // menu can't express it. A menu item's key equivalent is matched
+            // against charactersIgnoringModifiers, which applies Shift, so the
+            // View menu's visible "Zoom In ⌘+" item only ever matches ⌘⇧= --
+            // and a *hidden* second item carrying "=" does not work either.
+            //
+            // That last point is worth stating plainly because it was tried and
+            // shipped broken: a scratch harness calling NSMenu.performKeyEquivalent
+            // directly reports hidden items as honoured, but through the real
+            // -[NSApplication sendEvent:] path they are skipped, and plain ⌘= did
+            // nothing in Brady's build. See docs/ai-tasks/page-zoom-notes.md.
+            //
+            // Guarded on an exact [.command] match (above), so ⌘⇧= never reaches
+            // here -- it falls through to super and is handled once by the menu
+            // item. Exactly one of the two paths handles any given chord, so a
+            // single press can never step two rungs.
+            if characters == "=" {
+                controller.zoomIn(self)
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }

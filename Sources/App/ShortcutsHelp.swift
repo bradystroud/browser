@@ -87,10 +87,7 @@ enum ShortcutsHelp {
             for topItem in mainMenu.items {
                 guard let submenu = topItem.submenu else { continue }
                 for item in submenu.items {
-                    // A hidden item is a second key equivalent for a command
-                    // already listed once (Zoom In's ⌘= alternate -- see
-                    // MainMenuBuilder.appendZoomItems), not its own command.
-                    guard !item.isHidden, !item.keyEquivalent.isEmpty, let action = item.action,
+                    guard !item.keyEquivalent.isEmpty, let action = item.action,
                           let category = categoryBySelector[action] else { continue }
                     entries[category, default: []].append(
                         ShortcutEntry(key: displayString(for: item), title: item.title))
