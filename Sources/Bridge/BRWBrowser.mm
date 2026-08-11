@@ -3,6 +3,7 @@
 #include <string>
 
 #include "include/cef_browser.h"
+#include "include/cef_image.h"
 #include "include/cef_request_context.h"
 #include "include/cef_string_visitor.h"
 #include "include/cef_task_manager.h"
@@ -61,6 +62,52 @@ class PdfPrintCallback : public CefPdfPrintCallback {
  private:
   void (^completion_)(BOOL success, NSString *path);
   IMPLEMENT_REFCOUNTING(PdfPrintCallback);
+};
+
+// CefDownloadImageCallback is source=client -- wraps the Swift-facing
+// completion block for -downloadImageAtURL:completion: (browser-5kq.13).
+//
+// CEF documents this as running on the browser process UI thread, which is
+// this app's main thread (see BRWMessagePump), so unlike StringVisitorBlock
+// above no dispatch hop is needed to honour the "completion runs on the main
+// thread" contract -- but the CefImage must be converted to NSData *here*,
+// while the callback still holds the only reference to it.
+class DownloadImageCallback : public CefDownloadImageCallback {
+ public:
+  explicit DownloadImageCallback(void (^completion)(NSData *_Nullable pngData, NSInteger httpStatusCode))
+      : completion_([completion copy]) {}
+
+  void OnDownloadImageFinished(const CefString& image_url,
+                               int http_status_code,
+                               CefRefPtr<CefImage> image) override {
+    if (!completion_) {
+      return;
+    }
+    NSData* png = nil;
+    if (image && !image->IsEmpty()) {
+      // DownloadImage can return the same image at several scale factors;
+      // GetAsPNG returns whichever representation "most closely matches"
+      // the requested one, so asking for an implausibly high scale factor
+      // reliably yields the largest representation actually present rather
+      // than a downscaled copy.
+      int pixel_width = 0;
+      int pixel_height = 0;
+      CefRefPtr<CefBinaryValue> data =
+          image->GetAsPNG(4.0f, /*with_transparency=*/true, pixel_width, pixel_height);
+      if (data && data->GetSize() > 0) {
+        NSMutableData* buffer = [NSMutableData dataWithLength:data->GetSize()];
+        const size_t copied = data->GetData([buffer mutableBytes], data->GetSize(), 0);
+        if (copied == data->GetSize()) {
+          png = buffer;
+        }
+      }
+    }
+    completion_(png, (NSInteger)http_status_code);
+  }
+
+ private:
+  void (^completion_)(NSData *_Nullable pngData, NSInteger httpStatusCode);
+  IMPLEMENT_REFCOUNTING(DownloadImageCallback);
 };
 }  // namespace
 
@@ -266,6 +313,22 @@ class PdfPrintCallback : public CefPdfPrintCallback {
   CefPdfPrintSettings settings;
   CefRefPtr<PdfPrintCallback> callback = new PdfPrintCallback(completion);
   _handler->GetBrowser()->GetHost()->PrintToPDF(ToStdString(path), settings, callback);
+}
+
+- (void)downloadImageAtURL:(NSString *)imageURL
+                 completion:(void (^)(NSData *_Nullable pngData, NSInteger httpStatusCode))completion {
+  if (!_handler || !_handler->GetBrowser()) {
+    if (completion) {
+      completion(nil, 0);
+    }
+    return;
+  }
+  CefRefPtr<DownloadImageCallback> callback = new DownloadImageCallback(completion);
+  _handler->GetBrowser()->GetHost()->DownloadImage(ToStdString(imageURL),
+                                                    /*is_favicon=*/false,
+                                                    /*max_image_size=*/0,
+                                                    /*bypass_cache=*/false,
+                                                    callback);
 }
 
 - (void)find:(NSString *)searchText forward:(BOOL)forward matchCase:(BOOL)matchCase findNext:(BOOL)findNext {

@@ -453,6 +453,20 @@ final class Tab: NSObject, EngineTabDelegate {
         }
     }
 
+    /// "Copy Image" from the native context menu (browser-5kq.13). Passes
+    /// `browser` -- this tab's own EngineTab -- rather than just the URL,
+    /// because the bytes must be fetched by the page's own renderer to carry
+    /// its cookies; see ImageCopyController's doc comment.
+    func engineTabDidRequestCopyImage(imageURL: String, pageURL: String) {
+        ImageCopyController.copyImage(imageURL: imageURL, tab: browser)
+    }
+
+    /// "Copy Image Link" from the native context menu (browser-5kq.13) --
+    /// pure string copy, no per-tab state needed at all.
+    func engineTabDidRequestCopyImageLink(imageURL: String) {
+        ImageCopyController.copyImageLink(imageURL: imageURL)
+    }
+
     /// Seeds a restored tab's display title immediately at launch, before
     /// its page has even started (re)loading, so the tab strip shows a real
     /// title right away instead of the raw URL -- the real page's own title

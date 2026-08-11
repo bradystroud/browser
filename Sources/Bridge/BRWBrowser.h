@@ -157,6 +157,25 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// for `imageURL` since some hosts reject image requests with no Referer.
 - (void)browserDidRequestVisualLookUpForImageURL:(NSString *)imageURL pageURL:(NSString *)pageURL;
 
+/// The user chose "Copy Image" from the native right-click context menu over
+/// an `<img>` element (browser-5kq.13). `imageURL`/`pageURL` mean exactly
+/// what they do for -browserDidRequestVisualLookUpForImageURL:pageURL:
+/// above. Unlike that one, this fires unconditionally -- there's no
+/// capability flag gating the menu item.
+///
+/// The delegate is expected to answer this by calling
+/// -downloadImageAtURL:completion: back on the same browser rather than
+/// fetching `imageURL` itself with URLSession: only the engine-side fetch
+/// carries the page's own cookies (see that method's doc comment).
+- (void)browserDidRequestCopyImageForImageURL:(NSString *)imageURL pageURL:(NSString *)pageURL;
+
+/// The user chose "Copy Image Link" from the native right-click context menu
+/// over an `<img>` element (browser-5kq.13) -- `imageURL` is the same
+/// `GetSourceUrl()` value the two methods above report. No page URL, since
+/// nothing here needs a Referer: this copies the URL string itself and
+/// fetches nothing.
+- (void)browserDidRequestCopyImageLinkForImageURL:(NSString *)imageURL;
+
 /// The engine wants `url` opened somewhere other than the current tab.
 ///
 /// Two distinct CEF callbacks feed this, and both matter:
@@ -345,6 +364,31 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// A no-op if `requestId` is no longer pending (e.g. the page already
 /// navigated away and CEF canceled the query on its own).
 - (void)respondToPageMessageWithId:(int64_t)requestId success:(BOOL)success response:(NSString *)response;
+
+/// Fetches and decodes the image at `imageURL` through this tab's own
+/// engine-side network stack, returning PNG-encoded bytes (browser-5kq.13).
+/// `completion` is called exactly once, on the main thread, with nil `pngData`
+/// if the fetch or the decode failed; `httpStatusCode` is whatever the engine
+/// reports (0 for a non-HTTP source such as a `data:` URL, and for some
+/// early failures).
+///
+/// Why this exists rather than a plain URLSession fetch in the app process:
+/// this wraps CefBrowserHost::DownloadImage, whose fetch is performed *by the
+/// renderer*, from this browser's own request context. CEF's own header
+/// spells out the consequence -- "if |is_favicon| is true then cookies are
+/// not sent and not accepted during download" -- i.e. with `is_favicon`
+/// false, as here, the page's cookies (and the correct initiator/referrer)
+/// come along, which is the whole reason a login-gated or hotlink-protected
+/// image can be copied at all. The browser cache is not bypassed, so an
+/// image the page already displayed normally costs no second network request.
+///
+/// The result is a decoded bitmap re-encoded to PNG, not the original bytes:
+/// an animated GIF yields a single still frame, and any format the engine
+/// can't decode into a bitmap yields nil rather than passthrough bytes. See
+/// docs/ai-tasks/copy-image-notes.md for which real-world image cases were
+/// actually exercised.
+- (void)downloadImageAtURL:(NSString *)imageURL
+                 completion:(void (^)(NSData *_Nullable pngData, NSInteger httpStatusCode))completion;
 
 /// Process-wide (not per-browser), since whether Visual Look Up can work at
 /// all is a Mac hardware/OS capability (Swift-side ImageAnalyzer.isSupported,

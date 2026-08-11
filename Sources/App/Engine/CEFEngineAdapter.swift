@@ -128,6 +128,11 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         browser.printToPDF(withPath: path, completion: completion)
     }
+    func downloadImage(url: String, completion: @escaping (Data?, Int) -> Void) {
+        browser.downloadImage(atURL: url) { pngData, httpStatusCode in
+            completion(pngData, httpStatusCode)
+        }
+    }
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
         browser.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
     }
@@ -212,6 +217,14 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidRequestVisualLookUp(forImageURL imageURL: String, pageURL: String) {
         delegate?.engineTabDidRequestVisualLookUp(imageURL: imageURL, pageURL: pageURL)
+    }
+
+    func browserDidRequestCopyImage(forImageURL imageURL: String, pageURL: String) {
+        delegate?.engineTabDidRequestCopyImage(imageURL: imageURL, pageURL: pageURL)
+    }
+
+    func browserDidRequestCopyImageLink(forImageURL imageURL: String) {
+        delegate?.engineTabDidRequestCopyImageLink(imageURL: imageURL)
     }
 
     func browserDidRequestNewTab(forURL url: String, disposition: BRWWindowOpenDisposition) {

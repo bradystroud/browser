@@ -95,6 +95,18 @@ protocol EngineTabDelegate: AnyObject {
     /// `pageURL` actually are.
     func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String)
 
+    /// The user chose "Copy Image" from the native context menu over an image
+    /// (browser-5kq.13) -- see BRWBrowser.h's
+    /// -browserDidRequestCopyImageForImageURL:pageURL:. The handler is
+    /// expected to get the bytes via EngineTab.downloadImage(url:completion:)
+    /// on the same tab, not by fetching `imageURL` itself.
+    func engineTabDidRequestCopyImage(imageURL: String, pageURL: String)
+
+    /// The user chose "Copy Image Link" from the native context menu over an
+    /// image (browser-5kq.13) -- `imageURL` is the image's own source URL,
+    /// the only thing this command needs.
+    func engineTabDidRequestCopyImageLink(imageURL: String)
+
     /// The engine wants `url` opened somewhere other than the current tab --
     /// either because the page asked for a new browsing context (a
     /// target="_blank" link or window.open() call) or because the user
@@ -161,6 +173,15 @@ protocol EngineTab: AnyObject {
     /// for exactly what's left at defaults. `completion` runs exactly once,
     /// on the main thread, with whether it succeeded and the same `path` back.
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void)
+
+    /// Fetches and decodes the image at `url` through *this tab's* own
+    /// engine-side network stack, yielding PNG bytes -- see BRWBrowser.h's
+    /// -downloadImageAtURL:completion: for why this is not interchangeable
+    /// with a URLSession fetch of the same URL (the page's cookies), and for
+    /// what the decode step does to animated/undecodable formats.
+    /// `completion` runs exactly once, on the main thread; `pngData` is nil
+    /// on any failure.
+    func downloadImage(url: String, completion: @escaping (_ pngData: Data?, _ httpStatusCode: Int) -> Void)
 
     /// Searches the current page -- see BRWBrowser.h's -find:forward:
     /// matchCase:findNext: for CEF's exact semantics (browser-5kq.5).

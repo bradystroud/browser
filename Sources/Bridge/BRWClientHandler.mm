@@ -524,9 +524,10 @@ void BRWClientHandler::OnFindResult(CefRefPtr<CefBrowser> browser,
 
 namespace {
 // User-defined menu ids must fall between MENU_ID_USER_FIRST and
-// MENU_ID_USER_LAST (see cef_types.h) -- this is the only one this bridge
-// currently defines.
+// MENU_ID_USER_LAST (see cef_types.h).
 const int kVisualLookUpCommandId = MENU_ID_USER_FIRST;
+const int kCopyImageCommandId = MENU_ID_USER_FIRST + 1;
+const int kCopyImageLinkCommandId = MENU_ID_USER_FIRST + 2;
 }  // namespace
 
 // static
@@ -536,13 +537,23 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                                              CefRefPtr<CefFrame> frame,
                                              CefRefPtr<CefContextMenuParams> params,
                                              CefRefPtr<CefMenuModel> model) {
-  if (!visual_look_up_available_ || !params->HasImageContents()) {
+  if (!params->HasImageContents()) {
+    // Every item this handler adds is about the right-clicked image, so a
+    // right-click on anything else (text, a link, the page background)
+    // leaves CEF's own default menu completely untouched.
     return;
   }
   if (model->GetCount() > 0) {
     model->AddSeparator();
   }
-  model->AddItem(kVisualLookUpCommandId, "Look Up Image");
+  // Copy Image / Copy Image Link are unconditional (browser-5kq.13); "Look
+  // Up Image" additionally needs the Mac to support VisionKit analysis at
+  // all (browser-5kq.2), so it can be absent while the other two are there.
+  model->AddItem(kCopyImageCommandId, "Copy Image");
+  model->AddItem(kCopyImageLinkCommandId, "Copy Image Link");
+  if (visual_look_up_available_) {
+    model->AddItem(kVisualLookUpCommandId, "Look Up Image");
+  }
 }
 
 bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -550,16 +561,32 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
                                               CefRefPtr<CefContextMenuParams> params,
                                               int command_id,
                                               EventFlags event_flags) {
-  if (command_id != kVisualLookUpCommandId) {
-    // Not ours -- let CEF's default handling take it (copy/paste, spelling
-    // suggestions, etc.), exactly as if this handler didn't exist.
-    return false;
+  switch (command_id) {
+    case kVisualLookUpCommandId:
+      if (delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestVisualLookUpForImageURL:pageURL:)]) {
+        [delegate_ browserDidRequestVisualLookUpForImageURL:ToNSString(params->GetSourceUrl())
+                                                     pageURL:ToNSString(params->GetPageUrl())];
+      }
+      return true;
+    case kCopyImageCommandId:
+      if (delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestCopyImageForImageURL:pageURL:)]) {
+        [delegate_ browserDidRequestCopyImageForImageURL:ToNSString(params->GetSourceUrl())
+                                                   pageURL:ToNSString(params->GetPageUrl())];
+      }
+      return true;
+    case kCopyImageLinkCommandId:
+      if (delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestCopyImageLinkForImageURL:)]) {
+        [delegate_ browserDidRequestCopyImageLinkForImageURL:ToNSString(params->GetSourceUrl())];
+      }
+      return true;
+    default:
+      // Not ours -- let CEF's default handling take it (copy/paste, spelling
+      // suggestions, etc.), exactly as if this handler didn't exist.
+      return false;
   }
-  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestVisualLookUpForImageURL:pageURL:)]) {
-    [delegate_ browserDidRequestVisualLookUpForImageURL:ToNSString(params->GetSourceUrl())
-                                                 pageURL:ToNSString(params->GetPageUrl())];
-  }
-  return true;
 }
 
 BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(

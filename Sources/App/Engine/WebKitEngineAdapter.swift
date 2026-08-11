@@ -488,6 +488,48 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
         }
     }
 
+    /// Genuinely different mechanism from CEF's, with genuinely different
+    /// coverage: WebKit has no `CefBrowserHost::DownloadImage` equivalent
+    /// (nothing public hands back the bytes of an already-decoded image the
+    /// page loaded), so this fetches inside the page instead. That still
+    /// carries the page's cookies -- `credentials: "include"` on a fetch
+    /// issued by the document itself -- but it is subject to CORS, unlike
+    /// the CEF path: a cross-origin image whose host sends no
+    /// `Access-Control-Allow-Origin` fails here and succeeds there. Recorded
+    /// in docs/ai-tasks/copy-image-notes.md rather than papered over.
+    ///
+    /// `httpStatusCode` is the real response status when the fetch got far
+    /// enough to have one, and 0 otherwise.
+    func downloadImage(url: String, completion: @escaping (Data?, Int) -> Void) {
+        let encoded = String(data: (try? JSONEncoder().encode(url)) ?? Data("\"\"".utf8), encoding: .utf8) ?? "\"\""
+        let script = """
+        (async () => {
+          const response = await fetch(\(encoded), { credentials: "include" });
+          const buffer = await response.arrayBuffer();
+          let binary = "";
+          const bytes = new Uint8Array(buffer);
+          for (let i = 0; i < bytes.length; i++) { binary += String.fromCharCode(bytes[i]); }
+          return { status: response.status, base64: btoa(binary) };
+        })()
+        """
+        webView.callAsyncJavaScript(script, in: nil, in: .page) { result in
+            switch result {
+            case .success(let value):
+                guard let dictionary = value as? [String: Any],
+                      let base64 = dictionary["base64"] as? String,
+                      let data = Data(base64Encoded: base64)
+                else {
+                    completion(nil, 0)
+                    return
+                }
+                completion(data, dictionary["status"] as? Int ?? 0)
+            case .failure(let error):
+                NSLog("Browser: WebKit downloadImage failed: %@", error.localizedDescription)
+                completion(nil, 0)
+            }
+        }
+    }
+
     func getPageSource(completion: @escaping (String?) -> Void) {
         webView.evaluateJavaScript("document.documentElement.outerHTML") { result, error in
             if let error {
