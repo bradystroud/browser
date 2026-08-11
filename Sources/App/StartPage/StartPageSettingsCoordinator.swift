@@ -32,6 +32,22 @@ final class StartPageSettingsCoordinator {
         }
     }
 
+    /// Re-renders every open start-page tab belonging to `profileId`, so a
+    /// change made in the Start Page settings pane shows up in the tabs that
+    /// are already open rather than only in the next new one -- most visibly
+    /// for a background image, where the settings pane is often not even the
+    /// front window when the picture is chosen. Private windows are skipped:
+    /// their start page is a fixed notice with no profile behind it
+    /// (StartPageRenderer.renderPrivateHTML).
+    static func refreshOpenStartPages(forProfileId profileId: String) {
+        for controller in WindowManager.shared.windowControllers
+        where !controller.isPrivate && controller.profile.id == profileId {
+            for tab in controller.tabs {
+                tab.reloadStartPage()
+            }
+        }
+    }
+
     private func handleOpenStartPageSettings(requestId: Int64, tab: Tab) {
         // No payload to decode, and nothing meaningful to report back --
         // ack immediately so the page's promise doesn't hang, matching

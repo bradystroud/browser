@@ -72,7 +72,7 @@ enum StartPageRenderer {
         <head>
         <meta charset="utf-8">
         <title>\(escape(tabTitle))</title>
-        <style>\(css(gradient: gradientCSS(from: settings.backgroundColorHex)))</style>
+        <style>\(css(background: backgroundCSS(for: settings, profileId: profileId)))</style>
         </head>
         <body>
         <a class="gear" href="#" title="Start page settings" onclick="window.cefQuery({request: JSON.stringify({type: 'openStartPageSettings'}), onSuccess: function(){}, onFailure: function(){}}); return false;">⚙</a>
@@ -98,7 +98,7 @@ enum StartPageRenderer {
         <head>
         <meta charset="utf-8">
         <title>\(escape(tabTitle))</title>
-        <style>\(css(gradient: gradientCSS(from: "#3a3a3c")))</style>
+        <style>\(css(background: "background: \(gradientCSS(from: "#3a3a3c"));"))</style>
         </head>
         <body>
         <main>
@@ -157,13 +157,42 @@ enum StartPageRenderer {
         "linear-gradient(135deg, \(hex) 0%, #ffffff 140%)"
     }
 
-    private static func css(gradient: String) -> String {
+    /// The `body` background declarations: the chosen picture when this
+    /// profile has one (browser-1wo), otherwise the two-tone color gradient.
+    ///
+    /// The image is inlined as a `data:` URI because this page is one itself
+    /// -- see StartPageBackgroundImageStore -- and is fixed rather than
+    /// scrolling, so it reads as a backdrop behind the tiles rather than a
+    /// picture the content slides over. The white scrim layered on top is what
+    /// keeps this page's dark text and translucent tile wells legible over an
+    /// arbitrary photograph, which no fixed text color could do on its own.
+    private static func backgroundCSS(for settings: StartPageSettings, profileId: String) -> String {
+        let gradient = gradientCSS(from: settings.backgroundColorHex)
+        // A recorded image whose file has since gone missing falls back to the
+        // color rather than rendering an empty page.
+        guard settings.backgroundImageFileName != nil,
+              let imageURI = StartPageBackgroundImageStore.dataURI(forProfileId: profileId) else {
+            return "background: \(gradient);"
+        }
+        return """
+        background-color: \(settings.backgroundColorHex);
+          background-image:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0.22) 100%),
+            url("\(imageURI)");
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+          background-attachment: fixed;
+        """
+    }
+
+    private static func css(background: String) -> String {
         """
         * { box-sizing: border-box; }
         body {
           margin: 0;
           min-height: 100vh;
-          background: \(gradient);
+          \(background)
           font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
           color: #1c1c1e;
         }

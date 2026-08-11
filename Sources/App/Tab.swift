@@ -390,6 +390,16 @@ final class Tab: NSObject, EngineTabDelegate {
         }
     }
 
+    /// Re-renders the start page from current settings, for a tab that's
+    /// showing it (a no-op for any other tab). Not the same as `reload()`:
+    /// StartPageRenderer bakes its HTML into a `data:` URL once, at navigation
+    /// time, so reloading that URL faithfully re-displays the *stale* copy --
+    /// only navigating again picks up a changed background or section toggle.
+    func reloadStartPage() {
+        guard isShowingStartPage else { return }
+        load(url: Self.blankPageSentinel)
+    }
+
     func goBack() { browser?.goBack() }
     func goForward() { browser?.goForward() }
     func reload() { browser?.reload() }

@@ -119,6 +119,7 @@ set(BROWSER_SWIFT_SRCS
   Blocking/PrivacyPaneController.swift
   Blocking/ContentBlockerToolbarController.swift
   StartPage/StartPageSettings.swift
+  StartPage/StartPageBackgroundImageStore.swift
   StartPage/StartPageSections.swift
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
