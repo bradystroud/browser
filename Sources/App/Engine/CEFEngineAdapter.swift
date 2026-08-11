@@ -128,6 +128,8 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func cpuUsagePercent() -> Double { browser.cpuUsagePercent() }
     func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
     func isAudioMuted() -> Bool { browser.isAudioMuted() }
+    func setZoomLevel(_ level: Double) { browser.setZoomLevel(level) }
+    func zoomLevel() -> Double { browser.zoomLevel() }
     func print() { browser.print() }
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         browser.printToPDF(withPath: path, completion: completion)

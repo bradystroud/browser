@@ -180,6 +180,8 @@ final class MainMenuBuilder {
         menu.addItem(withTitle: "Reload Page", action: #selector(BrowserWindowController.reloadPage(_:)), keyEquivalent: "r")
         menu.addItem(withTitle: "Show Address Bar", action: #selector(BrowserWindowController.focusOmnibox(_:)), keyEquivalent: "l")
         menu.addItem(.separator())
+        appendZoomItems(to: menu)
+        menu.addItem(.separator())
         // Targets BrowserWindow (the NSWindow itself), not
         // BrowserWindowController -- see BrowserWindow.toggleReaderMode:'s
         // own doc comment for why (browser-5kq.1).
@@ -200,6 +202,30 @@ final class MainMenuBuilder {
         // matching the Responsive Design Mode item just above.
         menu.addItem(withTitle: "Enter Picture in Picture", action: #selector(AppDelegate.togglePictureInPicture(_:)), keyEquivalent: "")
         return menu
+    }
+
+    /// Zoom In / Zoom Out / Actual Size (browser-5kq.15).
+    ///
+    /// Zoom In deliberately gets *two* menu items. On macOS a key equivalent
+    /// is matched against the event's charactersIgnoringModifiers, which
+    /// applies Shift -- so an item whose keyEquivalent is "+" only ever fires
+    /// for ⌘⇧= (measured: a "+"-only item does not fire for a plain ⌘= event,
+    /// and a "="-only item does not fire for ⌘⇧=). Since + *is* shifted-= on a
+    /// US layout, "press ⌘+" in practice means either of those two chords, so
+    /// both must be registered -- exactly what real browsers do.
+    ///
+    /// The visible item is the "+" one, so the menu reads "⌘+" rather than the
+    /// literally-accurate-but-wrong-looking "⌘="; the "=" one is hidden, which
+    /// (also measured) still has its key equivalent honoured. Only ever one of
+    /// the two matches a given event, so no chord fires the action twice.
+    private func appendZoomItems(to menu: NSMenu) {
+        menu.addItem(withTitle: "Zoom In", action: #selector(BrowserWindowController.zoomIn(_:)), keyEquivalent: "+")
+        let zoomInEqualsSign = NSMenuItem(
+            title: "Zoom In", action: #selector(BrowserWindowController.zoomIn(_:)), keyEquivalent: "=")
+        zoomInEqualsSign.isHidden = true
+        menu.addItem(zoomInEqualsSign)
+        menu.addItem(withTitle: "Zoom Out", action: #selector(BrowserWindowController.zoomOut(_:)), keyEquivalent: "-")
+        menu.addItem(withTitle: "Actual Size", action: #selector(BrowserWindowController.actualSize(_:)), keyEquivalent: "0")
     }
 
     /// browser-6hi.2 -- a fixed device-preset list plus "Off", each

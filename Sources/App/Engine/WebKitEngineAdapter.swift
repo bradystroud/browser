@@ -431,6 +431,24 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
         return false
     }
 
+    /// Full parity on the mechanism, no workaround needed (browser-5kq.15):
+    /// WKWebView.pageZoom is a real, public linear scale factor, so the only
+    /// work here is converting out of (and back into) Chromium's logarithmic
+    /// level units, which are what EngineTab speaks because CEF's own API does.
+    ///
+    /// One deliberate behavioural difference from the CEF adapter, noted rather
+    /// than papered over: pageZoom is a property of this one web view, so on
+    /// the WebKit engine zoom is genuinely per-tab, whereas CEF's is per host
+    /// per profile (see EngineTab.setZoomLevel(_:)). Reading zoomLevel() back
+    /// -- which the UI does on every access -- is correct under either.
+    func setZoomLevel(_ level: Double) {
+        webView.pageZoom = CGFloat(PageZoom.factor(forLevel: level))
+    }
+
+    func zoomLevel() -> Double {
+        PageZoom.level(forFactor: Double(webView.pageZoom))
+    }
+
     func print() {
         let operation = NSPrintOperation(view: webView)
         operation.run()

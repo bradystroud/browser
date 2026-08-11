@@ -246,6 +246,60 @@ final class Tab: NSObject, EngineTabDelegate {
     /// extra synchronization is needed here.
     private(set) var blockedRequestCount = 0
 
+    /// This tab's current page zoom, as a scale factor (1.0 == 100%) on
+    /// PageZoom's ladder (browser-5kq.15).
+    ///
+    /// Deliberately *computed from the engine* on every read rather than
+    /// cached in a stored property, because zoom is not per-tab state and a
+    /// stored copy would silently go stale. Measured, not assumed (see
+    /// docs/ai-tasks/page-zoom-notes.md): CefBrowserHost::SetZoomLevel writes
+    /// into Chromium's HostZoomMap, which is keyed by **host, within the
+    /// request context** -- i.e. per host per profile. Zooming one tab
+    /// immediately re-scales every other open tab on the same host in the same
+    /// profile, with no navigation involved. That is also exactly what Chrome
+    /// itself does, so it's the right behaviour as well as the only one CEF's
+    /// public API offers; what it rules out is a Swift-side per-tab factor,
+    /// which would have started lying the moment a second tab on the same host
+    /// existed.
+    ///
+    /// Consequences worth stating rather than leaving to chance:
+    ///
+    /// - Zoom **survives navigation** within a tab as long as the host doesn't
+    ///   change, and correctly reverts to whatever the *new* host's zoom is
+    ///   when it does -- all from the engine, no re-applying on our side.
+    /// - A new tab on an un-zoomed host starts at exactly 100%; a new tab on an
+    ///   already-zoomed host opens at that host's zoom, matching Chrome.
+    /// - Nothing about zoom is written to `session.json` (SessionSnapshot.Tab
+    ///   has no zoom field), yet a zoom **does** outlive a relaunch: CEF
+    ///   persists HostZoomMap into the profile's own cache_path. Measured, not
+    ///   assumed. Surfacing and controlling that (an indicator, a reset-all) is
+    ///   the follow-up bead browser-icj.
+    var zoomFactor: Double {
+        guard let browser else { return PageZoom.defaultFactor }
+        return PageZoom.factor(forLevel: browser.zoomLevel())
+    }
+
+    /// "100%", "125%" -- for anything that wants to show the current zoom.
+    var zoomPercentLabel: String { PageZoom.percentLabel(for: zoomFactor) }
+
+    /// ⌘+ -- one rung up PageZoom's ladder, clamped at the top.
+    func zoomIn() { setZoomFactor(PageZoom.stepUp(from: zoomFactor)) }
+
+    /// ⌘− -- one rung down, clamped at the bottom.
+    func zoomOut() { setZoomFactor(PageZoom.stepDown(from: zoomFactor)) }
+
+    /// ⌘0 -- exactly 100%, not "the nearest rung to 100%": see
+    /// PageZoom.level(forFactor:) for why that distinction reaches the engine.
+    func resetZoom() { setZoomFactor(PageZoom.defaultFactor) }
+
+    /// Pushes `factor` to the engine in the logarithmic level units
+    /// EngineTab.setZoomLevel(_:) takes. The engine is the only store, so
+    /// there is nothing here to keep in sync with it.
+    func setZoomFactor(_ factor: Double) {
+        browser?.setZoomLevel(PageZoom.level(forFactor: factor))
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
     /// Toggles isMuted and immediately applies it to the engine -- the only
     /// place SetAudioMuted is ever called, so isMuted can never drift from
     /// what the engine actually has (no separate "read it back to confirm"

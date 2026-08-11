@@ -321,6 +321,36 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// needed here.
 - (BOOL)isAudioMuted;
 
+/// Sets this tab's page zoom (browser-5kq.15) -- wraps
+/// CefBrowserHost::SetZoomLevel, a real CEF API that (unlike
+/// CefBrowserHost::ExecuteChromeCommand, see the Reader mode notes) is not
+/// Chrome-style-only and works on this app's Alloy-style windows.
+///
+/// `zoomLevel` is Chromium's *logarithmic* zoom level, not a percentage:
+/// the on-screen scale factor is pow(1.2, zoomLevel), so 0 is exactly 100%,
+/// 1 is 120%, -1 is ~83.3%. Callers should go through PageZoom (Swift side)
+/// rather than computing levels by hand.
+///
+/// CEF documents this as applying immediately when called on the UI thread
+/// (always the main thread in this app -- see BRWMessagePump) and
+/// asynchronously otherwise.
+///
+/// **Scope: per host, per request context -- not per browser.** Measured, not
+/// assumed (see docs/ai-tasks/page-zoom-notes.md): this writes into Chromium's
+/// HostZoomMap for the browser's current host, so calling it on one tab
+/// immediately re-scales every other open tab on the same host in the same
+/// profile, with no navigation involved. CEF's own doc comment says nothing
+/// about this and reads as if it were per-browser. Nothing on the Swift side
+/// should cache a per-tab zoom value; read it back with -zoomLevel instead.
+- (void)setZoomLevel:(double)zoomLevel NS_SWIFT_NAME(setZoomLevel(_:));
+
+/// Mirrors CefBrowserHost::GetZoomLevel -- the same logarithmic level
+/// -setZoomLevel: takes, read back from the engine. UI-thread-only per CEF's
+/// own doc comment (always the main thread here). Returns 0 (i.e. 100%) when
+/// there's no engine-side browser yet, which is also the correct default for
+/// a browser that hasn't been created.
+- (double)zoomLevel;
+
 /// Opens CEF's native print dialog for this tab's current page (see
 /// BRWBrowser.mm's -print for what "native" actually means in this Alloy-
 /// style app -- verified empirically, not assumed, per browser-5kq.6).

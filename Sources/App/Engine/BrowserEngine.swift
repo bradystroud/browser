@@ -171,6 +171,25 @@ protocol EngineTab: AnyObject {
     /// -isAudioMuted.
     func isAudioMuted() -> Bool
 
+    /// Sets this tab's page zoom (browser-5kq.15). `level` is Chromium's
+    /// *logarithmic* zoom level, not a percentage: the on-screen scale factor
+    /// is pow(1.2, level), so 0 is exactly 100%. Use PageZoom (PageZoom.swift)
+    /// to convert between a human-facing factor and this level rather than
+    /// doing the arithmetic at a call site. See BRWBrowser.h's -setZoomLevel:.
+    ///
+    /// How far a zoom *spreads* is an engine property, not a guarantee of this
+    /// protocol, and the two current conformers genuinely differ: CEF scopes it
+    /// per host per profile (measured -- see BRWBrowser.h's -setZoomLevel:,
+    /// which is why Tab never caches a factor), WKWebView's pageZoom is per web
+    /// view. Callers must therefore treat zoomLevel() below as the only source
+    /// of truth for "what is this tab at right now".
+    func setZoomLevel(_ level: Double)
+
+    /// Reads back the engine's own current zoom level for this tab, in the
+    /// same logarithmic units setZoomLevel(_:) takes -- see BRWBrowser.h's
+    /// -zoomLevel. 0 (i.e. 100%) when there's no engine-side browser yet.
+    func zoomLevel() -> Double
+
     /// Opens the engine's native print dialog for this tab's current page --
     /// see BRWBrowser.h's -print for what "native" actually means in this
     /// Alloy-style app (browser-5kq.6).

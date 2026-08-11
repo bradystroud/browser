@@ -293,6 +293,19 @@ class DownloadImageCallback : public CefDownloadImageCallback {
   return _handler->GetBrowser()->GetHost()->IsAudioMuted();
 }
 
+- (void)setZoomLevel:(double)zoomLevel {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->SetZoomLevel(zoomLevel);
+  }
+}
+
+- (double)zoomLevel {
+  if (!_handler || !_handler->GetBrowser()) {
+    return 0.0;
+  }
+  return _handler->GetBrowser()->GetHost()->GetZoomLevel();
+}
+
 - (void)print {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->Print();

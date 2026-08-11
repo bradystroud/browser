@@ -1589,6 +1589,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         activeTab?.reload()
     }
 
+    /// ⌘+ (and ⌘=, see MainMenuBuilder.appendZoomItems) -- browser-5kq.15.
+    /// Applied to the active tab, though the effect is not confined to it:
+    /// CEF scopes zoom per host per profile, so sibling tabs on the same host
+    /// follow, exactly as in Chrome -- see Tab.zoomFactor. Clamping lives in
+    /// PageZoom's ladder, so holding the shortcut down can't run away past
+    /// 500%/25%.
+    @objc func zoomIn(_ sender: Any?) {
+        activeTab?.zoomIn()
+    }
+
+    @objc func zoomOut(_ sender: Any?) {
+        activeTab?.zoomOut()
+    }
+
+    /// ⌘0 -- back to exactly 100%.
+    @objc func actualSize(_ sender: Any?) {
+        activeTab?.resetZoom()
+    }
+
     @objc func focusOmnibox(_ sender: Any?) {
         // Put the full, editable URL in before taking focus: once the field
         // editor exists, controlTextDidBeginEditing deliberately leaves the
