@@ -5,7 +5,7 @@
 // directory), so nothing about the CLI can ever break the .app build. Build
 // with `swift build -c release`; scripts/build.sh does this too and copies
 // the resulting binary into Browser.app/Contents/Resources/bin/browser --
-// see that script and docs/ai-tasks/browser-cli-notes.md for how Brady puts
+// see that script for how Brady puts
 // it on his PATH.
 //
 // Depends locally on this same repo's other standalone packages rather than

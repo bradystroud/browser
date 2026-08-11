@@ -1,7 +1,6 @@
 # Top-level build for the Browser M0 spike. Mirrors the structure of the CEF
 # binary distribution's own root CMakeLists.txt ("Example 2": CEF distribution
 # in a separate directory from the project), see
-# docs/research/2026-07-27-cef-swift-architecture.md and
 # third_party/cef/*/CMakeLists.txt for the upstream original this is adapted
 # from.
 cmake_minimum_required(VERSION 3.21)
@@ -31,9 +30,8 @@ endif()
 list(GET CEF_ROOT_CANDIDATES 0 CEF_ROOT)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CEF_ROOT}/cmake")
 
-# Disable CEF's own (Chromium-internal) process sandbox for this spike -- see
-# docs/ai-tasks/m0-spike-notes.md for why. Unrelated to macOS App Sandbox,
-# which this project must never enable (see AGENTS.md).
+# Disable CEF's own (Chromium-internal) process sandbox. Unrelated to macOS
+# App Sandbox, which this project must never enable (see AGENTS.md).
 set(USE_SANDBOX OFF CACHE BOOL "" FORCE)
 
 find_package(CEF REQUIRED)

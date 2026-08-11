@@ -40,6 +40,27 @@ if [[ ! -d "${FRAMEWORK_DIR}" ]]; then
   exit 1
 fi
 
+# 0. Prune broken symlinks CMake's framework copy leaves behind before any
+#    signing happens. It creates the top-level framework symlinks a second
+#    time *inside* the versioned directories, where their targets don't
+#    resolve: "Versions/A/A -> A" (self-referential, ELOOP),
+#    "Versions/A/Resources/Resources -> Versions/A/Resources" and the same
+#    for Libraries. The pristine CEF distribution has no symlinks at all --
+#    these are entirely our copy step's doing.
+#
+#    They must go, and not just for tidiness: `codesign --verify --strict`
+#    passes with them present, but **Gatekeeper does not**. `spctl --assess`
+#    reports "rejected (invalid destination for symbolic link in bundle)" on
+#    an otherwise correctly Developer-ID-signed, notarized and stapled app.
+#    That never bites a locally built or `scripts/install.sh`-installed copy
+#    (no quarantine flag, so Gatekeeper never assesses it) -- it bites only
+#    the *downloaded* copy, i.e. every real user, and Apple's own reviewer.
+#    Confirmed by assessing a fully notarized 0.1.0 build before this fix.
+while IFS= read -r -d '' stray; do
+  echo "Pruning broken symlink: ${stray}"
+  rm -f "${stray}"
+done < <(find "${FRAMEWORK_DIR}" -type l ! -exec test -e {} \; -print0)
+
 # 1. Innermost first: any Mach-O executable nested inside the framework's
 #    Libraries dir (ANGLE/SwANGLE, the CEF sandbox helper, etc). Identified
 #    by content (file(1)), not by extension -- CEF has shipped both .dylib

@@ -3,7 +3,7 @@
 # into third_party/cef/ (gitignored).
 #
 # Version is pinned deliberately -- do not "latest"-ify this without updating
-# the pin below and re-verifying against docs/research/2026-07-27-cef-swift-architecture.md.
+# the pin below.
 set -euo pipefail
 
 # Pinned 2026-07-27 against https://cef-builds.spotifycdn.com/index.json:

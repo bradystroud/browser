@@ -7,9 +7,9 @@
 # CODESIGN_IDENTITY it falls back to ad-hoc ("-") and --skip-notarize lets
 # the packaging phase be exercised end-to-end without Apple credentials.
 #
-# See docs/ai-tasks/release-signing-runbook.md for the one-time setup Brady
-# needs to do (Developer ID cert + notarytool keychain profile) before this
-# can run for real.
+# Needs a one-time setup before it can run for real: a Developer ID
+# Application certificate in the keychain, plus a `notarytool
+# store-credentials` profile (default name: browser-notary).
 #
 # Builds into build-release/, never the shared build/ that scripts/build.sh
 # and dev agents use (beads browser-rkn: a concurrent `scripts/build.sh` run

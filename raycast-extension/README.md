@@ -60,5 +60,4 @@ The app has no scripting dictionary, and this repo bans agents from driving its
 UI with System Events (see `CLAUDE.md`). The `browser` CLI (browser-82d) already
 exists as the sanctioned control surface, and gained `window new` / `windows` /
 `open --new-window` for this extension — so Raycast gets a stable, testable
-contract instead of synthetic keystrokes. See
-`docs/ai-tasks/raycast-extension-notes.md`.
+contract instead of synthetic keystrokes. See.

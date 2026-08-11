@@ -18,7 +18,6 @@
 # cache_path> verbatim -- so dumps land in <profiles-root>/pending (nothing
 # uploads them, and Crashpad only promotes a report to completed/ after an
 # upload attempt, so pending/ is where they stay). See
-# docs/ai-tasks/crash-reporting-notes.md.
 set -euo pipefail
 
 PROFILES_ROOT="${HOME}/Library/Application Support/Browser/Profiles"
@@ -91,7 +90,6 @@ if [[ "${WANT_STACK}" -eq 1 ]]; then
   # Browser/helper binaries from their (unstripped) symbol tables; the CEF
   # framework's frames come out as ___lldb_unnamed_symbol_* unless the
   # matching release_symbols archive is downloaded -- see
-  # docs/ai-tasks/crash-reporting-notes.md.
   lldb --batch \
     -o "target create --core ${NEWEST}" \
     -o "thread list" \

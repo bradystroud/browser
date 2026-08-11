@@ -95,7 +95,7 @@ if [[ -n "${CODESIGN_IDENTITY:-}" && "${CODESIGN_IDENTITY}" != "-" ]]; then
 fi
 
 # browser-82d: the `browser` CLI (browser-cli/, a standalone SwiftPM
-# executable -- see docs/ai-tasks/browser-cli-notes.md) -- built and dropped
+# executable) -- built and dropped
 # into the app bundle's Resources so it travels with it, but deliberately
 # kept off the app build's critical path: a failure here is a warning, never
 # a reason to fail the whole ./scripts/build.sh (nothing about Browser.app
