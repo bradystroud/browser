@@ -53,6 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before anything else happened to touch either singleton.
         _ = ShortcutsOverlayController.shared
         _ = TabCyclingController.shared
+        // Observers for browser-2ji ("keyboard focus stays here when another
+        // app activates"). Installed unconditionally and this early because
+        // the bug's own reproduction is app *deactivation* -- which can
+        // happen before any window exists -- and because the diagnostics are
+        // designed to be switched on mid-session, by a marker file, without
+        // relaunching; that only works if the observers are already live.
+        FocusDiagnostics.install()
         // DISABLED (browser-5kq.10). The omnibox start panel crashes the whole
         // browser on omnibox focus and neither attempt at a fix survived real
         // use. Ordering *any* window on screen while the omnibox holds focus

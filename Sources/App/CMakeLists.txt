@@ -52,6 +52,7 @@ set(BROWSER_SWIFT_SRCS
   TabLifecycleCenter.swift
   TabButtonView.swift
   TabDragDiagnostics.swift
+  FocusDiagnostics.swift
   TabStripView.swift
   TabGroup.swift
   TabGroupHeaderView.swift

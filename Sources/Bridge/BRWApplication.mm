@@ -29,6 +29,29 @@
   [super sendEvent:event];
 }
 
+// browser-2ji diagnostics hook. Every self-activation this app performs goes
+// through -activateIgnoringOtherApps: (that is what Swift's
+// NSApp.activate(ignoringOtherApps:) compiles to, at all eight call sites),
+// so overriding it here is the only place a "did *we* pull ourselves back to
+// the front?" signal can be observed at all -- the app-level
+// didBecomeActiveNotification fires identically whether the user clicked our
+// Dock icon or we asked for focus ourselves, and cannot tell the two apart.
+//
+// The call stack is captured here, synchronously, and handed over in
+// userInfo: the observer is delivered on the main queue, by which point the
+// frames that requested the activation have already returned.
+//
+// Posting unconditionally is deliberate -- FocusDiagnostics ignores this
+// unless its marker file is present, and gating it here instead would mean
+// the hook is only live for launches that already knew to enable it.
+- (void)activateIgnoringOtherApps:(BOOL)flag {
+  [[NSNotificationCenter defaultCenter]
+      postNotificationName:@"AppActivationRequestedNotification"
+                    object:self
+                  userInfo:@{@"callStack" : [NSThread callStackSymbols]}];
+  [super activateIgnoringOtherApps:flag];
+}
+
 // Requesting secure restorable state avoids macOS re-restoring windows
 // incorrectly after a hard reset, and is required on macOS 12+.
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
