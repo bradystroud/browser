@@ -30,6 +30,29 @@ final class OmniboxField: NSTextField {
     /// onBuildContextMenu above.
     var expandedTextProvider: (() -> String?)?
 
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configureSingleLine()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configureSingleLine()
+    }
+
+    /// The omnibox is always exactly one line. A plain NSTextField wraps a
+    /// long value onto a second line and grows its intrinsic height to match,
+    /// which in a fixed-height pill means the text is clipped mid-glyph
+    /// instead of simply running past the right edge. `usesSingleLineMode`
+    /// alone isn't enough -- the cell's own `wraps` still governs layout, and
+    /// `isScrollable` is what lets the text extend beyond the visible box
+    /// (and scroll with the caret) rather than being squeezed into it.
+    private func configureSingleLine() {
+        usesSingleLineMode = true
+        cell?.wraps = false
+        cell?.isScrollable = true
+    }
+
     /// Swaps in the full URL and selects it the moment focus arrives -- so a
     /// click (or ⌘L) behaves like Safari's address bar: the whole URL is
     /// selected and the next keystroke replaces it.
