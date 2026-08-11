@@ -225,7 +225,11 @@ final class TabStripView: NSView {
     /// name, collapsed just a color dot + count badge.
     private static let groupHeaderWidth: CGFloat = 110
     private static let collapsedGroupHeaderWidth: CGFloat = 50
-    private static let tabSpacing: CGFloat = 2
+    /// Gap between adjacent pills. Has to clear the pill's own rounded ends
+    /// *and* the soft edge NSGlassEffectView renders slightly beyond its
+    /// bounds -- at the original 2pt the two together read as tabs touching,
+    /// and in places overlapping, rather than as a deliberate gap.
+    private static let tabSpacing: CGFloat = 7
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 24
 
