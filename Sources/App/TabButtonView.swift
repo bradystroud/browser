@@ -131,6 +131,10 @@ final class TabButtonView: NSView {
         label.font = .systemFont(ofSize: 12)
         label.lineBreakMode = .byTruncatingTail
         label.textColor = .labelColor
+        // Centered in the pill (Brady's ask) -- see layout() for the
+        // symmetric insets that make "centered in the label" and "centered
+        // in the pill" the same thing.
+        label.alignment = .center
         return label
     }()
 
@@ -375,7 +379,14 @@ final class TabButtonView: NSView {
         faviconView.frame = iconFrame
         audioButton.frame = iconFrame
         loadingSpinner.frame = iconFrame
-        let titleX = faviconLeading + faviconSize + 6
+        // Horizontally: the same inset on both sides, so the label's centre
+        // is the *pill's* centre and a short title reads as centred in the
+        // tab rather than centred in some off-centre gap. The inset is the
+        // favicon's own trailing edge, which is the wider of the two things
+        // the text must clear (the close button needs less), and it stays
+        // constant whether or not the close button is currently showing --
+        // otherwise a centred title would visibly shift sideways on hover.
+        //
         // Vertically centered as its own row alongside the favicon above
         // (browser-0y1, Brady's ask) -- a plain NSTextField label renders
         // its text top-aligned within whatever frame it's given, so a
@@ -383,10 +394,11 @@ final class TabButtonView: NSView {
         // title sitting at the top instead of centered. A fixed label
         // height matching the font's own line height, centered the same
         // way faviconView/audioButton already are, fixes that.
+        let titleInset = faviconLeading + faviconSize + 6
         let titleHeight: CGFloat = 16
         titleLabel.frame = NSRect(
-            x: titleX, y: (bounds.height - titleHeight) / 2,
-            width: max(0, bounds.width - closeSize - titleX - 8), height: titleHeight
+            x: titleInset, y: (bounds.height - titleHeight) / 2,
+            width: max(0, bounds.width - titleInset * 2), height: titleHeight
         )
     }
 

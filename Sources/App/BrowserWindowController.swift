@@ -93,7 +93,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// underneath it because of the *previous* navigation's stale timer.
     private var loadingProgressCompletionWorkItem: DispatchWorkItem?
     private static let omniboxPillHeight: CGFloat = 30
-    private static let omniboxCollapsedWidth: CGFloat = 280
+    /// The collapsed (unfocused) pill scales with the window rather than
+    /// sitting at one fixed width, which used to leave a full-screen window
+    /// showing exactly the same small pill as a half-width one (Brady's ask).
+    /// Clamped at both ends: a floor so a narrow window still gets a usable
+    /// field, and a ceiling so a very wide display doesn't stretch it into a
+    /// full-width bar -- past a point, extra width shows nothing more, since
+    /// a URL that long is truncated by the display preference anyway.
+    private static let omniboxCollapsedMinWidth: CGFloat = 280
+    private static let omniboxCollapsedMaxWidth: CGFloat = 820
+    private static let omniboxCollapsedWidthFraction: CGFloat = 0.45
     /// Minimum breathing room between the expanded pill and whatever sits
     /// on either side of it (back/forward on the left, the private-browsing
     /// pill if any on the right).
@@ -550,14 +559,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// and setOmniboxFocused(_:animated:).
     private func omniboxFrame() -> NSRect {
         let toolbarHeight = toolbarView.bounds.height
-        let width = isOmniboxFocused ? expandedOmniboxWidth() : Self.omniboxCollapsedWidth
+        let width = isOmniboxFocused ? expandedOmniboxWidth() : collapsedOmniboxWidth()
         let x = (toolbarView.bounds.width - width) / 2
         return NSRect(x: x, y: (toolbarHeight - Self.omniboxPillHeight) / 2, width: width, height: Self.omniboxPillHeight)
     }
 
+    /// The unfocused pill's width for the current window size -- see
+    /// omniboxCollapsedWidthFraction.
+    private func collapsedOmniboxWidth() -> CGFloat {
+        let proportional = toolbarView.bounds.width * Self.omniboxCollapsedWidthFraction
+        let clamped = min(Self.omniboxCollapsedMaxWidth, max(Self.omniboxCollapsedMinWidth, proportional))
+        // Never wider than the focused pill: expandedOmniboxWidth() is what
+        // actually fits between back/forward and the private-browsing pill, so
+        // a collapsed pill past it would both overlap them and, absurdly,
+        // *shrink* when clicked into.
+        return min(clamped, expandedOmniboxWidth())
+    }
+
     /// How wide the expanded pill can get before it would crowd back/forward
     /// on the left or the private-browsing pill (if any) on the right --
-    /// never narrower than the collapsed width even in a very small window.
+    /// never narrower than the collapsed minimum even in a very small window.
     private func expandedOmniboxWidth() -> CGFloat {
         let margin: CGFloat = 8
         let buttonSize: CGFloat = 24
@@ -569,7 +590,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let profilePillReserved = profilePillView.map { $0.frame.width + gap } ?? 0
         let leadingReserved = margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2 + profilePillReserved + Self.omniboxHorizontalMargin
         let trailingReserved = (privateLabel != nil ? 54 + gap : 0) + margin + Self.omniboxHorizontalMargin
-        return max(Self.omniboxCollapsedWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
+        return max(Self.omniboxCollapsedMinWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
     }
 
     /// Repositions the pill itself (not animated -- see
