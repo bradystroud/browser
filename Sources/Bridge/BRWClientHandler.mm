@@ -538,6 +538,8 @@ const int kVisualLookUpCommandId = MENU_ID_USER_FIRST;
 const int kCopyImageCommandId = MENU_ID_USER_FIRST + 1;
 const int kCopyImageLinkCommandId = MENU_ID_USER_FIRST + 2;
 const int kDownloadImageCommandId = MENU_ID_USER_FIRST + 3;
+const int kViewSourceCommandId = MENU_ID_USER_FIRST + 4;
+const int kInspectElementCommandId = MENU_ID_USER_FIRST + 5;
 }  // namespace
 
 // static
@@ -550,25 +552,39 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                                              CefRefPtr<CefFrame> frame,
                                              CefRefPtr<CefContextMenuParams> params,
                                              CefRefPtr<CefMenuModel> model) {
-  if (!params->HasImageContents()) {
-    // Every item this handler adds is about the right-clicked image, so a
-    // right-click on anything else (text, a link, the page background)
-    // leaves CEF's own default menu completely untouched.
-    return;
+  if (params->HasImageContents()) {
+    if (model->GetCount() > 0) {
+      model->AddSeparator();
+    }
+    // Copy Image / Copy Image Link (browser-5kq.13) and Download Image
+    // (browser-5kq.14) are unconditional; "Look Up Image" additionally needs
+    // the Mac to support VisionKit analysis at all (browser-5kq.2), so it can
+    // be absent while the other three are there.
+    model->AddItem(kCopyImageCommandId, "Copy Image");
+    model->AddItem(kCopyImageLinkCommandId, "Copy Image Link");
+    model->AddItem(kDownloadImageCommandId, "Download Image");
+    if (visual_look_up_available_) {
+      model->AddItem(kVisualLookUpCommandId, "Look Up Image");
+    }
   }
+
+  // View Page Source / Inspect Element go on *every* right-click, image or
+  // not, which is where both Safari and Chrome put them.
+  //
+  // CEF's own MENU_ID_VIEW_SOURCE is removed rather than left alongside ours.
+  // It is not a broken item so much as a differently-scoped one: it routes to
+  // CefFrame::ViewSource(), documented as saving the frame's HTML to a
+  // temporary file and handing that to "the default text viewing
+  // application" -- so it leaves the browser entirely, which is why it reads
+  // as doing nothing. Ours navigates a new tab to `view-source:<url>` and
+  // gets Chromium's real source viewer, syntax highlighting and all
+  // (confirmed working in this Alloy app before this item was written).
+  model->Remove(MENU_ID_VIEW_SOURCE);
   if (model->GetCount() > 0) {
     model->AddSeparator();
   }
-  // Copy Image / Copy Image Link (browser-5kq.13) and Download Image
-  // (browser-5kq.14) are unconditional; "Look Up Image" additionally needs
-  // the Mac to support VisionKit analysis at all (browser-5kq.2), so it can
-  // be absent while the other three are there.
-  model->AddItem(kCopyImageCommandId, "Copy Image");
-  model->AddItem(kCopyImageLinkCommandId, "Copy Image Link");
-  model->AddItem(kDownloadImageCommandId, "Download Image");
-  if (visual_look_up_available_) {
-    model->AddItem(kVisualLookUpCommandId, "Look Up Image");
-  }
+  model->AddItem(kViewSourceCommandId, "View Page Source");
+  model->AddItem(kInspectElementCommandId, "Inspect Element");
 }
 
 bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -603,6 +619,24 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
         [delegate_ browserDidRequestDownloadImageForImageURL:ToNSString(params->GetSourceUrl())];
       }
       return true;
+    case kViewSourceCommandId:
+      if (delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestViewSourceForPageURL:)]) {
+        [delegate_ browserDidRequestViewSourceForPageURL:ToNSString(params->GetPageUrl())];
+      }
+      return true;
+    case kInspectElementCommandId: {
+      // The point the user right-clicked, so DevTools opens with that element
+      // already selected -- the whole difference between "Inspect Element" and
+      // the plain "Show DevTools" menu entry, which passes an empty CefPoint.
+      // See BRWBrowser.mm's -showDevTools for why the window info/client are
+      // left default (CEF manages its own DevTools window).
+      CefWindowInfo window_info;
+      CefBrowserSettings settings;
+      browser->GetHost()->ShowDevTools(window_info, nullptr, settings,
+                                       CefPoint(params->GetXCoord(), params->GetYCoord()));
+      return true;
+    }
     default:
       // Not ours -- let CEF's default handling take it (copy/paste, spelling
       // suggestions, etc.), exactly as if this handler didn't exist.

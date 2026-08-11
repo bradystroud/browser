@@ -187,6 +187,16 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// referrer itself from the originating browser.
 - (void)browserDidRequestDownloadImageForImageURL:(NSString *)imageURL;
 
+/// The user chose "View Page Source" from the context menu -- `pageURL` is
+/// `CefContextMenuParams::GetPageUrl()`.
+///
+/// The delegate is expected to open `view-source:<pageURL>` in a new tab.
+/// This deliberately does not use `CefFrame::ViewSource()`, which writes the
+/// HTML to a temp file and opens it in the user's *text editor* rather than
+/// in the browser -- see BRWClientHandler's OnBeforeContextMenu, which also
+/// removes CEF's own menu item pointing at it.
+- (void)browserDidRequestViewSourceForPageURL:(NSString *)pageURL;
+
 /// The engine wants `url` opened somewhere other than the current tab.
 ///
 /// Two distinct CEF callbacks feed this, and both matter:

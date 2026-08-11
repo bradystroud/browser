@@ -95,6 +95,13 @@ protocol EngineTabDelegate: AnyObject {
     /// `pageURL` actually are.
     func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String)
 
+    /// The user chose "View Page Source" from the native context menu -- see
+    /// BRWBrowser.h's -browserDidRequestViewSourceForPageURL: for why this is
+    /// a callback the shell answers rather than something the engine does
+    /// for itself. The handler is expected to open the page's source in a
+    /// new tab.
+    func engineTabDidRequestViewSource(pageURL: String)
+
     /// The user chose "Copy Image" from the native context menu over an image
     /// (browser-5kq.13) -- see BRWBrowser.h's
     /// -browserDidRequestCopyImageForImageURL:pageURL:. The handler is

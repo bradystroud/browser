@@ -517,6 +517,18 @@ final class Tab: NSObject, EngineTabDelegate {
         }
     }
 
+    /// "View Page Source" from the native context menu. Opens Chromium's own
+    /// source viewer in a foreground tab next to this one, which is where
+    /// both Safari and Chrome put it.
+    ///
+    /// A `view-source:` URL is a real navigation like any other -- it goes
+    /// through the same didRequestNewTabForURL: path a ⌘-clicked link uses,
+    /// with no special-casing anywhere below this line.
+    func engineTabDidRequestViewSource(pageURL: String) {
+        guard !pageURL.isEmpty else { return }
+        delegate?.tab(self, didRequestNewTabForURL: "view-source:\(pageURL)", foreground: true)
+    }
+
     /// "Copy Image" from the native context menu (browser-5kq.13). Passes
     /// `browser` -- this tab's own EngineTab -- rather than just the URL,
     /// because the bytes must be fetched by the page's own renderer to carry
