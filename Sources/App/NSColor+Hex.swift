@@ -27,8 +27,21 @@ extension NSColor {
         self.init(srgbRed: r, green: g, blue: b, alpha: 1.0)
     }
 
-    /// WCAG relative luminance -- see contrastRatio(against:).
-    private var relativeLuminance: CGFloat {
+    /// "#RRGGBB" for an already-resolved color -- the inverse of init(hex:),
+    /// for logging measured colors in a form that can be pasted straight
+    /// into a contrast checker (see TabStripView's --tab-contrast-report).
+    var hexString: String {
+        guard let rgb = usingColorSpace(.sRGB) else { return "?" }
+        func byte(_ c: CGFloat) -> Int { Int((min(max(c, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(rgb.redComponent), byte(rgb.greenComponent), byte(rgb.blueComponent))
+    }
+
+    /// WCAG relative luminance, 0 for black and 1 for white -- see
+    /// contrastRatio(against:). Readable outside this file because the tab
+    /// strip picks between a light and a dark selection treatment from a
+    /// measured luminance rather than from an assumption about which way
+    /// the tint went (browser-qpy.1).
+    var relativeLuminance: CGFloat {
         guard let rgb = usingColorSpace(.sRGB) else { return 0 }
         func channel(_ c: CGFloat) -> CGFloat {
             c <= 0.03928 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
@@ -68,5 +81,66 @@ extension NSColor {
               blended.contrastRatio(against: .labelColor) >= Self.themeTintMinimumContrastRatio
         else { return nil }
         return blended
+    }
+
+    /// This color's concrete sRGB components as they render under
+    /// `appearance`.
+    ///
+    /// A dynamic system color (`controlBackgroundColor`, `labelColor`,
+    /// `windowBackgroundColor`, …) carries no components of its own until
+    /// something resolves it, and asking one for `redComponent` outside a
+    /// drawing context yields its *light* variant no matter what the view
+    /// is actually drawn in. Every luminance measurement below that skipped
+    /// this step would therefore be wrong in dark mode -- and wrong in the
+    /// direction that hides a contrast problem rather than reporting it.
+    func resolvedSRGB(for appearance: NSAppearance) -> NSColor {
+        var resolved = self
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = self.usingColorSpace(.sRGB) ?? self
+        }
+        return resolved
+    }
+
+    /// This color composited at `alpha` over `background` -- i.e. what the
+    /// eye actually receives from a translucent overlay, which is the only
+    /// thing a contrast ratio involving one can meaningfully be measured
+    /// on. (`contrastRatio(against:)` ignores alpha entirely: relative
+    /// luminance is defined for opaque colors.)
+    func composited(alpha: CGFloat, over background: NSColor) -> NSColor {
+        guard let base = background.usingColorSpace(.sRGB), let top = usingColorSpace(.sRGB),
+              let blended = base.blended(withFraction: alpha, of: top) else { return self }
+        return blended
+    }
+
+    /// This color moved away from `reference` in luminance -- keeping its
+    /// hue -- until the pair clears `target`, or as far as sRGB allows if
+    /// they can't. Returns `self` unchanged when the pair already clears.
+    ///
+    /// Direction is chosen from `reference`'s measured luminance rather
+    /// than assumed: a light backdrop is escaped by darkening, a dark one
+    /// by lightening. That is the whole point -- the old selected-tab
+    /// treatment was fixed, so it only separated from the backdrops it
+    /// happened to be designed against (browser-qpy.1).
+    ///
+    /// Channel scaling toward black/white rather than an HSB brightness
+    /// change: AppKit has no sRGB HSB initializer (`NSColor(hue:…)` is
+    /// calibrated RGB), so going through HSB would shift the hue slightly
+    /// on every step of the search.
+    func nudged(awayFrom reference: NSColor, target: CGFloat) -> NSColor {
+        guard let base = usingColorSpace(.sRGB), let other = reference.usingColorSpace(.sRGB),
+              base.contrastRatio(against: other) < target else { return self }
+        let darken = other.relativeLuminance > 0.5
+        var best = base
+        for step in 1...25 {
+            let k = CGFloat(step) * 0.04
+            func moved(_ c: CGFloat) -> CGFloat { darken ? c * (1 - k) : c + (1 - c) * k }
+            let candidate = NSColor(
+                srgbRed: moved(base.redComponent), green: moved(base.greenComponent),
+                blue: moved(base.blueComponent), alpha: base.alphaComponent
+            )
+            best = candidate
+            if candidate.contrastRatio(against: other) >= target { return candidate }
+        }
+        return best
     }
 }

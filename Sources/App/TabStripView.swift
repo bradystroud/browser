@@ -290,6 +290,11 @@ final class TabStripView: NSView {
     /// also selected, but harmless to set unconditionally).
     func updateThemeColor(at index: Int, hex: String?) {
         tabButton(forTabIndex: index)?.themeColorHex = hex
+        // A theme color arrives well after the reload that created the
+        // button (it comes out of the page's own DOM), and changes nothing
+        // about layout -- so without this the contrast report would only
+        // ever describe the untinted state it was built in.
+        reportSelectionContrastIfRequested()
     }
 
     /// Cheaper than a full reload -- see updateTitle. Called whenever
@@ -315,6 +320,7 @@ final class TabStripView: NSView {
             guard case .tab(let button) = item else { continue }
             button.isSelected = button.index == index
         }
+        reportSelectionContrastIfRequested()
     }
 
     /// ⌘W on a pinned active tab is a no-op (see BrowserWindowController.
@@ -484,6 +490,26 @@ final class TabStripView: NSView {
             TabDragDiagnostics.probeHitTestingOnce(button: firstButton)
         }
         runDragSelfTestIfRequested()
+        reportSelectionContrastIfRequested()
+    }
+
+    /// `--tab-contrast-report`: prints the selected pill's measured colors
+    /// and contrast ratios (browser-qpy.1) every time the strip lays out,
+    /// so switching tabs walks through every theme color in the window and
+    /// the numbers for each land in the log.
+    ///
+    /// This exists because "the selected tab is hard to see" cannot be
+    /// settled by reading the code -- but it also cannot be settled by a
+    /// screenshot alone, which shows *a* result without saying how close to
+    /// the edge it was. The screenshots say whether it looks right; this
+    /// says by how much, and would keep saying so if a future change to the
+    /// chrome tint quietly ate the margin.
+    private func reportSelectionContrastIfRequested() {
+        guard ProcessInfo.processInfo.arguments.contains("--tab-contrast-report") else { return }
+        for item in stripItems {
+            guard case .tab(let button) = item, button.index == selectedIndex else { continue }
+            NSLog("[tab-contrast] %@", button.selectionContrastReport)
+        }
     }
 
     /// `--drag-selftest`: drives a whole press-drag-release through the same
