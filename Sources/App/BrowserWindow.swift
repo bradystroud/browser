@@ -19,9 +19,15 @@ final class BrowserWindow: NSWindow {
     /// this window's first tab onward, not only once the user first acts).
     private let readerMode = ReaderModeController()
 
+    /// The toolbar downloads button + popover, one per window, attached here
+    /// for the same reason readerMode is: it has to be observing download
+    /// notifications from this window's first tab onward.
+    private let downloadsToolbar = DownloadsToolbarController()
+
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         readerMode.attach(to: self)
+        downloadsToolbar.attach(to: self)
         // Idempotent -- see PasswordManagerCoordinator.activate()'s own doc
         // comment for why it's kicked off here rather than in AppDelegate or
         // BrowserWindowController (browser-ojh.1).

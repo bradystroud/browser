@@ -88,6 +88,7 @@ set(BROWSER_SWIFT_SRCS
   Furniture/AddBookmarkPromptController.swift
   Furniture/DownloadCoordinator.swift
   Furniture/DownloadsWindowController.swift
+  Furniture/DownloadsToolbarController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
