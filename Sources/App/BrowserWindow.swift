@@ -78,6 +78,25 @@ final class BrowserWindow: NSWindow {
                 controller.zoomIn(self)
                 return true
             }
+            // ⌘[ / ⌘] -- Safari's and Chrome's own back/forward chords,
+            // alongside the History menu's ⌘←/⌘→ (Brady's ask). Here rather
+            // than on those menu items for the same reason ⌘= is: an
+            // NSMenuItem carries exactly one key equivalent, and a second
+            // hidden item holding the alternate chord is skipped through the
+            // real -[NSApplication sendEvent:] path -- the mistake documented
+            // just above, which shipped broken once already.
+            //
+            // The exact [.command] guard above is what keeps these clear of
+            // ⌘⇧[ / ⌘⇧] (previous/next tab): those carry Shift, so they never
+            // reach here and are handled once, by their own menu items.
+            if characters == "[" {
+                controller.goBackAction(self)
+                return true
+            }
+            if characters == "]" {
+                controller.goForwardAction(self)
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }

@@ -78,6 +78,14 @@ enum ShortcutsHelp {
             ShortcutEntry(key: "⌃⇥", title: "Next Tab"),
             ShortcutEntry(key: "⌃⇧⇥", title: "Previous Tab"),
         ],
+        // The History menu's Back/Forward items already contribute their
+        // ⌘←/⌘→ entries live; these are the second, menu-less binding for the
+        // same two actions (see BrowserWindow.performKeyEquivalent), which
+        // nothing could derive from the menu.
+        .navigation: [
+            ShortcutEntry(key: "⌘[", title: "Back"),
+            ShortcutEntry(key: "⌘]", title: "Forward"),
+        ],
     ]
 
     static func sections() -> [(ShortcutCategory, [ShortcutEntry])] {
