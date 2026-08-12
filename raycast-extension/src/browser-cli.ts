@@ -192,6 +192,19 @@ export async function openNewWindow(
   return response.message ?? "Opened a new window";
 }
 
+/// Brings the profile's frontmost window to the front, opening one if that
+/// profile has none. The reuse-or-create decision is made by the app, not
+/// here -- see CLIServer.handleFocus for why a "focus, and open a window if
+/// that failed" pair on this side would be racy.
+export async function focusProfile(profile: string): Promise<string> {
+  const response = await runCLI<{ message?: string }>([
+    "focus",
+    "--profile",
+    profile,
+  ]);
+  return response.message ?? `Focused ${profile}`;
+}
+
 export async function searchHistory(
   query: string,
   profile: string | undefined,

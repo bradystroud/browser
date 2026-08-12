@@ -57,6 +57,8 @@ struct BrowserCLIEntry {
             return TabsCommand.run(args: ArgParser.parse(Array(argv.dropFirst())))
         case "windows":
             return WindowCommand.list(args: ArgParser.parse(Array(argv.dropFirst())))
+        case "focus":
+            return WindowCommand.focus(args: ArgParser.parse(Array(argv.dropFirst())))
         case "window":
             guard argv.count >= 2, argv[1] == "new" else {
                 FileHandle.standardError.write(Data("usage: browser window new [<url>] [--profile <name>]\n".utf8))
@@ -113,6 +115,7 @@ struct BrowserCLIEntry {
           browser open <url> [--profile <name>] [--new-window]
           browser window new [<url>] [--profile <name>]
           browser windows [--profile <name>]
+          browser focus [<profile>] [--profile <name>]
           browser route-test <url> [--from-app <bundle-id>]
           browser profiles
           browser tabs [--profile <name>]

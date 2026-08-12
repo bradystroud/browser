@@ -11,6 +11,7 @@ machine with this browser installed, so it would be useless to anyone else.
 
 | Command                           | What it does                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------- |
+| **Switch to Profile**             | Pick a profile and land in it: focuses its frontmost window, or opens one if it has none. |
 | **Open Link in Profile**          | Type/paste a URL, pick a profile (or let routing rules decide), tab or new window.      |
 | **New Window in Profile**         | Pick a profile, get an empty new window in it.                                          |
 | **Open Clipboard Link in Profile**| Uses the selected text if there is any, else the clipboard; pick a profile to open in.  |

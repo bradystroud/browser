@@ -22,6 +22,25 @@ public enum WindowCommand {
         }
     }
 
+    /// `browser focus [--profile <name>]` (browser-dpf) -- bring that
+    /// profile's frontmost window to the front, opening one if it has none.
+    /// Deliberately reuse-or-create in a single round trip; see CLIServer's
+    /// handleFocus for why that beats a caller-side focus-then-fall-back
+    /// pair.
+    public static func focus(args: ParsedArgs) -> Bool {
+        var requestArgs: [String: String] = [:]
+        // Also accepts the profile as a bare positional (`browser focus Work`),
+        // since this is the one command whose only argument *is* the profile
+        // and typing the flag adds nothing.
+        if let profile = args.flags["profile"] ?? args.positionals.first {
+            requestArgs["profile"] = profile
+        }
+
+        return send(CLIRequest(command: "focus", args: requestArgs), args: args) { response in
+            response.message ?? "Focused."
+        }
+    }
+
     public static func list(args: ParsedArgs) -> Bool {
         var requestArgs: [String: String] = [:]
         if let profile = args.flags["profile"] { requestArgs["profile"] = profile }

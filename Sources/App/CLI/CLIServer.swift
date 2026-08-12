@@ -141,6 +141,7 @@ final class CLIServer {
         case "tabs": return handleTabs(request)
         case "window-new": return handleWindowNew(request)
         case "windows": return handleWindows(request)
+        case "focus": return handleFocus(request)
         default: return .failure("unknown command: \(request.command)")
         }
     }
@@ -214,6 +215,47 @@ final class CLIServer {
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
         let target = url == "about:blank" ? "the start page" : url
         return CLIResponse(ok: true, message: "Opened a new window in profile '\(profile.name)' showing \(target).")
+    }
+
+    /// `focus` -- bring a profile's frontmost window to the front, opening
+    /// one if that profile has none. "Take me to this profile" as a single
+    /// operation (browser-dpf).
+    ///
+    /// Reuse-or-create rather than a strict focus-only command, for two
+    /// reasons. It matches `open`'s own established semantics (which already
+    /// reuses the profile's frontmost window and creates one when there
+    /// isn't one), and doing it in one round trip removes the race a
+    /// caller-side "focus, and if that fails open a new window" pair would
+    /// have -- the window could close in between, or two rapid invocations
+    /// could each see "none" and open two windows.
+    ///
+    /// Frontmost is resolved by z-order, not key status
+    /// (WindowManager.frontmostWindowController), which is what makes this
+    /// right even when the currently-key window belongs to another profile
+    /// -- the usual case when this is invoked from Raycast.
+    private static func handleFocus(_ request: CLIRequest) -> CLIResponse {
+        let profileName = request.args["profile"] ?? ProfileManager.defaultProfileName
+        let profile = ProfileManager.shared.profileOrCreate(named: profileName)
+
+        guard let controller = WindowManager.shared.frontmostWindowController(forProfileId: profile.id) else {
+            WindowManager.shared.openNewWindow(profile: profile, initialURL: "about:blank")
+            return CLIResponse(
+                ok: true,
+                message: "No window was open for profile '\(profile.name)' — opened a new one."
+            )
+        }
+
+        // Activating the app is the half that actually matters here: this
+        // arrives while some *other* app (Raycast) is frontmost, so ordering
+        // the window front without activating would raise it within a hidden
+        // app and look like nothing happened. Skipped under
+        // --test-no-activate for the same reason WindowManager skips it --
+        // stealing real keyboard focus is exactly what that flag prevents.
+        if !CommandLineArgs.testNoActivate() {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        controller.window?.makeKeyAndOrderFront(nil)
+        return CLIResponse(ok: true, message: "Focused profile '\(profile.name)'.")
     }
 
     /// `windows` -- one row per open window. `windowIndex` is numbered over
