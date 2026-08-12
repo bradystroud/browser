@@ -44,6 +44,7 @@ set(BROWSER_SWIFT_SRCS
   OmniboxField.swift
   NSColor+Hex.swift
   OmniboxDisplayPreference.swift
+  EnginePreference.swift
   PageZoom.swift
   Profile.swift
   ProfileDotView.swift

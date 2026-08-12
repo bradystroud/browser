@@ -1,10 +1,11 @@
 import AppKit
 
 /// The "General" pane of the Settings window (see SettingsWindowController,
-/// which hosts this alongside the other panes in an NSTabView) -- currently
-/// just the omnibox display-mode preference (browser-0y1, Brady's ask).
-/// Global, not per-profile (see OmniboxDisplayPreference's own doc comment
-/// for why), so unlike the other panes there's no profile picker here.
+/// which hosts this alongside the other panes in an NSTabView): the omnibox
+/// display-mode preference (browser-0y1) and the rendering-engine choice
+/// (browser-2a7). Both are global rather than per-profile -- see
+/// OmniboxDisplayPreference and EnginePreference for each one's own reason --
+/// so unlike the other panes there's no profile picker here.
 final class GeneralPaneController: NSObject, SettingsPaneController {
     private static let margin: CGFloat = 12
     private static let headerHeight: CGFloat = 22
@@ -21,8 +22,12 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// height it's given, so it needs its own accurate size instead of
     /// sharing SettingsPaneController's generic default).
     static let preferredContentHeight: CGFloat =
-        margin + headerHeight + rowGap + labelHeight + 6 + rowHeight + rowGap + helpHeight + margin
+        margin + headerHeight + rowGap + labelHeight + 6 + rowHeight + rowGap + helpHeight
+            + rowGap + labelHeight + 6 + rowHeight + rowGap + engineHelpHeight + margin
     var preferredContentHeight: CGFloat { Self.preferredContentHeight }
+    /// Taller than the omnibox row's help text: this one has to carry both
+    /// the restart requirement and what WebKit can't do.
+    private static let engineHelpHeight: CGFloat = 76
 
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: GeneralPaneController.preferredContentHeight))
 
@@ -33,6 +38,17 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         label.textColor = .secondaryLabelColor
         return label
     }()
+
+    /// Engine choice (browser-2a7). Restart-only by nature -- see
+    /// EnginePreference's own doc comment.
+    private let enginePopup = NSPopUpButton()
+    private let engineHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private static let engineOrder: [EngineChoice] = [.cef, .webkit]
 
     override init() {
         super.init()
@@ -46,6 +62,12 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             modePopup.selectItem(at: index)
         }
         updateHelpText(for: current)
+
+        let engine = EnginePreference.current
+        if let index = Self.engineOrder.firstIndex(of: engine) {
+            enginePopup.selectItem(at: index)
+        }
+        updateEngineHelpText(for: engine)
     }
 
     private func setUpViews() {
@@ -92,6 +114,51 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         helpLabel.frame = NSRect(x: margin, y: helpY, width: view.bounds.width - margin * 2, height: helpHeight)
         helpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(helpLabel)
+
+        // Engine row, same top-down shape as the omnibox row above it.
+        let engineLabelY = helpY - rowGap - labelHeight
+        let engineLabel = NSTextField(labelWithString: "Rendering engine:")
+        engineLabel.frame = NSRect(x: margin, y: engineLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
+        engineLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(engineLabel)
+
+        let enginePopupY = engineLabelY - 6 - rowHeight
+        enginePopup.frame = NSRect(x: margin, y: enginePopupY, width: 200, height: rowHeight)
+        enginePopup.autoresizingMask = [.maxXMargin, .minYMargin]
+        for engine in Self.engineOrder {
+            enginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: engine), action: nil, keyEquivalent: ""))
+        }
+        enginePopup.target = self
+        enginePopup.action = #selector(engineChanged)
+        view.addSubview(enginePopup)
+
+        let engineHelpY = enginePopupY - rowGap - Self.engineHelpHeight
+        engineHelpLabel.frame = NSRect(
+            x: margin, y: engineHelpY, width: view.bounds.width - margin * 2, height: Self.engineHelpHeight
+        )
+        engineHelpLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(engineHelpLabel)
+    }
+
+    private static func title(for engine: EngineChoice) -> String {
+        switch engine {
+        case .cef: return "Chromium"
+        case .webkit: return "WebKit (experimental)"
+        }
+    }
+
+    /// Says plainly that the change is restart-only, and -- for WebKit --
+    /// what stops working. Both matter: the engine is chosen on the first
+    /// line of main.swift (see EnginePreference), and a WebKit session
+    /// silently loses a real list of features, including passkeys entirely.
+    private func updateEngineHelpText(for engine: EngineChoice) {
+        let restartNote = "Takes effect the next time you open Browser. Your windows and tabs are reopened on restart."
+        switch engine {
+        case .cef:
+            engineHelpLabel.stringValue = "Chromium, via CEF \u{2014} the full-featured engine, and the one this browser is built around. \(restartNote)"
+        case .webkit:
+            engineHelpLabel.stringValue = "WebKit is experimental. Passkeys and security keys don\u{2019}t work at all, and neither do per-tab mute, DevTools, Inspect Element, View Page Source or Responsive Design Mode. Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
+        }
     }
 
     private func updateHelpText(for mode: OmniboxDisplayMode) {
@@ -103,6 +170,14 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         case .fullURL:
             helpLabel.stringValue = "Shows the full URL, with the \u{201c}https://\u{201d} prefix hidden for a cleaner look. \u{201c}http://\u{201d} always stays visible, so an insecure site is never disguised as secure."
         }
+    }
+
+    @objc private func engineChanged() {
+        let index = enginePopup.indexOfSelectedItem
+        guard Self.engineOrder.indices.contains(index) else { return }
+        let engine = Self.engineOrder[index]
+        EnginePreference.current = engine
+        updateEngineHelpText(for: engine)
     }
 
     @objc private func modeChanged() {
