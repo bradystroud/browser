@@ -34,6 +34,14 @@ Launching the app to confirm it starts, and reading logs/crash reports, is fine.
 - The link-routing rule model + matcher (`RoutingRule`/`RuleMatcher`) live in `RoutingCore/`, a standalone SwiftPM package with its own unit tests (`cd RoutingCore && swift test`) so the matching logic can be tested independent of the full CEF/Xcode app build. `Sources/App/CMakeLists.txt` compiles those same source files directly into the Browser executable — one copy of the logic, two ways to build it.
 - Per-profile history/bookmarks/downloads (`HistoryStore`/`BookmarkStore`/`DownloadStore`) live in `Packages/BrowserCore/`, a standalone SwiftPM package with its own unit tests (`cd Packages/BrowserCore && swift test`), same "one copy of the logic, two ways to build it" pattern as `RoutingCore/` above — `Sources/App/CMakeLists.txt` compiles those same source files directly into the Browser executable.
 
+## Skills
+
+This repo's skills live in **`.agents/skills/<name>/SKILL.md`**, and `.claude/skills` is a symlink to that directory. `.agents/` is the source of truth; every tool's own directory points at it rather than holding a second copy that can drift.
+
+That location is what makes one skill work in every tool: Codex scans `.agents/skills` in each directory from the working directory up to the repo root, and Claude Code reads `.claude/skills` — which is the same files through the symlink. Add a new skill under `.agents/skills/`, never under `.claude/skills/`.
+
+- `ship` — build, install to `/Applications/Browser.app`, relaunch.
+
 ## Build & run
 
 ```
