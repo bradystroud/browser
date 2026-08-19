@@ -1,4 +1,5 @@
 third_party/cef/
+third_party/sparkle/
 third_party/.downloads/
 build/
 build-release/

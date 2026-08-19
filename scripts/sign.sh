@@ -92,6 +92,39 @@ fi
 echo "Signing (framework): ${FRAMEWORK_DIR}"
 codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${FRAMEWORK_DIR}"
 
+# 2b. Sparkle.framework (browser-wc7), if the bundle carries one. Signed on
+#     the same inside-out principle as the CEF framework above, but the
+#     nesting is deeper: Sparkle ships two XPC services, an Updater.app and a
+#     standalone Autoupdate tool inside its own version directory, and every
+#     one of them is separately sealed code that codesign will not reach on
+#     its own. Order is innermost-outward, exactly as Sparkle's own signing
+#     documentation prescribes; the framework itself must come last or its
+#     seal covers signatures that are about to be replaced.
+#
+#     No entitlements on any of them: those are only needed by a sandboxed
+#     host app, and this app is never sandboxed (AGENTS.md -- App Sandbox
+#     breaks default-browser registration).
+#
+#     Unlike the CEF framework there is no broken-symlink pruning here: the
+#     bundle copy is a `ditto` (see Sources/App/CMakeLists.txt), which
+#     reproduces the vendor framework's symlinks faithfully instead of
+#     re-creating them wrongly the way CMake's copy_directory does.
+SPARKLE_FRAMEWORK_DIR="${APP_PATH}/Contents/Frameworks/Sparkle.framework"
+if [[ -d "${SPARKLE_FRAMEWORK_DIR}" ]]; then
+  SPARKLE_VERSION_DIR="$(cd "${SPARKLE_FRAMEWORK_DIR}/Versions/Current" && pwd -P)"
+  for sparkle_nested in \
+      "${SPARKLE_VERSION_DIR}/XPCServices/Downloader.xpc" \
+      "${SPARKLE_VERSION_DIR}/XPCServices/Installer.xpc" \
+      "${SPARKLE_VERSION_DIR}/Updater.app" \
+      "${SPARKLE_VERSION_DIR}/Autoupdate"; do
+    [[ -e "${sparkle_nested}" ]] || continue
+    echo "Signing (sparkle): ${sparkle_nested}"
+    codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${sparkle_nested}"
+  done
+  echo "Signing (framework): ${SPARKLE_FRAMEWORK_DIR}"
+  codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${SPARKLE_FRAMEWORK_DIR}"
+fi
+
 # 3. Helper app bundles, then the main app last -- exactly the order CMake
 #    wrote into the manifest (helpers first, "app|.|..." appended last).
 while IFS='|' read -r kind rel_path entitlements; do

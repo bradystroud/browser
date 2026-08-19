@@ -12,6 +12,12 @@ if [[ ! -d "${ROOT_DIR}/third_party/cef" ]] || [[ -z "$(ls -A "${ROOT_DIR}/third
   "${ROOT_DIR}/scripts/fetch-cef.sh"
 fi
 
+# Sparkle is a compile-time dependency now (browser-wc7) -- CMake fails the
+# configure step outright without it, so this runs unconditionally. It's a
+# no-op once the pinned version is on disk, unlike the CEF fetch above which
+# is guarded only because its download is ~285MB.
+"${ROOT_DIR}/scripts/fetch-sparkle.sh"
+
 # Two ./scripts/build.sh runs against this same shared build/ dir race on
 # Xcode's own build-system database (XCBuildData/build.db) -- not a code
 # problem, but "unable to attach DB ... database is locked" reads exactly

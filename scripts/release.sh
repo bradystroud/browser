@@ -31,6 +31,9 @@ DO_SIGN=1
 DO_PACKAGE=1
 DO_NOTARIZE=1
 DO_STAPLE=1
+DO_APPCAST=1
+APPCAST_PATH="${ROOT_DIR}/docs/appcast.xml"
+DOWNLOAD_URL=""
 
 usage() {
   cat <<'EOF'
@@ -55,6 +58,16 @@ Options:
   --skip-notarize          Don't submit to Apple notary service (implies
                             --skip-staple, since there's nothing to staple).
   --skip-staple            Sign/package/notarize but don't staple the ticket.
+  --skip-appcast           Don't update the Sparkle appcast. (Implied by
+                            --skip-package -- there is nothing to sign.)
+  --appcast <path>         Appcast file to update (default: docs/appcast.xml,
+                            which GitHub Pages serves at
+                            https://bradystroud.github.io/browser/appcast.xml).
+  --download-url <url>     Where the distributable will be downloaded from.
+                            Defaults to the GitHub release asset URL for this
+                            version. Must be the URL of the exact file this
+                            run produced -- the EdDSA signature covers those
+                            bytes.
   -h, --help                Show this help.
 
 Examples:
@@ -75,7 +88,10 @@ while [[ $# -gt 0 ]]; do
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --skip-build) DO_BUILD=0; shift ;;
     --skip-sign) DO_SIGN=0; shift ;;
-    --skip-package) DO_PACKAGE=0; shift ;;
+    --skip-package) DO_PACKAGE=0; DO_APPCAST=0; shift ;;
+    --skip-appcast) DO_APPCAST=0; shift ;;
+    --appcast) APPCAST_PATH="$2"; shift 2 ;;
+    --download-url) DOWNLOAD_URL="$2"; shift 2 ;;
     --skip-notarize) DO_NOTARIZE=0; DO_STAPLE=0; shift ;;
     --skip-staple) DO_STAPLE=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -146,6 +162,7 @@ if [[ "${DO_BUILD}" -eq 1 ]]; then
   if [[ ! -d "${ROOT_DIR}/third_party/cef" ]] || [[ -z "$(ls -A "${ROOT_DIR}/third_party/cef" 2>/dev/null)" ]]; then
     "${ROOT_DIR}/scripts/fetch-cef.sh"
   fi
+  "${ROOT_DIR}/scripts/fetch-sparkle.sh"
   mkdir -p "${BUILD_DIR}"
   cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -G Xcode
   cmake --build "${BUILD_DIR}" --config "${CONFIG}" --target Browser
@@ -313,6 +330,99 @@ else
       echo "Distributable (unstapled): ${SUBMIT_ZIP}"
     fi
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Phase: appcast (browser-wc7)
+# ---------------------------------------------------------------------------
+# Without this, every downloaded copy stays on the version it was installed
+# at forever -- there is no other channel to reach an already-installed app.
+#
+# Runs last on purpose. The EdDSA signature covers the exact bytes of the
+# file a user downloads, and for a dmg those bytes change when the stapling
+# phase rebuilds the container around the now-stapled .app. Signing anything
+# earlier produces a signature that every installed copy will reject.
+if [[ "${DO_APPCAST}" -eq 1 ]]; then
+  log "Updating Sparkle appcast (${APPCAST_PATH})"
+
+  # The exact artifact to upload and to sign -- see above.
+  if [[ "${FORMAT}" == "dmg" ]]; then
+    DIST_PATH="${DMG_PATH}"
+  elif [[ "${DO_STAPLE}" -eq 1 ]]; then
+    DIST_PATH="${FINAL_ZIP}"
+  else
+    DIST_PATH="${SUBMIT_ZIP}"
+  fi
+
+  if [[ ! -f "${DIST_PATH}" ]]; then
+    echo "error: no distributable at ${DIST_PATH} to sign for the appcast" >&2
+    exit 1
+  fi
+
+  SIGN_UPDATE="${ROOT_DIR}/third_party/sparkle/bin/sign_update"
+  if [[ ! -x "${SIGN_UPDATE}" ]]; then
+    echo "error: ${SIGN_UPDATE} not found -- run scripts/fetch-sparkle.sh" >&2
+    exit 1
+  fi
+
+  # sign_update reads the private key from the login Keychain. It is not in
+  # this repo and must never be: `generate_keys` puts it there once, by
+  # hand, and only the public half is committed (Info.plist's SUPublicEDKey).
+  # See docs/auto-update.md.
+  # `-p` prints the bare EdDSA signature and nothing else -- the mode
+  # sign_update documents "for automation". Deliberately not the default
+  # mode, which prints a ready-made XML attribute fragment: that fragment's
+  # exact shape is undocumented and differs between signing an archive and
+  # signing release notes, so parsing it would be a guess. The enclosure
+  # length comes from stat(1) against the very same file instead, which is
+  # authoritative rather than inferred.
+  if ! SIGN_OUTPUT="$("${SIGN_UPDATE}" -p "${DIST_PATH}" 2>&1)"; then
+    echo "error: sign_update failed:" >&2
+    echo "${SIGN_OUTPUT}" >&2
+    echo "" >&2
+    echo "If this is the first release with auto-update, the EdDSA signing key" >&2
+    echo "does not exist yet. Generate it once (it goes into your Keychain, not" >&2
+    echo "this repo) and paste the public half into Sources/App/mac/Info.plist.in:" >&2
+    echo "  ./third_party/sparkle/bin/generate_keys" >&2
+    echo "See docs/auto-update.md for the full runbook." >&2
+    exit 1
+  fi
+
+  ED_SIGNATURE="$(tr -d '[:space:]' <<<"${SIGN_OUTPUT}")"
+  # Base64, and nothing but base64. A signature with any other character in
+  # it means sign_update printed a diagnostic on the happy path, and pasting
+  # that into the appcast would publish an update every installed copy
+  # downloads and then rejects.
+  if [[ ! "${ED_SIGNATURE}" =~ ^[A-Za-z0-9+/]+=*$ ]]; then
+    echo "error: sign_update -p did not print a bare base64 signature. Output was:" >&2
+    echo "${SIGN_OUTPUT}" >&2
+    exit 1
+  fi
+  ENCLOSURE_LENGTH="$(stat -f%z "${DIST_PATH}")"
+
+  if [[ -z "${DOWNLOAD_URL}" ]]; then
+    DOWNLOAD_URL="https://github.com/bradystroud/browser/releases/download/v${VERSION}/$(basename "${DIST_PATH}")"
+  fi
+
+  swift run --package-path "${ROOT_DIR}/Packages/UpdateCore" -c release appcast-tool add \
+    --appcast "${APPCAST_PATH}" \
+    --version "${VERSION}" \
+    --url "${DOWNLOAD_URL}" \
+    --length "${ENCLOSURE_LENGTH}" \
+    --signature "${ED_SIGNATURE}"
+
+  cat <<EOF
+
+The appcast is written but NOT published. To finish the release:
+  1. Create the GitHub release with tag v${VERSION} and upload
+     ${DIST_PATH}
+     under exactly the name in the URL above -- the signature covers those bytes.
+  2. Commit and push ${APPCAST_PATH} so GitHub Pages serves the new feed.
+Installed copies see the update on their next check, within
+SUScheduledCheckInterval (24h), or immediately via "Check for Updates…".
+EOF
+else
+  log "Skipping appcast (--skip-appcast)"
 fi
 
 log "Done"

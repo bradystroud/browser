@@ -86,6 +86,17 @@ final class MainMenuBuilder {
     private func appMenu() -> NSMenu {
         let menu = NSMenu(title: "Browser")
         menu.addItem(withTitle: "About Browser", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        // Explicit target rather than the responder chain every other item
+        // here uses: UpdateCoordinator is the one that knows whether this
+        // launch has a live updater at all, and it greys the item out
+        // (NSMenuItemValidation) when it does not -- see browser-wc7.
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(UpdateCoordinator.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = UpdateCoordinator.shared
+        menu.addItem(checkForUpdatesItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         menu.addItem(.separator())

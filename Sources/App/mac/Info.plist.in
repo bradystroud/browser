@@ -45,6 +45,25 @@
 	<string>12.0</string>
 	<key>NSPrincipalClass</key>
 	<string>BRWApplication</string>
+	<!-- Sparkle auto-update (browser-wc7). See docs/auto-update.md.
+	     SUPublicEDKey is a placeholder until Brady runs Sparkle's
+	     `generate_keys` once; UpdateCoordinator recognises this exact string
+	     and keeps the updater switched off rather than letting it fail a
+	     check at a time. Replacing it with the real public key is what turns
+	     auto-update on for every build from then on. The private half never
+	     enters this repo -- it lives in the macOS Keychain. -->
+	<key>SUFeedURL</key>
+	<string>https://bradystroud.github.io/browser/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>REPLACE_WITH_SUPublicEDKey_FROM_generate_keys</string>
+	<!-- Set explicitly so Sparkle skips its "may I check automatically?"
+	     first-launch prompt -- a browser that silently stays on an old
+	     Chromium is a security problem, so checking is the default and the
+	     user turns it off in Sparkle's own update UI if they want to. -->
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>NSHighResolutionCapable</key>

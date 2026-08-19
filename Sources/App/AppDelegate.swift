@@ -151,6 +151,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let tabIdentifier = CommandLineArgs.showSettingsTabIdentifier() {
             SettingsWindowController.shared.showTab(identifier: tabIdentifier)
         }
+
+        // Last in the launch sequence deliberately (browser-wc7): Sparkle's
+        // first scheduled check can put UI on screen, and it should never do
+        // that ahead of the window this launch was actually asked for. It
+        // no-ops on scratch/dev launches -- see UpdateCoordinator.start().
+        UpdateCoordinator.shared.start()
     }
 
     // Normally true (closing the last window quits, standard for this kind
