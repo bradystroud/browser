@@ -252,7 +252,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// Deliberately *computed from the engine* on every read rather than
     /// cached in a stored property, because zoom is not per-tab state and a
     /// stored copy would silently go stale. Measured, not assumed (see
-    /// docs/ai-tasks/page-zoom-notes.md): CefBrowserHost::SetZoomLevel writes
+    /// `bd show browser-5kq.15`): CefBrowserHost::SetZoomLevel writes
     /// into Chromium's HostZoomMap, which is keyed by **host, within the
     /// request context** -- i.e. per host per profile. Zooming one tab
     /// immediately re-scales every other open tab on the same host in the same

@@ -346,7 +346,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// asynchronously otherwise.
 ///
 /// **Scope: per host, per request context -- not per browser.** Measured, not
-/// assumed (see docs/ai-tasks/page-zoom-notes.md): this writes into Chromium's
+/// assumed (see `bd show browser-5kq.15`): this writes into Chromium's
 /// HostZoomMap for the browser's current host, so calling it on one tab
 /// immediately re-scales every other open tab on the same host in the same
 /// profile, with no navigation involved. CEF's own doc comment says nothing

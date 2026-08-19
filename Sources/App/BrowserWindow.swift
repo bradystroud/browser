@@ -44,8 +44,18 @@ final class BrowserWindow: NSWindow {
         fatalError("init(coder:) is not supported")
     }
 
+    /// The modifier flags that count when matching the chords handled below.
+    /// Caps Lock is excluded from the comparison because AppKit's own menu
+    /// key-equivalent matching ignores it: without this, leaving Caps Lock on
+    /// silently kills every shortcut in performKeyEquivalent(with:) while the
+    /// menu-driven ones keep working. Shift is deliberately *not* excluded --
+    /// a shifted chord must fall through to the menu item that owns it, which
+    /// is what keeps ⌘= (here) and ⌘⇧= (View > Zoom In) from both firing.
+    private static let consideredModifiers: NSEvent.ModifierFlags =
+        NSEvent.ModifierFlags.deviceIndependentFlagsMask.subtracting(.capsLock)
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.command],
+        if event.modifierFlags.intersection(Self.consideredModifiers) == [.command],
            let characters = event.charactersIgnoringModifiers,
            let controller = windowController as? BrowserWindowController {
             if let digit = Int(characters), (1...9).contains(digit) {
@@ -68,12 +78,13 @@ final class BrowserWindow: NSWindow {
             // shipped broken: a scratch harness calling NSMenu.performKeyEquivalent
             // directly reports hidden items as honoured, but through the real
             // -[NSApplication sendEvent:] path they are skipped, and plain ⌘= did
-            // nothing in Brady's build. See docs/ai-tasks/page-zoom-notes.md.
+            // nothing in Brady's build. See `bd show browser-5kq.15` for the measurements.
             //
-            // Guarded on an exact [.command] match (above), so ⌘⇧= never reaches
-            // here -- it falls through to super and is handled once by the menu
-            // item. Exactly one of the two paths handles any given chord, so a
-            // single press can never step two rungs.
+            // Guarded on an exact [.command] match (above, see
+            // consideredModifiers), so ⌘⇧= never reaches here -- it falls
+            // through to super and is handled once by the menu item. Exactly
+            // one of the two paths handles any given chord, so a single press
+            // can never step two rungs.
             if characters == "=" {
                 controller.zoomIn(self)
                 return true
