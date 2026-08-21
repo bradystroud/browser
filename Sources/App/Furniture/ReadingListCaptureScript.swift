@@ -67,6 +67,26 @@ enum ReadingListCaptureScript {
             try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 4; }
           }
 
+          // Saving a page while Reader mode is showing would otherwise
+          // extract an extraction: Reader mode replaced the live document
+          // with its own template, so Readability would parse that instead
+          // of the article. The template is already the clean article, so
+          // take it directly -- a better result than re-parsing it, and it
+          // covers re-saving an article opened from the reading list too,
+          // since that page uses the same markup.
+          function fromReaderDocument() {
+            var content = document.querySelector('.brw-reader-content');
+            if (!content) { return null; }
+            var titleEl = document.querySelector('.brw-reader-title');
+            var bylineEl = document.querySelector('.brw-reader-byline');
+            return {
+              content: content.innerHTML,
+              title: titleEl ? titleEl.textContent : '',
+              byline: bylineEl ? bylineEl.textContent : '',
+              excerpt: ''
+            };
+          }
+
           try {
             // Readability mutates the document it is given, so it gets a
             // copy. The clone keeps the live document's baseURI, which is
@@ -74,7 +94,7 @@ enum ReadingListCaptureScript {
             // sources to absolute ones -- without that the saved article
             // would render from a data: URL with every link pointing
             // nowhere.
-            var article = new Readability(document.cloneNode(true)).parse();
+            var article = fromReaderDocument() || new Readability(document.cloneNode(true)).parse();
             if (!article || !article.content) { fail(); return; }
             if (byteLength(article.content) > MAX_BYTES) { fail(); return; }
             send({
