@@ -259,6 +259,20 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         removeHostButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(removeHostButton)
 
+        // Right-aligned on the same bottom row rather than in a section of
+        // its own (browser-e7r): the report is something you read, not a
+        // setting, so it opens its own window -- and putting it here costs
+        // no vertical space, which this pane's hand-computed
+        // preferredContentHeight has none of to spare.
+        let reportButtonWidth: CGFloat = 140
+        let privacyReportButton = NSButton(title: "Privacy Report…", target: self, action: #selector(showPrivacyReport))
+        privacyReportButton.frame = NSRect(
+            x: view.bounds.width - margin - reportButtonWidth, y: margin,
+            width: reportButtonWidth, height: buttonRowHeight
+        )
+        privacyReportButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        view.addSubview(privacyReportButton)
+
         let allowlistScrollTop = allowlistHeaderY - 4
         let allowlistScrollBottom = margin + buttonRowHeight + rowGap
         let allowlistScrollView = NSScrollView(frame: NSRect(
@@ -380,6 +394,14 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
         PermissionStoreManager.shared.store(for: profile).resetAll()
         loadPermissionsForSelectedProfile()
+    }
+
+    /// Opens the 30-day report for whichever profile this pane is showing --
+    /// the same window the shield popover's own link opens, so there is one
+    /// report rather than two views that could disagree.
+    @objc private func showPrivacyReport() {
+        guard let profile = selectedProfile else { return }
+        PrivacyReportWindowController.shared.show(for: profile)
     }
 
     @objc private func addAllowlistHost() {

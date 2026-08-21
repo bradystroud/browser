@@ -228,7 +228,24 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// though the underlying check runs on CEF's IO thread. The toolbar badge's
 /// count (Tab.blockedRequestCount) is a running tally of these, reset on
 /// each new navigation.
-- (void)browserDidBlockRequest;
+///
+/// `trackerDomain` is the block list entry that matched, not the request's
+/// own host: the list matches a domain and everything beneath it, so a
+/// request to "stats.g.doubleclick.net" reports "doubleclick.net". Naming
+/// the entry rather than the host is what lets the privacy report
+/// (browser-e7r) count one tracker where a page used a dozen of its
+/// subdomains.
+///
+/// `pageHost` is the host of the tab's MAIN FRAME, read on the IO thread at
+/// the moment of the block rather than on the main thread when this arrives.
+/// That ordering is the whole point: this callback is delivered by a hop to
+/// the UI thread, so a block from the page being navigated away from can
+/// land after the next page has started loading, and reading the current URL
+/// on arrival would file the tracker under the wrong site. CefBrowser and
+/// CefFrame are both documented callable on any thread in the browser
+/// process (cef_browser.h, cef_frame.h), so capturing it early is legal as
+/// well as correct. Empty for a frame with no parseable host.
+- (void)browserDidBlockRequestToTracker:(NSString *)trackerDomain onPageHost:(NSString *)pageHost;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed

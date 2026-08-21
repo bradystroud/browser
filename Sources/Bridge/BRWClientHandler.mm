@@ -696,7 +696,8 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
     return RV_CONTINUE;  // Unparseable URL -- fail open, don't block.
   }
   std::string host = CefString(&parts.host).ToString();
-  if (BRWContentBlockerShouldBlock(profile_name_, host)) {
+  std::string matched_domain;
+  if (BRWContentBlockerShouldBlock(profile_name_, host, &matched_domain)) {
     // Report the block back to the delegate so the toolbar badge
     // (Tab.blockedRequestCount) actually reflects it -- delegate_ is only
     // safe to message on the UI thread, but reading a __weak reference
@@ -704,9 +705,27 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
     // strong local here on the IO thread and hop to UI to deliver it, same
     // pattern as the continue-marker/threat-list branches above.
     id<BRWBrowserDelegate> strong_delegate = delegate_;
-    if (strong_delegate) {
+    if (strong_delegate &&
+        [strong_delegate respondsToSelector:@selector(browserDidBlockRequestToTracker:onPageHost:)]) {
+      // Read the main frame's host HERE, on the IO thread, rather than in
+      // the block below: the hop to the UI thread means a block from the
+      // outgoing page can be delivered after the next navigation has
+      // started, and asking then would attribute this tracker to whatever
+      // page happens to be current by the time it lands. See
+      // -browserDidBlockRequestToTracker:onPageHost: for the thread-safety
+      // this relies on.
+      std::string page_host;
+      CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
+      if (main_frame) {
+        CefURLParts main_parts;
+        if (CefParseURL(main_frame->GetURL(), main_parts)) {
+          page_host = CefString(&main_parts.host).ToString();
+        }
+      }
+      NSString *tracker_domain = ToNSString(CefString(matched_domain));
+      NSString *page_host_string = ToNSString(CefString(page_host));
       CefPostTask(TID_UI, new BRWBlockTask(^{
-        [strong_delegate browserDidBlockRequest];
+        [strong_delegate browserDidBlockRequestToTracker:tracker_domain onPageHost:page_host_string];
       }));
     }
     return RV_CANCEL;

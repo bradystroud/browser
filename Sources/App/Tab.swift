@@ -255,9 +255,17 @@ final class Tab: NSObject, EngineTabDelegate {
     /// count. Reset to 0 on every navigation (see
     /// engineTabDidStartMainFrameLoad below), same "fresh page, fresh
     /// count" convention as isAudible just above; incremented on the main
-    /// thread already (see BRWBrowser.h's -browserDidBlockRequest), so no
-    /// extra synchronization is needed here.
+    /// thread already (see BRWBrowser.h's
+    /// -browserDidBlockRequestToTracker:onPageHost:), so no extra
+    /// synchronization is needed here.
     private(set) var blockedRequestCount = 0
+
+    /// The distinct tracker domains blocked on this page load (browser-e7r),
+    /// alongside the raw request count above. Two numbers because they
+    /// answer two different questions and only one of them may be called
+    /// "trackers": a single tracker serving forty requests is one entry here
+    /// and forty there. Reset together on every main-frame load.
+    private(set) var blockedTrackerDomains: Set<String> = []
 
     /// This tab's current page zoom, as a scale factor (1.0 == 100%) on
     /// PageZoom's ladder (browser-5kq.15).
@@ -494,8 +502,22 @@ final class Tab: NSObject, EngineTabDelegate {
         onFindResult?(matchCount, activeMatchOrdinal, isFinalUpdate)
     }
 
-    func engineTabDidBlockRequest() {
+    func engineTabDidBlockRequest(trackerDomain: String, pageHost: String) {
         blockedRequestCount += 1
+        if !trackerDomain.isEmpty {
+            blockedTrackerDomains.insert(trackerDomain)
+        }
+        // The badge above and the privacy report below deliberately count
+        // different things: the badge is requests on THIS page load and
+        // resets on the next navigation, while the recorder accumulates per
+        // day and per tracker domain. See TrackerReportRecorder for why
+        // summing badge values would not produce the report's number.
+        TrackerReportRecorder.shared.record(
+            trackerDomain: trackerDomain,
+            pageHost: pageHost,
+            profileId: profileId,
+            isPrivate: isPrivate
+        )
         delegate?.tabDidChangeDisplayState(self)
     }
 
@@ -680,8 +702,9 @@ final class Tab: NSObject, EngineTabDelegate {
         // reset before the isShowingStartPage guard below so a freshly
         // opened start page tab never shows a stale count left over from
         // whatever real page this tab had before (browser-12m.5.1.1).
-        if blockedRequestCount != 0 {
+        if blockedRequestCount != 0 || !blockedTrackerDomains.isEmpty {
             blockedRequestCount = 0
+            blockedTrackerDomains.removeAll()
             delegate?.tabDidChangeDisplayState(self)
         }
         guard !isShowingStartPage else { return }

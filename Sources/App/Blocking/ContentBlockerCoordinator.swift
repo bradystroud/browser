@@ -26,6 +26,12 @@ final class ContentBlockerCoordinator {
     /// currently exists.
     func start() {
         pushSnapshot()
+        // The privacy report (browser-e7r) records what this blocker
+        // cancels, so it starts with the blocker rather than from
+        // AppDelegate: there is nothing for it to record until a snapshot
+        // exists, and every route that reaches this method is a route that
+        // will start producing blocks.
+        TrackerReportCoordinator.shared.start()
         profileChangeObserver = NotificationCenter.default.addObserver(
             forName: .profileManagerDidChange, object: nil, queue: .main
         ) { [weak self] _ in

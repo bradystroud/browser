@@ -256,8 +256,8 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         delegate?.engineTabDidRequestNewTab(url: url, disposition: engineDisposition)
     }
 
-    func browserDidBlockRequest() {
-        delegate?.engineTabDidBlockRequest()
+    func browserDidBlockRequest(toTracker trackerDomain: String, onPageHost pageHost: String) {
+        delegate?.engineTabDidBlockRequest(trackerDomain: trackerDomain, pageHost: pageHost)
     }
 }
 

@@ -64,11 +64,17 @@ std::atomic<const BlockerSnapshot *> g_snapshot{nullptr};
 // never its own parent. Walks from the full host up through each ancestor
 // domain (dropping one leftmost label at a time) down to the bare TLD,
 // returning true as soon as any level is found in the set.
-bool IsHostOrAncestorInSet(const std::string &host, const std::unordered_set<std::string> &domains) {
+bool IsHostOrAncestorInSet(const std::string &host,
+                           const std::unordered_set<std::string> &domains,
+                           std::string *matched = nullptr) {
   const std::string lower = ToLowerASCII(host);
   size_t start = 0;
   while (true) {
-    if (domains.count(lower.substr(start)) > 0) {
+    const std::string candidate = lower.substr(start);
+    if (domains.count(candidate) > 0) {
+      if (matched) {
+        *matched = candidate;
+      }
       return true;
     }
     size_t dot = lower.find('.', start);
@@ -82,7 +88,9 @@ bool IsHostOrAncestorInSet(const std::string &host, const std::unordered_set<std
 
 }  // namespace
 
-bool BRWContentBlockerShouldBlock(const std::string &profile_name, const std::string &host) {
+bool BRWContentBlockerShouldBlock(const std::string &profile_name,
+                                  const std::string &host,
+                                  std::string *matched_domain) {
   const BlockerSnapshot *snapshot = g_snapshot.load(std::memory_order_acquire);
   if (!snapshot || host.empty()) {
     return false;
@@ -96,7 +104,7 @@ bool BRWContentBlockerShouldBlock(const std::string &profile_name, const std::st
   if (IsHostOrAncestorInSet(host, profile_it->second.allowlisted_hosts)) {
     return false;  // Allowlist always wins.
   }
-  return IsHostOrAncestorInSet(host, snapshot->blocked_domains);
+  return IsHostOrAncestorInSet(host, snapshot->blocked_domains, matched_domain);
 }
 
 @implementation BRWProfileBlockingSettings {

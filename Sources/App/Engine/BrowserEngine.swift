@@ -132,10 +132,19 @@ protocol EngineTabDelegate: AnyObject {
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
 
     /// The content blocker cancelled a resource request to an ad/tracker
-    /// domain -- see BRWBrowser.h's -browserDidBlockRequest for the exact
-    /// CEF-side signal this mirrors. Fired once per blocked request; the
-    /// toolbar badge's count is a running tally of these.
-    func engineTabDidBlockRequest()
+    /// domain -- see BRWBrowser.h's
+    /// -browserDidBlockRequestToTracker:onPageHost: for the exact CEF-side
+    /// signal this mirrors. Fired once per blocked request; the toolbar
+    /// badge's count is a running tally of these.
+    ///
+    /// `trackerDomain` is the block list entry that matched, not the
+    /// request's own host, so one tracker's many subdomains report as one
+    /// tracker. `pageHost` is the tab's main-frame host captured at the
+    /// moment of the block rather than when this arrives, so a block that
+    /// lands after the next navigation started is still attributed to the
+    /// page that actually made it (browser-e7r). Either may be empty when
+    /// the underlying URL had no parseable host.
+    func engineTabDidBlockRequest(trackerDomain: String, pageHost: String)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
