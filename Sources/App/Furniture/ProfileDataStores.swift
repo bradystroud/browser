@@ -1,16 +1,18 @@
 import Foundation
 
-/// One profile's history/bookmarks/downloads stores, all backed by the same
+/// One profile's history/bookmarks/downloads/reading-list stores, all backed by the same
 /// `browser.db` (see BrowserCore's Database).
 final class ProfileDataStores {
     let history: HistoryStore
     let bookmarks: BookmarkStore
     let downloads: DownloadStore
+    let readingList: ReadingListStore
 
     init(database: Database) {
         history = HistoryStore(database: database)
         bookmarks = BookmarkStore(database: database)
         downloads = DownloadStore(database: database)
+        readingList = ReadingListStore(database: database)
         // Any download row still non-terminal on disk belongs to a previous
         // run -- the app was quit or killed mid-transfer, and nothing will
         // ever finish it (browser-s24). This is the one moment that is

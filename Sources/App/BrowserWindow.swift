@@ -38,6 +38,8 @@ final class BrowserWindow: NSWindow {
         TabAudioCoordinator.shared.activate()
         // Same reasoning, for the start page gear button (browser-ymx).
         StartPageSettingsCoordinator.shared.activate()
+        // Same reasoning, for reading-list article capture (browser-56p).
+        ReadingListCoordinator.shared.activate()
     }
 
     required init?(coder: NSCoder) {

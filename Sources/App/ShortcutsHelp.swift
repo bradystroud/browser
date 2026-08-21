@@ -61,6 +61,8 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.addBookmark(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,
+        #selector(BrowserWindowController.addToReadingList(_:)): .historyAndBookmarks,
+        #selector(BrowserWindowController.showReadingList(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDevTools(_:)): .developer,
         #selector(BrowserWindow.printPage(_:)): .general,
         #selector(BrowserWindowController.showKeyboardShortcuts(_:)): .general,

@@ -1991,6 +1991,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         HistoryWindowManager.shared.show(for: profile)
     }
 
+    /// ⇧⌘D -- "Add to Reading List" (browser-56p). Beeps when the page can't
+    /// be saved (an internal page, or a tab on the start page) rather than
+    /// silently doing nothing to a shortcut the user just pressed.
+    @objc func addToReadingList(_ sender: Any?) {
+        guard let tab = activeTab, ReadingListCoordinator.shared.add(tab: tab, profile: profile) else {
+            NSSound.beep()
+            return
+        }
+    }
+
+    @objc func showReadingList(_ sender: Any?) {
+        ReadingListWindowManager.shared.show(for: profile)
+    }
+
     @objc func showBookmarksManager(_ sender: Any?) {
         BookmarksWindowManager.shared.show(for: profile)
     }

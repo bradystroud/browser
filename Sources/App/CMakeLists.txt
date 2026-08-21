@@ -93,6 +93,10 @@ set(BROWSER_SWIFT_SRCS
   Furniture/DownloadCoordinator.swift
   Furniture/DownloadsWindowController.swift
   Furniture/DownloadsToolbarController.swift
+  Furniture/ReadingListCaptureScript.swift
+  Furniture/ReadingListArticleTemplate.swift
+  Furniture/ReadingListCoordinator.swift
+  Furniture/ReadingListWindowController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
@@ -194,6 +198,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ReadingListStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistoryReader.swift

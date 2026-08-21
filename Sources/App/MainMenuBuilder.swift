@@ -339,6 +339,15 @@ final class MainMenuBuilder {
         // 5kq.7) -- complements "Add Bookmark" above, which opens a picker
         // defaulting to Favorites but lets you choose otherwise.
         bookmarksMenu.addItem(withTitle: "Add to Favourites", action: #selector(BrowserWindowController.addActiveTabToFavorites(_:)), keyEquivalent: "")
+        bookmarksMenu.addItem(.separator())
+        // ⇧⌘D matches Safari's own Add to Reading List exactly, and is free
+        // here -- ⌘D is Add Bookmark, the shifted chord was unused.
+        bookmarksMenu.addItem(
+            withTitle: "Add to Reading List",
+            action: #selector(BrowserWindowController.addToReadingList(_:)),
+            keyEquivalent: "d"
+        ).keyEquivalentModifierMask = [.command, .shift]
+        bookmarksMenu.addItem(withTitle: "Show Reading List…", action: #selector(BrowserWindowController.showReadingList(_:)), keyEquivalent: "")
         bookmarksMenu.addItem(withTitle: "Show All Bookmarks…", action: #selector(BrowserWindowController.showBookmarksManager(_:)), keyEquivalent: "")
         bookmarksMenuStaticCount = bookmarksMenu.items.count
     }
