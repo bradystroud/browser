@@ -13,7 +13,17 @@ struct StartPageTile: Equatable {
 /// (browser-5kq.7's rule: an empty section stays visible and actionable
 /// instead of disappearing).
 struct StartPageSection: Equatable {
+    /// What the section holds, so a presentation can give the two kinds
+    /// different shapes without matching on `title` -- the HTML start page
+    /// draws bookmarks as an icon grid and history as a compact row list.
+    /// The omnibox panel ignores this and draws both the same way.
+    enum Kind: Equatable {
+        case bookmarks
+        case history
+    }
+
     let title: String
+    let kind: Kind
     let tiles: [StartPageTile]
     let emptyMessage: String
 }
@@ -85,7 +95,8 @@ enum StartPageSections {
                 }
             }
             sections.append(StartPageSection(
-                title: favoritesTitle, tiles: tiles, emptyMessage: favoritesEmptyMessage
+                title: favoritesTitle, kind: .bookmarks, tiles: tiles,
+                emptyMessage: favoritesEmptyMessage
             ))
         }
 
@@ -101,7 +112,8 @@ enum StartPageSections {
                 .filter { isPresentable($0.url) }
                 .map { StartPageTile(title: $0.title.isEmpty ? $0.url : $0.title, url: $0.url) }
             sections.append(StartPageSection(
-                title: historyKind.title, tiles: tiles, emptyMessage: historyKind.emptyMessage
+                title: historyKind.title, kind: .history, tiles: tiles,
+                emptyMessage: historyKind.emptyMessage
             ))
         }
 

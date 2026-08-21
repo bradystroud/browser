@@ -21,11 +21,30 @@ enum StartPageBackgroundImageStore {
     /// re-encodes to JPEG.
     static let fileName = "startpage-background.jpg"
 
-    /// Longest edge kept, in pixels. The image is drawn `cover` behind a
-    /// browser window, so resolution past a Retina window's own pixel width
-    /// buys nothing visible and costs base64 weight in every new tab.
-    private static let maxPixelDimension: CGFloat = 2560
-    private static let jpegQuality: Double = 0.7
+    /// Longest edge kept, in pixels, and the encoder quality -- tried in this
+    /// order, first result inside `maxEncodedBytes` wins. The image is drawn
+    /// `cover` behind a browser window, so resolution past a Retina window's
+    /// own pixel width buys nothing visible and costs base64 weight in every
+    /// new tab. The last rung is small enough that any photograph fits.
+    private static let encodingLadder: [(dimension: CGFloat, quality: Double)] = [
+        (2560, 0.7), (2560, 0.5), (2048, 0.5), (1600, 0.45), (1280, 0.4),
+    ]
+
+    /// Hard ceiling on the stored JPEG, because a background that is merely
+    /// large does not degrade -- it makes the start page render as a blank
+    /// window, with nothing logged anywhere.
+    ///
+    /// Chromium refuses a URL over `url::kMaxURLChars` (2 MiB), and this
+    /// picture is base64'd *twice* on its way into one: once into the page's
+    /// own CSS, and then again when StartPageRenderer base64s the whole
+    /// document into the `data:` URL it navigates to. That compounds to about
+    /// 1.78x the JPEG's bytes, so the real budget for the file on disk is a
+    /// little over 1.1 MB. 900 KB keeps roughly 20% headroom for the rest of
+    /// the document (the stylesheet, and one inlined favicon per tile).
+    ///
+    /// Confirmed live, not reasoned about: a 1.37 MB background rendered an
+    /// empty start page, and the same picture at 538 KB rendered correctly.
+    private static let maxEncodedBytes = 900_000
 
     /// Encoded-once cache of the `data:` URI, keyed by profile id. Populated
     /// on the first start page rendered for a profile and dropped whenever
@@ -86,7 +105,24 @@ enum StartPageBackgroundImageStore {
             .appendingPathComponent(fileName)
     }
 
+    /// Walks `encodingLadder` until an encoding fits `maxEncodedBytes`. A
+    /// photograph that is merely big lands on the first rung; only genuinely
+    /// dense, hard-to-compress detail reaches the lower ones. The final rung
+    /// is returned whether or not it fits, since nothing better remains --
+    /// but at 1280px/0.4 it is a few hundred kilobytes for any real picture.
     private static func downscaledJPEG(from image: NSImage) -> Data? {
+        var last: Data?
+        for rung in encodingLadder {
+            guard let data = encodeJPEG(from: image, maxDimension: rung.dimension, quality: rung.quality) else {
+                return last
+            }
+            last = data
+            if data.count <= maxEncodedBytes { return data }
+        }
+        return last
+    }
+
+    private static func encodeJPEG(from image: NSImage, maxDimension: CGFloat, quality: Double) -> Data? {
         var proposedRect = NSRect(origin: .zero, size: image.size)
         guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else {
             return nil
@@ -98,7 +134,7 @@ enum StartPageBackgroundImageStore {
 
         // Never upscales: a small picture stays its own size rather than being
         // blown up into a bigger, blurrier, heavier file.
-        let scale = min(1, maxPixelDimension / max(sourceWidth, sourceHeight))
+        let scale = min(1, maxDimension / max(sourceWidth, sourceHeight))
         let targetWidth = max(1, Int((sourceWidth * scale).rounded()))
         let targetHeight = max(1, Int((sourceHeight * scale).rounded()))
 
@@ -133,6 +169,6 @@ enum StartPageBackgroundImageStore {
         context.cgContext.draw(cgImage, in: bounds)
         NSGraphicsContext.restoreGraphicsState()
 
-        return rep.representation(using: .jpeg, properties: [.compressionFactor: jpegQuality])
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
     }
 }
