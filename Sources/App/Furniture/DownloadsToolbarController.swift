@@ -21,16 +21,6 @@ import AppKit
 /// ⌘⇧J window lists the profile's whole persisted history. That split is
 /// deliberate -- see DownloadCoordinator.startedRowIds.
 final class DownloadsToolbarController: NSObject, NSPopoverDelegate {
-    /// Matches ReaderModeController.buttonSize so the two sit as a matched
-    /// pair on the toolbar's trailing edge.
-    private static let buttonSize: CGFloat = 18
-    /// Gap between this button and the Reader button's slot to its right.
-    private static let buttonGap: CGFloat = 10
-    /// Reader's own trailing inset, which this button is positioned relative
-    /// to. Restated rather than shared because this controller only needs to
-    /// sit beside that slot, never to set it.
-    private static let readerTrailingInset: CGFloat = 12
-
     private weak var window: BrowserWindow?
     private var buttonView: NSButton?
     private let popover = NSPopover()
@@ -122,26 +112,19 @@ final class DownloadsToolbarController: NSObject, NSPopoverDelegate {
 
     private func ensureButton() {
         guard buttonView == nil, let window, let contentView = window.contentView else { return }
-        let size = Self.buttonSize
-        let toolbarHeight = (window.windowController as? BrowserWindowController)?.toolbarRowHeight ?? 44
+        guard let controller = window.windowController as? BrowserWindowController else { return }
         let button = NSButton(
-            image: NSImage(systemSymbolName: "arrow.down.circle", accessibilityDescription: "Downloads")!,
+            image: NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "Downloads")!,
             target: self, action: #selector(buttonTapped)
         )
-        button.isBordered = false
-        button.contentTintColor = .secondaryLabelColor
+        button.applyChromeAppearance(.glass)
         button.toolTip = "Downloads"
         // Immediately left of the Reader button's slot. The slot is reserved
         // whether or not Reader is currently showing: Reader appears only on
         // article-like pages, and a downloads button that slid sideways every
         // time you navigated would be worse than one sitting a fixed distance
         // in from the edge.
-        button.frame = NSRect(
-            x: contentView.bounds.width - Self.readerTrailingInset - size - Self.buttonGap - size,
-            y: contentView.bounds.height - (toolbarHeight + size) / 2,
-            width: size,
-            height: size
-        )
+        button.frame = controller.trailingToolbarControlFrame(slot: 1)
         button.autoresizingMask = [.minXMargin, .minYMargin]
         contentView.addSubview(button)
         buttonView = button

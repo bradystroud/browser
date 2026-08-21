@@ -19,8 +19,6 @@ import AppKit
 /// thing entirely and stays: it's waiting for a fire-and-forget injected
 /// script to run in the renderer, which no lifecycle event can tell us about.
 final class ReaderModeController: NSObject, TabLifecycleObserver {
-    private static let buttonSize: CGFloat = 26
-
     private weak var window: NSWindow?
     private var buttonView: NSButton?
 
@@ -138,7 +136,6 @@ final class ReaderModeController: NSObject, TabLifecycleObserver {
     private func setButtonVisible(_ visible: Bool, active: Bool = false) {
         guard let window, let contentView = window.contentView else { return }
         if buttonView == nil {
-            let size = Self.buttonSize
             // Vertically centered within the toolbar row itself -- NOT
             // hanging down into the content area (that region is covered by
             // CEF's own hosted content view regardless of normal AppKit
@@ -148,23 +145,20 @@ final class ReaderModeController: NSObject, TabLifecycleObserver {
             // buttons this was reported overlapping in the first place).
             // See BrowserWindowController.toolbarRowHeight's own doc
             // comment.
-            let toolbarHeight = windowController?.toolbarRowHeight ?? 44
+            guard let controller = windowController else { return }
             let button = NSButton(
                 image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: "Reader")!,
                 target: self, action: #selector(toggle)
             )
-            button.isBordered = false
-            button.frame = NSRect(
-                x: contentView.bounds.width - size - 12,
-                y: contentView.bounds.height - (toolbarHeight + size) / 2,
-                width: size,
-                height: size
-            )
+            button.applyChromeAppearance(.glass)
+            button.toolTip = "Show Reader"
+            button.frame = controller.trailingToolbarControlFrame(slot: 0)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
             buttonView = button
         }
         buttonView?.isHidden = !visible
         buttonView?.contentTintColor = active ? .controlAccentColor : .secondaryLabelColor
+        buttonView?.toolTip = active ? "Hide Reader" : "Show Reader"
     }
 }

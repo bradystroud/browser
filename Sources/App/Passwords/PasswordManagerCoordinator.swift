@@ -122,8 +122,6 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     private var credentialLookupsInFlight: Set<String> = []
     private let keychainQueue = DispatchQueue(label: "dev.stroud.browser.password-keychain")
 
-    private static let keyButtonSize: CGFloat = 26
-
     private override init() {}
 
     /// Idempotent -- called from BrowserWindow.swift's init (see that
@@ -434,32 +432,14 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
             button = existing
         } else {
             guard visible else { return }
-            let size = Self.keyButtonSize
             button = NSButton(
                 image: NSImage(systemSymbolName: "key.fill", accessibilityDescription: "Autofill Password")!,
                 target: self, action: #selector(keyIconTapped(_:))
             )
-            button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            // Offset further from the edge than ReaderModeController's own
-            // floating button (which sits at width - size - 12) so the two
-            // don't overlap on a page that happens to be both readerable
-            // and have a saved login (rare, but not impossible -- an
-            // article site with a comments login form, say). Vertically
-            // centered within the toolbar row itself, not hanging into the
-            // content area or the tab strip -- see
-            // BrowserWindowController.toolbarRowHeight's own doc comment
-            // and ReaderModeController.setButtonVisible's matching comment
-            // for why (content area is covered by CEF's own compositing
-            // regardless of AppKit z-order; the tab strip is exactly where
-            // this button was reported overlapping the mute/close buttons).
-            let toolbarHeight = controller.toolbarRowHeight
-            button.frame = NSRect(
-                x: contentView.bounds.width - size * 2 - 24,
-                y: contentView.bounds.height - (toolbarHeight + size) / 2,
-                width: size,
-                height: size
-            )
+            button.applyChromeAppearance(.glass)
+            // Slot 2 leaves stable space for Reader and Downloads even when
+            // either optional control is currently hidden.
+            button.frame = controller.trailingToolbarControlFrame(slot: 2)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
             keyButtons.setObject(button, forKey: contentView)

@@ -1,5 +1,38 @@
 import AppKit
 
+/// The two native button treatments used by the browser chrome.
+///
+/// Standalone controls use AppKit's real glass bezel on macOS 26+, which
+/// supplies the same material, pointer response and pressed animation as a
+/// system toolbar button. Controls embedded inside an existing glass surface
+/// stay visually quiet until hover so they do not become a bubble inside a
+/// bubble. Older macOS versions fall back to the native toolbar bezel.
+enum ChromeButtonAppearance {
+    case glass
+    case inline
+}
+
+extension NSButton {
+    func applyChromeAppearance(_ appearance: ChromeButtonAppearance) {
+        isBordered = true
+        imageScaling = .scaleProportionallyDown
+        contentTintColor = .secondaryLabelColor
+
+        switch appearance {
+        case .glass:
+            showsBorderOnlyWhileMouseInside = false
+            if #available(macOS 26.0, *) {
+                bezelStyle = .glass
+            } else {
+                bezelStyle = .toolbar
+            }
+        case .inline:
+            bezelStyle = .toolbar
+            showsBorderOnlyWhileMouseInside = true
+        }
+    }
+}
+
 /// Chrome background used behind the tab strip/toolbar and the omnibox pill.
 /// Three-tier fallback, re-evaluated every time it (re)builds:
 ///

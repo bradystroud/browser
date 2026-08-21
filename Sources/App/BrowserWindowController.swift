@@ -121,9 +121,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// lifetime, so there's no in-place "hot swap" of an existing window's
     /// profile. nil (never created) for a Private window, which has no
     /// real profile identity to indicate.
-    private let profilePillView: GlassBackgroundView?
     private let profilePillButton: NSButton?
-    private static let profilePillHeight: CGFloat = 24
+    private static let profilePillHeight: CGFloat = 30
+    private static let trailingToolbarControlSize: CGFloat = 30
+    private static let trailingToolbarControlGap: CGFloat = 6
+    private static let trailingToolbarControlCount = 4
     private let contentContainerView = NSView()
 
     /// The Y coordinate, in window.contentView's own coordinate space, of
@@ -159,6 +161,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// profile pill -- see layoutProfilePill) and the far-right in a
     /// Private window (privateLabel) when choosing an X position here.
     var toolbarRowHeight: CGFloat { toolbarView.frame.height }
+
+    /// A shared trailing-edge grid for the floating toolbar controls owned by
+    /// Reader, Downloads and autofill coordinators. Those features are
+    /// intentionally separate controllers, but their buttons still need one
+    /// geometry contract or optional controls can overlap each other.
+    func trailingToolbarControlFrame(slot: Int) -> NSRect {
+        guard let contentView = window?.contentView else { return .zero }
+        let size = Self.trailingToolbarControlSize
+        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
+        return NSRect(
+            x: contentView.bounds.width - trailingInset - size
+                - CGFloat(slot) * (size + Self.trailingToolbarControlGap),
+            y: contentView.bounds.height - (toolbarRowHeight + size) / 2,
+            width: size,
+            height: size
+        )
+    }
+
+    private var trailingToolbarControlsReservedWidth: CGFloat {
+        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
+        return trailingInset
+            + Self.trailingToolbarControlSize * CGFloat(Self.trailingToolbarControlCount)
+            + Self.trailingToolbarControlGap * CGFloat(Self.trailingToolbarControlCount - 1)
+    }
 
     private let autocomplete = OmniboxAutocompleteController()
     private let permissionPrompt = PermissionPromptController()
@@ -204,15 +230,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
             label.layer?.cornerRadius = 8
             self.privateLabel = label
-            self.profilePillView = nil
             self.profilePillButton = nil
         } else {
             self.privateLabel = nil
-            self.profilePillView = GlassBackgroundView(
-                material: .hudWindow, blendingMode: .withinWindow,
-                solidFallbackColor: .controlBackgroundColor,
-                cornerRadius: Self.profilePillHeight / 2
-            )
             self.profilePillButton = NSButton()
         }
 
@@ -424,7 +444,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     private func setUpToolbarContents() {
-        let buttonSize: CGFloat = 24
+        let buttonSize: CGFloat = 28
         let margin: CGFloat = 8
         // Traffic lights float over this toolbar row now (browser-0y1's
         // chrome-order flip put it on top) -- back/forward start clear of
@@ -436,12 +456,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let toolbarHeight = toolbarView.bounds.height
 
         backButton.frame = NSRect(x: leadingMargin, y: (toolbarHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
-        backButton.isBordered = false
+        backButton.applyChromeAppearance(.inline)
         backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
-        // Glassy toolbar buttons (browser-qpy): a muted secondary-label
-        // glyph sitting borderless on the glass, not the default system-
-        // accent-blue tint a plain NSButton image would otherwise pick up.
-        backButton.contentTintColor = .secondaryLabelColor
+        // Navigation stays visually quiet on the unified glass, but uses a
+        // native toolbar bezel on hover instead of providing no response.
+        backButton.toolTip = "Back"
         backButton.target = self
         backButton.action = #selector(goBackAction(_:))
         toolbarView.addSubview(backButton)
@@ -452,9 +471,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             width: buttonSize,
             height: buttonSize
         )
-        forwardButton.isBordered = false
+        forwardButton.applyChromeAppearance(.inline)
         forwardButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")
-        forwardButton.contentTintColor = .secondaryLabelColor
+        forwardButton.toolTip = "Forward"
         forwardButton.target = self
         forwardButton.action = #selector(goForwardAction(_:))
         toolbarView.addSubview(forwardButton)
@@ -462,17 +481,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // Profile indicator pill (browser-0y1) -- right after navigation,
         // matching Safari's own placement. nil for a Private window (see
         // this controller's init).
-        if let profilePillView, let profilePillButton {
-            profilePillView.layer?.borderWidth = 0.5
-            profilePillView.layer?.borderColor = NSColor.separatorColor.cgColor
-            toolbarView.addSubview(profilePillView)
-
-            profilePillButton.isBordered = false
+        if let profilePillButton {
+            profilePillButton.applyChromeAppearance(.glass)
             profilePillButton.imagePosition = .imageLeading
-            profilePillButton.font = .systemFont(ofSize: 11, weight: .medium)
+            profilePillButton.font = .systemFont(ofSize: 13, weight: .medium)
             profilePillButton.target = self
             profilePillButton.action = #selector(profilePillTapped(_:))
-            profilePillView.contentContainer.addSubview(profilePillButton)
+            profilePillButton.toolTip = "Switch Profile"
+            toolbarView.addSubview(profilePillButton)
 
             updateProfilePillContent()
             layoutProfilePill()
@@ -529,18 +545,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         // browser-12m.5.1.1 -- hidden until refreshContentBlockerButton(for:)
         // has something to show (see that method's own doc comment).
-        contentBlockerButton.isBordered = false
+        contentBlockerButton.applyChromeAppearance(.inline)
         contentBlockerButton.imagePosition = .imageLeading
         contentBlockerButton.font = .systemFont(ofSize: 11)
-        contentBlockerButton.contentTintColor = .secondaryLabelColor
         contentBlockerButton.target = self
         contentBlockerButton.action = #selector(toggleContentBlockerPopover(_:))
         contentBlockerButton.isHidden = true
         omniboxContainerView.contentContainer.addSubview(contentBlockerButton)
 
-        reloadButton.isBordered = false
+        reloadButton.applyChromeAppearance(.inline)
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
-        reloadButton.contentTintColor = .secondaryLabelColor
+        reloadButton.toolTip = "Reload"
         reloadButton.target = self
         reloadButton.action = #selector(reloadPage(_:))
         omniboxContainerView.contentContainer.addSubview(reloadButton)
@@ -576,20 +591,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         return min(clamped, expandedOmniboxWidth())
     }
 
-    /// How wide the expanded pill can get before it would crowd back/forward
-    /// on the left or the private-browsing pill (if any) on the right --
-    /// never narrower than the collapsed minimum even in a very small window.
+    /// How wide the expanded pill can get before it would crowd navigation /
+    /// profile controls on the left or floating toolbar controls (and the
+    /// Private label, if present) on the right -- never narrower than the
+    /// collapsed minimum even in a very small window.
     private func expandedOmniboxWidth() -> CGFloat {
         let margin: CGFloat = 8
-        let buttonSize: CGFloat = 24
+        let buttonSize: CGFloat = 28
         let gap: CGFloat = 4
         // Traffic lights float over this row's leading edge now
         // (browser-0y1) -- back/forward already start past them (see
         // setUpToolbarContents), so the expanded pill must stop there too.
         // The profile pill (also browser-0y1) sits right after them.
-        let profilePillReserved = profilePillView.map { $0.frame.width + gap } ?? 0
+        let profilePillReserved = profilePillButton.map { $0.frame.width + gap } ?? 0
         let leadingReserved = margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2 + profilePillReserved + Self.omniboxHorizontalMargin
-        let trailingReserved = (privateLabel != nil ? 54 + gap : 0) + margin + Self.omniboxHorizontalMargin
+        let trailingReserved = trailingToolbarControlsReservedWidth + Self.omniboxHorizontalMargin
         return max(Self.omniboxCollapsedMinWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
     }
 
@@ -700,12 +716,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// so a rename/recolor done elsewhere wouldn't otherwise be reflected
     /// (see the .profileManagerDidChange observer in init).
     private func updateProfilePillContent() {
-        guard let profilePillButton, let profilePillView else { return }
+        guard let profilePillButton else { return }
         let current = ProfileManager.shared.profile(id: profile.id) ?? profile
-        profilePillButton.image = Self.dotImage(colorHex: current.colorHex, diameter: 10)
+        profilePillButton.image = Self.dotImage(colorHex: current.colorHex, diameter: 12)
         profilePillButton.title = current.name
         layoutProfilePill()
-        profilePillView.needsLayout = true
     }
 
     /// Sizes/positions the pill to fit its current content, right after
@@ -713,23 +728,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// setUpToolbarContents). Also re-run whenever the content changes
     /// (a rename can change the button's fitted width).
     private func layoutProfilePill() {
-        guard let profilePillButton, let profilePillView else { return }
+        guard let profilePillButton else { return }
         profilePillButton.sizeToFit()
-        let innerPadding: CGFloat = 10
         let gap: CGFloat = 8
-        let pillWidth = profilePillButton.frame.width + innerPadding * 2
+        let pillWidth = max(44, profilePillButton.frame.width)
         let toolbarHeight = toolbarView.bounds.height
-        profilePillView.frame = NSRect(
+        profilePillButton.frame = NSRect(
             x: forwardButton.frame.maxX + gap,
             y: (toolbarHeight - Self.profilePillHeight) / 2,
             width: pillWidth,
             height: Self.profilePillHeight
-        )
-        profilePillButton.frame = NSRect(
-            x: innerPadding,
-            y: (Self.profilePillHeight - profilePillButton.frame.height) / 2,
-            width: profilePillButton.frame.width,
-            height: profilePillButton.frame.height
         )
     }
 
@@ -748,8 +756,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     /// Offers switching to a different profile -- always a new window (see
-    /// profilePillView's own doc comment for why there's no in-place hot
-    /// swap). Built fresh each time so it always reflects the current
+    /// the profile indicator's doc comment above for why there's no in-place
+    /// hot swap). Built fresh each time so it always reflects the current
     /// profile list/current selection, same reasoning as TabButtonView's
     /// own context menu.
     @objc private func profilePillTapped(_ sender: NSButton) {

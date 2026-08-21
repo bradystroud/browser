@@ -52,8 +52,6 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     private var windowForFillButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
     private var anchorViews = NSMapTable<NSView, NSView>.weakToWeakObjects()
 
-    private static let fillButtonSize: CGFloat = 26
-
     /// Cached card summaries per profile name. Absent means "not looked up
     /// yet"; an empty array means "looked up, this profile has no cards."
     ///
@@ -328,25 +326,14 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
             button = existing
         } else {
             guard visible else { return }
-            let size = Self.fillButtonSize
             button = NSButton(
                 image: NSImage(systemSymbolName: "creditcard", accessibilityDescription: "Autofill")!,
                 target: self, action: #selector(fillIconTapped(_:))
             )
-            button.isBordered = false
-            button.contentTintColor = .secondaryLabelColor
-            // Third icon slot from the right, after Reader's (width - size
-            // - 12) and the password manager's key icon (width - size*2 -
-            // 24) -- see PasswordManagerCoordinator's own doc comment on
-            // that spacing, and on centering within the toolbar row rather
-            // than hanging into the content area or the tab strip.
-            let toolbarHeight = controller.toolbarRowHeight
-            button.frame = NSRect(
-                x: contentView.bounds.width - size * 3 - 36,
-                y: contentView.bounds.height - (toolbarHeight + size) / 2,
-                width: size,
-                height: size
-            )
+            button.applyChromeAppearance(.glass)
+            // Slot 3 leaves stable space for Reader, Downloads and password
+            // autofill even when any of those optional controls is hidden.
+            button.frame = controller.trailingToolbarControlFrame(slot: 3)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
             fillButtons.setObject(button, forKey: contentView)

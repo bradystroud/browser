@@ -177,13 +177,10 @@ final class TabStripView: NSView {
 
     private let newTabButton: NSButton = {
         let button = NSButton()
-        button.isBordered = false
         button.title = ""
         button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
-        button.imageScaling = .scaleProportionallyDown
-        // Glassy, borderless icon button (browser-qpy) -- matches the
-        // toolbar's back/forward/reload treatment.
-        button.contentTintColor = .secondaryLabelColor
+        button.applyChromeAppearance(.glass)
+        button.toolTip = "New Tab"
         return button
     }()
     /// macOS 26+ only: hosts every tab/group-header's own NSGlassEffectView
@@ -231,7 +228,7 @@ final class TabStripView: NSView {
     /// and in places overlapping, rather than as a deliberate gap.
     private static let tabSpacing: CGFloat = 7
     private static let sidePadding: CGFloat = 4
-    private static let newTabButtonWidth: CGFloat = 24
+    private static let newTabButtonWidth: CGFloat = 28
 
     /// Extra space reserved before the first tab, for e.g. traffic-light
     /// buttons floating over this area. Unused (stays at its default 0)
@@ -485,9 +482,9 @@ final class TabStripView: NSView {
 
         newTabButton.frame = NSRect(
             x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
-            y: (bounds.height - 20) / 2,
-            width: 20,
-            height: 20
+            y: (bounds.height - Self.newTabButtonWidth) / 2,
+            width: Self.newTabButtonWidth,
+            height: Self.newTabButtonWidth
         )
 
         if case .tab(let firstButton)? = stripItems.first {
