@@ -91,21 +91,35 @@ final class ProfileManager {
     /// one is authoritative -- overwriting either risks real data loss --
     /// so it's left alone entirely, logged, for a human to sort out.
     private func migrateNameKeyedDirectoriesIfNeeded() {
-        let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
+        let root = CommandLineArgs.profilesRootPath()
         for profile in profiles {
-            let oldDir = root.appendingPathComponent(profile.name)
-            let newDir = root.appendingPathComponent(profile.id)
-            guard FileManager.default.fileExists(atPath: oldDir.path) else { continue }
-            guard !FileManager.default.fileExists(atPath: newDir.path) else {
-                NSLog("Browser: profile '%@' has both a name-keyed (%@) and id-keyed (%@) directory -- skipping migration, needs manual resolution",
-                      profile.name, oldDir.path, newDir.path)
+            // The decision lives in BrowserCore (browser-le4) so its rules are
+            // covered by `swift test` instead of only by launching the app --
+            // this loop just carries out whatever it returns. Two of those
+            // rules were missing while the decision was inline here: a profile
+            // whose name isn't a single path component (".." or "a/b") used to
+            // resolve OUTSIDE the profiles root, so a migration could move a
+            // directory this app doesn't own; and a profile whose name equals
+            // its id used to attempt a move onto itself.
+            let outcome = ProfileDirectoryMigration.outcome(
+                profilesRoot: root,
+                profileId: profile.id,
+                profileName: profile.name,
+                directoryExists: { FileManager.default.fileExists(atPath: $0) }
+            )
+            switch outcome {
+            case .nothingToMigrate:
                 continue
-            }
-            do {
-                try FileManager.default.moveItem(at: oldDir, to: newDir)
-            } catch {
-                NSLog("Browser: failed to migrate profile '%@' directory from %@ to %@: %@",
-                      profile.name, oldDir.path, newDir.path, String(describing: error))
+            case .ambiguous(let from, let to):
+                NSLog("Browser: profile '%@' has both a name-keyed (%@) and id-keyed (%@) directory -- skipping migration, needs manual resolution",
+                      profile.name, from, to)
+            case .move(let from, let to):
+                do {
+                    try FileManager.default.moveItem(atPath: from, toPath: to)
+                } catch {
+                    NSLog("Browser: failed to migrate profile '%@' directory from %@ to %@: %@",
+                          profile.name, from, to, String(describing: error))
+                }
             }
         }
     }

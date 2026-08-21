@@ -155,3 +155,55 @@ public enum ProfilesRootResolver {
         (profilesRoot as NSString).appendingPathComponent(profileId)
     }
 }
+
+/// Decides, per profile, whether the app's original name-keyed directory
+/// layout still has a directory to move into the current id-keyed one
+/// (browser-ojw). The move itself stays in `ProfileManager` -- this is only
+/// the decision, split out so the rules below are covered by BrowserCore's
+/// own `swift test` rather than by launching the app and hoping (browser-le4).
+///
+/// The rules matter more than they look: a profile's directory holds its
+/// cookies, history, bookmarks and downloads, and `profiles.json` is the only
+/// thing that maps a profile to it. Getting a move wrong here does not
+/// degrade a feature, it detaches a user from all of their state.
+public enum ProfileDirectoryMigration {
+    public enum Outcome: Equatable {
+        /// No legacy directory to move (already migrated, or a profile that
+        /// never had one).
+        case nothingToMigrate
+        /// Move `from` to `to`, then the profile is on the current layout.
+        case move(from: String, to: String)
+        /// Both layouts exist for one profile and neither can be shown to be
+        /// authoritative. Reported rather than resolved: either one may hold
+        /// the real state, and overwriting the wrong one destroys it.
+        case ambiguous(from: String, to: String)
+    }
+
+    public static func outcome(
+        profilesRoot: String,
+        profileId: String,
+        profileName: String,
+        directoryExists: (String) -> Bool
+    ) -> Outcome {
+        guard isSafeSingleComponent(profileName) else { return .nothingToMigrate }
+
+        let from = (profilesRoot as NSString).appendingPathComponent(profileName)
+        let to = ProfilesRootResolver.profileDirectory(profilesRoot: profilesRoot, profileId: profileId)
+        // A profile whose display name is already its id is on the current
+        // layout by coincidence; moving a directory onto itself would fail.
+        guard from != to else { return .nothingToMigrate }
+        guard directoryExists(from) else { return .nothingToMigrate }
+        guard !directoryExists(to) else { return .ambiguous(from: from, to: to) }
+        return .move(from: from, to: to)
+    }
+
+    /// A display name is free-form user text, and the legacy layout appended
+    /// it to the profiles root as a single path component. Anything that is
+    /// not one -- a name holding a separator, or `.`/`..` -- could therefore
+    /// never have produced a legacy directory, and resolves outside the
+    /// profiles root, so treating it as a migration source could only ever
+    /// move something this app does not own.
+    private static func isSafeSingleComponent(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".." && !name.contains("/")
+    }
+}
