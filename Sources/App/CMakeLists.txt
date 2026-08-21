@@ -46,6 +46,8 @@ set(BROWSER_SWIFT_SRCS
   OmniboxDisplayPreference.swift
   EnginePreference.swift
   HomepagePreference.swift
+  SearchEnginePreference.swift
+  TabStripOrientationPreference.swift
   PageZoom.swift
   Profile.swift
   ProfileDotView.swift
@@ -121,6 +123,9 @@ set(BROWSER_SWIFT_SRCS
   Blocking/ThreatListCoordinator.swift
   Blocking/PrivacyPaneController.swift
   Blocking/ContentBlockerToolbarController.swift
+  SiteSettings/SiteSettingsStore.swift
+  SiteSettings/SiteSettingsSheetController.swift
+  SiteSettings/SiteSettingsEnforcer.swift
   StartPage/StartPageSettings.swift
   StartPage/StartPageBackgroundImageStore.swift
   StartPage/StartPageSections.swift
@@ -129,6 +134,9 @@ set(BROWSER_SWIFT_SRCS
   Omnibox/AnchoredPanelTracker.swift
   Omnibox/OmniboxStartPanelView.swift
   Omnibox/OmniboxStartPanelController.swift
+  Omnibox/OmniboxSubmission.swift
+  Omnibox/QuickSiteSearchCatalog.swift
+  Omnibox/SearchSuggestionFetcher.swift
   StartPage/StartPageSettingsPaneController.swift
   StartPage/StartPageSettingsCoordinator.swift
   Import/BookmarkImportCoordinator.swift
@@ -274,6 +282,27 @@ set(BROWSER_CLI_PROTOCOL_SRCS
   )
 source_group(BrowserCLIProtocol FILES ${BROWSER_CLI_PROTOCOL_SRCS})
 
+# SearchCore's omnibox input classification (is this typed text a URL or a
+# search?), search-engine templates, suggestion parsing and Quick Website
+# Search matching (../../Packages/SearchCore/Sources/SearchCore) are pure
+# Swift/Foundation with no AppKit dependency, so they're also packaged
+# standalone as Packages/SearchCore/ at the repo root for a fast, isolated
+# `swift test` (browser-0du). Same reasoning as every *_CORE_SRCS block
+# above: rather than linking that package from this Xcode-generator CMake
+# target, these same source files are compiled directly into the Browser
+# executable here too -- one copy of the logic, two ways to build it. The
+# URL-vs-query rule in particular is full of edge cases (localhost:3000, bare
+# IPs, IDN, a query containing a dot), which is exactly why it lives where
+# tests can reach it.
+set(BROWSER_SEARCH_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/OmniboxInputClassifier.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/OmniboxResolver.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/QuickSiteSearch.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/SearchEngine.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/SearchSuggestionParser.swift
+  )
+source_group(SearchCore FILES ${BROWSER_SEARCH_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
@@ -283,6 +312,7 @@ set(BROWSER_SRCS
   ${BROWSER_AUTOFILL_CORE_SRCS}
   ${BROWSER_WEBENGINE_CORE_SRCS}
   ${BROWSER_CLI_PROTOCOL_SRCS}
+  ${BROWSER_SEARCH_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS

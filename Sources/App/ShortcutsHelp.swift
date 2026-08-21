@@ -44,6 +44,7 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.selectPreviousTab(_:)): .tabs,
         #selector(BrowserWindowController.showTabOverview(_:)): .tabs,
         #selector(BrowserWindowController.togglePinActiveTab(_:)): .tabs,
+        #selector(BrowserWindowController.toggleTabSidebar(_:)): .tabs,
         #selector(BrowserWindowController.focusOmnibox(_:)): .navigation,
         #selector(BrowserWindowController.reloadPage(_:)): .navigation,
         #selector(BrowserWindowController.goBackAction(_:)): .navigation,

@@ -1833,13 +1833,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     @objc private func omniboxSubmitted() {
         let text = omniboxField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        commitOmniboxNavigation(to: Self.resolveOmniboxSubmission(text))
+        // Resolution moved to SearchCore via OmniboxSubmission (browser-0du):
+        // it needs the profile (for Quick Website Search) and can now decline
+        // to resolve at all, which the old always-returns-a-String rule could
+        // not express.
+        guard let resolved = OmniboxSubmission.resolve(text, profile: profile) else { return }
+        commitOmniboxNavigation(to: resolved)
     }
 
     /// Shared by omniboxSubmitted (raw typed text, already resolved) and
     /// both autocomplete confirmation paths (Enter on a highlighted
     /// suggestion, or clicking one directly) -- a suggestion's URL is already
-    /// absolute, so resolveOmniboxSubmission is only ever applied once, here
+    /// absolute, so OmniboxSubmission.resolve is only ever applied once, here
     /// or by the caller, never both.
     private func commitOmniboxNavigation(to resolved: String) {
         guard let tab = activeTab else { return }
@@ -1859,21 +1864,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         DispatchQueue.main.async {
             tab.load(url: resolved)
         }
-    }
-
-    /// Enter behavior per docs/plans/2026-07-27-browser-plan.md M1 scope: add
-    /// https:// if the scheme is missing; if the input doesn't look like a
-    /// domain (no dot, or contains a space) treat it as a DuckDuckGo search.
-    static func resolveOmniboxSubmission(_ text: String) -> String {
-        if text.contains("://") {
-            return text
-        }
-        let looksLikeDomain = text.contains(".") && !text.contains(" ")
-        if looksLikeDomain {
-            return "https://" + text
-        }
-        let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        return "https://duckduckgo.com/?q=\(encoded)"
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -1909,7 +1899,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// behave normally the rest of the time.
     private func previewAutocompleteSelection(delta: Int) -> Bool {
         guard autocomplete.isVisible, let suggestion = autocomplete.moveSelection(by: delta) else { return false }
-        omniboxField.stringValue = suggestion.url
+        // editText, not url: arrowing onto a *search* suggestion should preview
+        // the query you'd be searching for, not the engine's raw result URL.
+        omniboxField.stringValue = suggestion.editText
         return true
     }
 

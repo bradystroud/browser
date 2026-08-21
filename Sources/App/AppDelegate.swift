@@ -53,6 +53,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // before anything else happened to touch either singleton.
         _ = ShortcutsOverlayController.shared
         _ = TabCyclingController.shared
+        // Same reason: its whole job is to observe TabLifecycleCenter and
+        // apply a site's stored settings as each page loads (browser-06d).
+        // Instantiated lazily, it would only start observing once the
+        // sheet had been opened, so a setting saved in an earlier session
+        // wouldn't apply until you opened the sheet again.
+        _ = SiteSettingsEnforcer.shared
         // Observers for browser-2ji ("keyboard focus stays here when another
         // app activates"). Installed unconditionally and this early because
         // the bug's own reproduction is app *deactivation* -- which can

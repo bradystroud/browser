@@ -99,6 +99,23 @@ final class MainMenuBuilder {
         menu.addItem(checkForUpdatesItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+        // Directly under Settings…, where Safari puts its own equivalent, and
+        // reading as "settings, but narrower". The chord is ours -- Safari
+        // assigns none -- and was checked against every other equivalent in
+        // this file before being taken (browser-06d).
+        //
+        // Explicitly targeted at the controller singleton rather than left to
+        // the responder chain: that keeps the action off AppDelegate and off
+        // every window, and lets the controller's own NSMenuItemValidation
+        // grey the item out on a page it can't describe (the start page, a
+        // view-source: tab), instead of offering a sheet that would open empty.
+        let siteSettingsItem = menu.addItem(
+            withTitle: "Settings for This Website…",
+            action: #selector(SiteSettingsSheetController.showFromMenu(_:)),
+            keyEquivalent: ","
+        )
+        siteSettingsItem.keyEquivalentModifierMask = [.command, .option]
+        siteSettingsItem.target = SiteSettingsSheetController.shared
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Browser", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -204,6 +221,22 @@ final class MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Tab Overview", action: #selector(BrowserWindowController.showTabOverview(_:)), keyEquivalent: "\\")
             .keyEquivalentModifierMask = [.command, .shift]
+        // Vertical tab sidebar (browser-vts). The title is a STARTING value,
+        // not a fixed one: BrowserWindowController.validateMenuItem flips it to
+        // "Hide Tab Sidebar" while the sidebar is showing, the same way Pin
+        // Tab/Unpin Tab already does.
+        //
+        // Ctrl-Cmd-S: Safari ships no default chord for its own sidebar toggle,
+        // so there is nothing to match here. Cmd-S is free in this app but
+        // reads as "Save" to everyone; Shift-Cmd-L is Safari's *old*
+        // bookmark-sidebar chord and Cmd-L is already Show Address Bar here, so
+        // a shifted sibling would invite mistakes. Ctrl-Cmd is this app's
+        // established chrome-layout modifier -- Switch Profile uses Ctrl-Cmd-N.
+        menu.addItem(
+            withTitle: "Show Tab Sidebar",
+            action: #selector(BrowserWindowController.toggleTabSidebar(_:)),
+            keyEquivalent: "s"
+        ).keyEquivalentModifierMask = [.command, .control]
         menu.addItem(.separator())
         let responsiveItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
         responsiveItem.submenu = responsiveDesignModeMenu()
