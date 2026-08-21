@@ -120,10 +120,28 @@ final class TabButtonView: NSView {
         }
     }
 
+    /// True while this pill is a row in the vertical sidebar rather than a
+    /// cell in the horizontal strip (see TabStripOrientation). It changes
+    /// three things and nothing else: the title reads from the leading edge
+    /// instead of centred (a column of centred titles is unreadable -- the
+    /// eye has no common left margin to run down), the corner radius stops
+    /// being a full capsule at a width that would make one look like a
+    /// lozenge, and an unselected row highlights on hover, which is what a
+    /// list of rows is expected to do and a strip of pills is not.
+    var isVerticalLayout = false {
+        didSet {
+            guard oldValue != isVerticalLayout else { return }
+            titleLabel.alignment = isVerticalLayout ? .left : .center
+            updateSelectionAppearance()
+            needsLayout = true
+        }
+    }
+
     /// Tracked separately from closeButton.isHidden so a pin toggled while
     /// the mouse is already hovering doesn't leave stale hover state behind
     /// once unpinned again -- mouseExited isn't guaranteed to fire from a
-    /// state change that didn't move the mouse.
+    /// state change that didn't move the mouse. Also drives the sidebar's
+    /// hover highlight -- see isVerticalLayout.
     private var isMouseInside = false
 
     private let titleLabel: NSTextField = {
@@ -330,6 +348,15 @@ final class TabButtonView: NSView {
         faviconView.image = image ?? Self.genericFavicon
     }
 
+    /// A full capsule in the horizontal strip (browser-qpy), a rounded rect
+    /// in the sidebar. A capsule only reads as one while the pill is roughly
+    /// as wide as it is tall; at a sidebar row's proportions the same radius
+    /// turns it into a lozenge, which is why Safari's and Arc's own sidebar
+    /// rows are rounded rects and their tab pills are not.
+    private var cornerRadius: CGFloat {
+        isVerticalLayout ? min(10, bounds.height / 2) : bounds.height / 2
+    }
+
     override func layout() {
         super.layout()
         // Full pill shape (browser-qpy): fully rounded ends at any height,
@@ -338,9 +365,9 @@ final class TabButtonView: NSView {
         // this view's own layer too would double up (and clip nothing
         // extra, since the glass view already fills these bounds).
         if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
-            glass.cornerRadius = bounds.height / 2
+            glass.cornerRadius = cornerRadius
         } else {
-            layer?.cornerRadius = bounds.height / 2
+            layer?.cornerRadius = cornerRadius
         }
         layoutSelectionRing()
         let closeSize: CGFloat = 14
@@ -396,6 +423,17 @@ final class TabButtonView: NSView {
         // way faviconView/audioButton already are, fixes that.
         let titleInset = faviconLeading + faviconSize + 6
         let titleHeight: CGFloat = 16
+        guard !isVerticalLayout else {
+            // A sidebar row reads from its leading edge: the title starts at
+            // the favicon's trailing edge and runs to the close button, which
+            // gets its space reserved whether or not it is currently showing
+            // so a title never reflows on hover.
+            titleLabel.frame = NSRect(
+                x: titleInset, y: (bounds.height - titleHeight) / 2,
+                width: max(0, bounds.width - titleInset - closeSize - 12), height: titleHeight
+            )
+            return
+        }
         titleLabel.frame = NSRect(
             x: titleInset, y: (bounds.height - titleHeight) / 2,
             width: max(0, bounds.width - titleInset * 2), height: titleHeight
@@ -419,12 +457,18 @@ final class TabButtonView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         isMouseInside = true
+        if isVerticalLayout {
+            updateSelectionAppearance()
+        }
         guard !isPinned else { return }
         closeButton.isHidden = false
     }
 
     override func mouseExited(with event: NSEvent) {
         isMouseInside = false
+        if isVerticalLayout {
+            updateSelectionAppearance()
+        }
         closeButton.isHidden = true
     }
 
@@ -651,6 +695,12 @@ final class TabButtonView: NSView {
     /// BrowserWindowController.refreshToolbar(for:)).
     private static let inactiveWashAlpha: CGFloat = 0.10
 
+    /// The sidebar's hover wash on the no-glass path (pre-26 / Reduce
+    /// Transparency). Between the inactive wash and the selected fill, for
+    /// the same reason the glass path stops short of a tint -- see
+    /// updateSelectionAppearance().
+    private static let hoverWashAlpha: CGFloat = 0.18
+
     /// An unselected tab's favicon is dimmed, and its title drops to
     /// `.secondaryLabelColor`. These two are the deliberately colorimetry-
     /// free half of browser-qpy.1's fix: they express selected-vs-not
@@ -779,9 +829,11 @@ final class TabButtonView: NSView {
         // isSelected/themeColorHex instead of this fill. This path is what
         // runs pre-26 and under Reduce Transparency (see rebuildBackground).
         guard glassBackground == nil else { return }
-        let path = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
         if isSelected {
             selectedFillColor.setFill()
+        } else if isVerticalLayout, isMouseInside {
+            NSColor.labelColor.withAlphaComponent(Self.hoverWashAlpha).setFill()
         } else {
             NSColor.labelColor.withAlphaComponent(Self.inactiveWashAlpha).setFill()
         }
@@ -798,8 +850,13 @@ final class TabButtonView: NSView {
     /// selected/unselected difference that survives even the case where
     /// every luminance in play happens to coincide.
     private func updateSelectionAppearance() {
+        // An unselected sidebar row lifts to the same material on hover, one
+        // step short of the selected treatment: no tint, and no selection
+        // ring, so it reads as "the pointer is here" rather than as a second
+        // selected tab.
+        let isHoverHighlighted = isVerticalLayout && isMouseInside && !isSelected
         if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
-            glass.style = isSelected ? .regular : .clear
+            glass.style = isSelected || isHoverHighlighted ? .regular : .clear
             glass.tintColor = isSelected ? selectedFillColor : nil
         }
         needsDisplay = true
@@ -876,8 +933,11 @@ final class TabButtonView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         selectionRing.frame = contentContainer.bounds
+        // Follows the pill's own radius, so the ring traces the shape it
+        // outlines in either orientation rather than bulging past its corners.
+        let radius = min(cornerRadius, rect.height / 2)
         selectionRing.path = CGPath(
-            roundedRect: rect, cornerWidth: rect.height / 2, cornerHeight: rect.height / 2, transform: nil
+            roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil
         )
         CATransaction.commit()
     }

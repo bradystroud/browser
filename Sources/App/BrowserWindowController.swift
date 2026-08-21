@@ -128,6 +128,39 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private static let trailingToolbarControlCount = 4
     private let contentContainerView = NSView()
 
+    /// The vertical tab sidebar's own material, and the hairline that
+    /// separates it from the web content. Both are created for every window
+    /// and simply hidden in horizontal mode -- the same view swapping in and
+    /// out of the hierarchy on every toggle would buy nothing, and this way
+    /// the toggle is a pure relayout.
+    private let tabSidebarBackground = GlassBackgroundView(
+        material: .underWindowBackground, blendingMode: .behindWindow,
+        solidFallbackColor: .windowBackgroundColor
+    )
+    private let tabSidebarSeparator: NSView = {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.separatorColor.cgColor
+        return view
+    }()
+
+    /// Which way this window's tab strip runs. Initialised from the stored
+    /// preference and kept in step with it by
+    /// .tabStripOrientationDidChange, so every open window switches together
+    /// rather than only the one whose menu item was used.
+    private var tabStripOrientation = TabStripOrientationPreference.current
+
+    private static let tabStripHeight: CGFloat = 32
+    /// Was 36 -- left only 3pt above/below the 30pt-tall omnibox pill, which
+    /// read as "almost touching the content" (Brady's report, browser-0y1)
+    /// even before the chrome-order flip changed what technically sits
+    /// directly below it. 44 gives the pill visible, symmetric breathing room
+    /// (7pt each side), closer to Safari's own proportions. Everything else
+    /// in setUpViews/setUpToolbarContents/omniboxFrame derives from this one
+    /// constant (via toolbarView.bounds.height), so nothing else needs
+    /// updating.
+    private static let toolbarHeight: CGFloat = 44
+
     /// The Y coordinate, in window.contentView's own coordinate space, of
     /// the real web content area's top edge -- i.e. immediately below all
     /// chrome (toolbar/omnibox row + tab strip), whichever one of those
@@ -377,70 +410,126 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     private func setUpViews() {
         guard let window, let contentView = window.contentView else { return }
-        let tabStripHeight: CGFloat = 32
-        // Was 36 -- left only 3pt above/below the 30pt-tall omnibox pill,
-        // which read as "almost touching the content" (Brady's report,
-        // browser-0y1) even before the chrome-order flip changed what
-        // technically sits directly below it. 44 gives the pill visible,
-        // symmetric breathing room (7pt each side), closer to Safari's own
-        // proportions. Everything else in this method/setUpToolbarContents/
-        // omniboxFrame derives from this one constant (via
-        // toolbarView.bounds.height), so nothing else needs updating.
-        let toolbarHeight: CGFloat = 44
-        let chromeHeight = tabStripHeight + toolbarHeight
 
         // Hidden titlebar + full-size content view (browser-qpy): the
         // toolbar row effectively becomes the titlebar area, with the
         // traffic lights floating over its leading edge (see
         // Self.trafficLightReservedWidth, applied in setUpToolbarContents/
-        // expandedOmniboxWidth below).
+        // expandedOmniboxWidth below). True in both orientations -- the
+        // sidebar starts below the toolbar row, not beside it, so the
+        // traffic lights keep floating over the same band.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
 
-        chromeBackground.frame = NSRect(
-            x: 0,
-            y: contentView.bounds.height - chromeHeight,
-            width: contentView.bounds.width,
-            height: chromeHeight
-        )
-        chromeBackground.autoresizingMask = [.width, .minYMargin]
+        // Added back to front. Every frame here is provisional; the real
+        // geometry is applyChromeLayout()'s, which also runs on every later
+        // orientation change.
         contentView.addSubview(chromeBackground)
+        contentView.addSubview(tabSidebarBackground)
+        contentView.addSubview(tabSidebarSeparator)
 
-        // Toolbar/omnibox row now on top (browser-0y1) -- was below the tab
-        // strip before.
+        // Toolbar/omnibox row on top (browser-0y1) -- was below the tab strip
+        // before. Its own frame has to be real before setUpToolbarContents,
+        // which lays every control out against toolbarView.bounds.
         toolbarView.frame = NSRect(
             x: 0,
-            y: contentView.bounds.height - toolbarHeight,
+            y: contentView.bounds.height - Self.toolbarHeight,
             width: contentView.bounds.width,
-            height: toolbarHeight
+            height: Self.toolbarHeight
         )
-        toolbarView.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(toolbarView)
         setUpToolbarContents()
 
-        // Tab strip now below the toolbar -- no longer needs leadingInset
-        // (stays at its default 0), since the traffic lights float over the
-        // toolbar row above it instead.
-        tabStripView.frame = NSRect(
-            x: 0,
-            y: contentView.bounds.height - toolbarHeight - tabStripHeight,
-            width: contentView.bounds.width,
-            height: tabStripHeight
-        )
-        tabStripView.autoresizingMask = [.width, .minYMargin]
+        // The tab strip no longer needs leadingInset (it stays at its
+        // default 0) in either orientation: the traffic lights float over the
+        // toolbar row above it.
         tabStripView.delegate = self
         contentView.addSubview(tabStripView)
 
-        contentContainerView.frame = NSRect(
-            x: 0,
-            y: 0,
-            width: contentView.bounds.width,
-            height: contentView.bounds.height - tabStripHeight - toolbarHeight
-        )
-        contentContainerView.autoresizingMask = [.width, .height]
         contentContainerView.wantsLayer = true
         contentView.addSubview(contentContainerView)
+
+        applyChromeLayout()
+
+        // Every window follows the one preference -- see
+        // TabStripOrientationPreference.toggle(). Same block-observer shape
+        // as the omnibox display/profile observers in init.
+        NotificationCenter.default.addObserver(
+            forName: .tabStripOrientationDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let updated = TabStripOrientationPreference.current
+            guard updated != self.tabStripOrientation else { return }
+            self.tabStripOrientation = updated
+            self.applyChromeLayout()
+        }
+    }
+
+    /// Frames all four chrome surfaces (glass backdrop, toolbar row, tab
+    /// strip, web content area) for the current orientation. Called once at
+    /// window setup and again on every toggle -- the toggle is a relayout,
+    /// with no view created, destroyed or reparented, which is what lets it
+    /// happen live with the tabs' own state untouched.
+    ///
+    /// The sidebar is a real sibling the content area is *shrunk* for, never
+    /// an overlay: CEF's compositing surface paints over any AppKit view
+    /// occupying the content area's region regardless of z-order -- see
+    /// contentAreaTopY's own doc comment for the trial that established that.
+    private func applyChromeLayout() {
+        guard let contentView = window?.contentView else { return }
+        let width = contentView.bounds.width
+        let height = contentView.bounds.height
+        let toolbarHeight = Self.toolbarHeight
+
+        tabStripView.orientation = tabStripOrientation
+        toolbarView.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
+        toolbarView.autoresizingMask = [.width, .minYMargin]
+
+        switch tabStripOrientation {
+        case .horizontal:
+            let stripHeight = Self.tabStripHeight
+            let chromeHeight = stripHeight + toolbarHeight
+            chromeBackground.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: chromeHeight)
+            tabSidebarBackground.isHidden = true
+            tabSidebarSeparator.isHidden = true
+            tabStripView.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: stripHeight)
+            tabStripView.autoresizingMask = [.width, .minYMargin]
+            contentContainerView.frame = NSRect(x: 0, y: 0, width: width, height: height - chromeHeight)
+        case .vertical:
+            let sidebarWidth = TabStripView.sidebarWidth
+            let sidebarHeight = height - toolbarHeight
+            chromeBackground.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
+            tabSidebarBackground.isHidden = false
+            tabSidebarBackground.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: sidebarHeight)
+            tabSidebarBackground.autoresizingMask = [.height, .maxXMargin]
+            tabSidebarSeparator.isHidden = false
+            tabSidebarSeparator.frame = NSRect(x: sidebarWidth - 1, y: 0, width: 1, height: sidebarHeight)
+            tabSidebarSeparator.autoresizingMask = [.height, .maxXMargin]
+            tabStripView.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: sidebarHeight)
+            tabStripView.autoresizingMask = [.height, .maxXMargin]
+            contentContainerView.frame = NSRect(
+                x: sidebarWidth, y: 0, width: max(0, width - sidebarWidth), height: sidebarHeight
+            )
+        }
+        chromeBackground.autoresizingMask = [.width, .minYMargin]
+        // .width with a fixed leading margin: the sidebar's own width is
+        // constant, so a resize's whole delta lands on the content area.
+        contentContainerView.autoresizingMask = [.width, .height]
+        // The active tab's hosted view fills the content area exactly, so its
+        // own autoresizing keeps it there across resizes -- but a mode toggle
+        // moves the container's origin as well as its size, which is one
+        // change autoresizing cannot express.
+        activeTab?.hostView.frame = contentContainerView.bounds
+        layoutOmniboxContainer()
+    }
+
+    /// View > Show/Hide Tab Sidebar. Flips the shared preference rather than
+    /// this window's own copy of it, so every open window follows -- this
+    /// controller only ever learns about the change through the notification
+    /// that flip posts (see setUpViews).
+    @objc func toggleTabSidebar(_ sender: Any?) {
+        TabStripOrientationPreference.toggle()
     }
 
     private func setUpToolbarContents() {
@@ -1441,10 +1530,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let profileColor = isPrivate ? nil : (NSColor(hex: profile.colorHex) ?? .controlAccentColor)
         guard let tintColor = themeColor ?? profileColor else {
             chromeBackground.tintColor = nil
+            tabSidebarBackground.tintColor = nil
             return
         }
         let alpha: CGFloat = themeColor != nil ? 0.16 : 0.05
-        chromeBackground.tintColor = tintColor.withAlphaComponent(alpha)
+        let tint = tintColor.withAlphaComponent(alpha)
+        chromeBackground.tintColor = tint
+        // The sidebar carries the same tint as the toolbar, not just for the
+        // look: TabButtonView predicts the surface behind a selected pill
+        // from this exact alpha when it measures its own contrast (see that
+        // view's chromeThemeTintAlpha), and an untinted sidebar would make
+        // that prediction wrong in vertical mode alone.
+        tabSidebarBackground.tintColor = tint
     }
 
     private func updateWindowTitle(for tab: Tab) {
@@ -1723,6 +1820,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case #selector(togglePinActiveTab(_:)):
             menuItem.title = (activeTab?.isPinned ?? false) ? "Unpin Tab" : "Pin Tab"
             return activeTab != nil
+        case #selector(toggleTabSidebar(_:)):
+            menuItem.title = tabStripOrientation == .vertical ? "Hide Tab Sidebar" : "Show Tab Sidebar"
+            return true
         default:
             return true
         }

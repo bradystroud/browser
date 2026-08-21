@@ -47,17 +47,35 @@ protocol TabStripViewDelegate: AnyObject {
     func tabStripView(_ tabStripView: TabStripView, didMoveTabAt sourceIndex: Int, toIndex destinationIndex: Int)
 }
 
-/// Compact Safari-like tab strip: fixed-height row of TabButtonViews (plus
-/// TabGroupHeaderViews for tab groups) sized to share the available width
-/// (down to a minimum, then they just get crowded rather than scrolling --
-/// fine for this app's tab counts), plus a trailing "+" button.
+/// Hosts every tab pill/group header, in either orientation, with the origin
+/// at its *top* left. Item frames are computed top-down in both modes: the
+/// vertical sidebar needs that to read in source order, and a horizontal
+/// strip's own slots are vertically symmetric within the row (see
+/// horizontalSlotFrames), so flipping costs it nothing. It is also what makes
+/// the sidebar's scroll view start at the first tab rather than the last --
+/// NSScrollView scrolls a flipped document view to its top by default.
+private final class TabStripContentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+/// Compact Safari-like tab strip in one of two orientations (see
+/// TabStripOrientation):
 ///
-/// Rendering order left to right: pinned tabs, then each tab group's header
-/// (+ its member tabs if expanded) in group order, then loose (unpinned,
-/// ungrouped) tabs -- see BrowserWindowController's ordering invariant on
-/// `tabs`, which `infos`/`groups` below always already reflect by the time
-/// they reach this view (this view never reorders anything itself, only
-/// renders the order it's given).
+/// - horizontal: a fixed-height row of TabButtonViews (plus
+///   TabGroupHeaderViews for tab groups) sized to share the available width
+///   (down to a minimum, then they just get crowded rather than scrolling --
+///   fine for this app's tab counts), plus a trailing "+" button.
+/// - vertical: a fixed-width sidebar of full-width rows, pinned tabs as a
+///   compact favicon grid at the top, group members indented under their
+///   header, scrolling when they overflow, and a "New Tab" row pinned to the
+///   bottom edge (Arc's placement -- it must not scroll away).
+///
+/// Rendering order (left to right, or top to bottom): pinned tabs, then each
+/// tab group's header (+ its member tabs if expanded) in group order, then
+/// loose (unpinned, ungrouped) tabs -- see BrowserWindowController's ordering
+/// invariant on `tabs`, which `infos`/`groups` below always already reflect by
+/// the time they reach this view (this view never reorders anything itself,
+/// only renders the order it's given).
 final class TabStripView: NSView {
     weak var delegate: TabStripViewDelegate?
 
@@ -167,8 +185,9 @@ final class TabStripView: NSView {
         var eventMonitor: Any?
     }
 
-    /// How far the pointer must travel horizontally before a mouse-down is
-    /// treated as a drag at all.
+    /// How far the pointer must travel along the strip's own axis before a
+    /// mouse-down is treated as a drag at all (see continueDrag -- the
+    /// sidebar's pinned grid measures plain distance instead).
     private static let dragMovementThreshold: CGFloat = 4
     /// Neighbours sliding aside as the dragged pill passes them.
     private static let reflowAnimationDuration: TimeInterval = 0.14
@@ -183,6 +202,19 @@ final class TabStripView: NSView {
         button.toolTip = "New Tab"
         return button
     }()
+    /// The item area itself: a direct subview of `self` in horizontal mode,
+    /// and the sidebar scroll view's document view in vertical mode. Every
+    /// tab pill/group header lives inside it (via glassContentHost below), so
+    /// swapping which of the two it is parented to is the whole of the
+    /// "sidebar scrolls, strip doesn't" difference -- nothing downstream of
+    /// it, drag included, has to know which mode it is in.
+    private let stripContentView = TabStripContentView()
+
+    /// Vertical mode only, and only installed while it is (see
+    /// configureHierarchyForOrientation) -- a sidebar that silently hides
+    /// tabs past the window's height would be worse than no sidebar.
+    private let scrollView = NSScrollView()
+
     /// macOS 26+ only: hosts every tab/group-header's own NSGlassEffectView
     /// so they batch-render and merge together when close, matching how
     /// Safari's own adjacent tab pills blend into each other rather than
@@ -191,12 +223,14 @@ final class TabStripView: NSView {
     /// notes.md for the spacing value's rationale). `nil` pre-26.
     private var glassContainer: NSView?
     /// Where rebuildButtons() actually adds each tab/group-header subview --
-    /// the glass container's contentView on macOS 26+, `self` otherwise (the
-    /// exact pre-rework behavior). Set once, read (never reassigned after)
-    /// by rebuildButtons on every reload.
+    /// the glass container's contentView on macOS 26+, stripContentView
+    /// otherwise. Set once, read (never reassigned after) by rebuildButtons
+    /// on every reload; every slot frame this view computes is in *this*
+    /// view's coordinates, which is why the drag converts pointer locations
+    /// through it rather than through `self`.
     private lazy var glassContentHost: NSView = {
-        guard #available(macOS 26.0, *) else { return self }
-        let container = NSGlassEffectContainerView(frame: bounds)
+        guard #available(macOS 26.0, *) else { return stripContentView }
+        let container = NSGlassEffectContainerView(frame: stripContentView.bounds)
         container.autoresizingMask = [.width, .height]
         // Nonzero so adjacent pills within this distance visually merge
         // (the default, zero, only batches rendering -- see the class's own
@@ -204,13 +238,29 @@ final class TabStripView: NSView {
         // render; see browser-qpy-notes.md's Deviations for why this is
         // flagged for Brady to tune once he can actually see it.
         container.spacing = 4
-        let content = NSView(frame: bounds)
+        // Flipped for the same reason stripContentView is -- this, not that,
+        // is what the item frames are measured in on macOS 26+.
+        let content = TabStripContentView(frame: stripContentView.bounds)
         content.autoresizingMask = [.width, .height]
         container.contentView = content
-        addSubview(container, positioned: .below, relativeTo: nil)
+        stripContentView.addSubview(container)
         glassContainer = container
         return content
     }()
+
+    /// Horizontal row or vertical sidebar. Set by BrowserWindowController,
+    /// which owns the surrounding geometry this only describes the inside of
+    /// -- changing it here relays out the strip's own contents, but the frame
+    /// it is given (and the web content area it was shrunk out of) is the
+    /// controller's to change in the same pass.
+    var orientation: TabStripOrientation = .horizontal {
+        didSet {
+            guard oldValue != orientation else { return }
+            applyOrientation()
+        }
+    }
+
+    private var isVertical: Bool { orientation == .vertical }
 
     private static let minTabWidth: CGFloat = 80
     /// Pinned tabs render at this fixed, narrow width regardless of strip
@@ -230,6 +280,39 @@ final class TabStripView: NSView {
     private static let sidePadding: CGFloat = 4
     private static let newTabButtonWidth: CGFloat = 28
 
+    // MARK: Vertical (sidebar) metrics
+
+    /// The sidebar's own width, published because BrowserWindowController has
+    /// to shrink the web content area by exactly this much -- one constant,
+    /// read by both sides, rather than the same number written twice.
+    /// Between Safari's ~220 and Arc's ~240: wide enough that a real page
+    /// title survives truncation, narrow enough not to eat the content area.
+    static let sidebarWidth: CGFloat = 240
+    private static let verticalRowHeight: CGFloat = 32
+    private static let verticalGroupHeaderHeight: CGFloat = 26
+    /// Tighter than the horizontal strip's own tabSpacing: rows share their
+    /// full width, so they read as a list at a spacing that would look
+    /// cramped between side-by-side pills.
+    private static let verticalRowSpacing: CGFloat = 4
+    /// Between the pinned grid and the first row below it, and above each
+    /// group header -- what makes the sections read as sections.
+    private static let verticalSectionSpacing: CGFloat = 10
+    private static let verticalPadding: CGFloat = 10
+    /// Group members sit indented under their header, as they do in Safari's
+    /// own sidebar -- the horizontal strip has no room for this and relies on
+    /// adjacency alone, which a vertical list makes ambiguous.
+    private static let verticalGroupIndent: CGFloat = 14
+    /// Pinned tabs render as a compact favicon grid at the top of the
+    /// sidebar (Safari's treatment) rather than as full-width rows: a pinned
+    /// tab has no title to show, so a full-width row for each would be a
+    /// column of mostly-empty pills.
+    private static let verticalPinnedTileSize: CGFloat = 34
+    private static let verticalPinnedSpacing: CGFloat = 6
+    /// The "New Tab" row's band at the sidebar's bottom edge. Outside the
+    /// scroll view on purpose -- it is the one control that must stay
+    /// reachable however far the tab list has been scrolled.
+    private static let verticalNewTabRowHeight: CGFloat = 42
+
     /// Extra space reserved before the first tab, for e.g. traffic-light
     /// buttons floating over this area. Unused (stays at its default 0)
     /// since browser-0y1 flipped the chrome order -- the toolbar/omnibox
@@ -247,12 +330,28 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        stripContentView.frame = bounds
+        stripContentView.autoresizingMask = [.width, .height]
+        addSubview(stripContentView)
         // Force the glass container to be created (and added) now, before
         // newTabButton below, so the button always renders above it.
         _ = glassContentHost
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
         addSubview(newTabButton)
+        configureScrollView()
+    }
+
+    private func configureScrollView() {
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.horizontalScrollElasticity = .none
+        // The clip view must not paint either, or it draws an opaque slab
+        // over the sidebar's own glass material.
+        scrollView.contentView.drawsBackground = false
     }
 
     required init?(coder: NSCoder) {
@@ -272,6 +371,7 @@ final class TabStripView: NSView {
         self.selectedIndex = selectedIndex
         rebuildButtons()
         needsLayout = true
+        scrollSelectionIntoView()
     }
 
     /// Cheaper than a full reload: use when only a tab's title/loading state
@@ -321,7 +421,27 @@ final class TabStripView: NSView {
             guard case .tab(let button) = item else { continue }
             button.isSelected = button.index == index
         }
+        scrollSelectionIntoView()
         reportSelectionContrastIfRequested()
+    }
+
+    /// Brings the selected row back on screen when the sidebar has scrolled
+    /// past it. Without this, ⌘1-9 and ⌘⌥→ can activate a tab that stays out
+    /// of sight -- the strip would be showing a selection nobody can see, and
+    /// the horizontal row has no equivalent failure because it never scrolls.
+    /// A no-op in horizontal mode, and whenever the row is already visible.
+    private func scrollSelectionIntoView() {
+        guard isVertical, scrollView.superview === self,
+              let button = tabButton(forTabIndex: selectedIndex) else { return }
+        // Deferred: a selection change usually arrives with a reload, whose
+        // layout (and therefore this row's real frame) has not run yet.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isVertical, button.superview != nil else { return }
+            let frame = button.convert(button.bounds, to: self.stripContentView)
+            // Padded by a whole row's worth, so a row scrolled to the very
+            // bottom does not end up flush against the New Tab band below it.
+            self.stripContentView.scrollToVisible(frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2))
+        }
     }
 
     /// ⌘W on a pinned active tab is a no-op (see BrowserWindowController.
@@ -367,6 +487,7 @@ final class TabStripView: NSView {
             button.isAudible = info.isAudible
             button.isLoading = info.isLoading
             button.availableGroups = availableGroups
+            button.isVerticalLayout = isVertical
             button.isSelected = index == selectedIndex
             button.dragDelegate = self
             button.onSelect = { [weak self] in
@@ -416,6 +537,7 @@ final class TabStripView: NSView {
         for group in groups {
             let header = TabGroupHeaderView(groupId: group.id, name: group.name, colorHex: group.colorHex)
             header.isCollapsed = group.isCollapsed
+            header.isVerticalLayout = isVertical
             let members = indexed.filter { !$0.element.isPinned && $0.element.groupId == group.id }
             header.memberCount = members.count
             header.onToggleCollapse = { [weak self] in
@@ -457,9 +579,79 @@ final class TabStripView: NSView {
         }
     }
 
+    /// Rebuilds whatever differs between the two orientations and nothing
+    /// else -- the buttons themselves are reused, so toggling mid-session
+    /// keeps every tab's live state (selection, audio, loading spinner)
+    /// rather than round-tripping through a reload.
+    private func applyOrientation() {
+        for item in stripItems {
+            switch item {
+            case .tab(let button): button.isVerticalLayout = isVertical
+            case .groupHeader(let header): header.isVerticalLayout = isVertical
+            }
+        }
+        configureHierarchyForOrientation()
+        needsLayout = true
+    }
+
+    private func configureHierarchyForOrientation() {
+        if isVertical {
+            newTabButton.title = "New Tab"
+            newTabButton.imagePosition = .imageLeading
+            guard scrollView.superview !== self else { return }
+            stripContentView.removeFromSuperview()
+            stripContentView.autoresizingMask = [.width]
+            scrollView.documentView = stripContentView
+            addSubview(scrollView, positioned: .below, relativeTo: newTabButton)
+        } else {
+            newTabButton.title = ""
+            newTabButton.imagePosition = .imageOnly
+            guard stripContentView.superview !== self else { return }
+            scrollView.documentView = nil
+            scrollView.removeFromSuperview()
+            stripContentView.autoresizingMask = [.width, .height]
+            stripContentView.frame = bounds
+            addSubview(stripContentView, positioned: .below, relativeTo: newTabButton)
+        }
+    }
+
     override func layout() {
         super.layout()
+        if isVertical {
+            layoutVerticalContainers()
+        } else {
+            setFrameIfNeeded(stripContentView, to: bounds)
+        }
         layoutTabs()
+    }
+
+    /// Sizes the sidebar's scroll view, its document view (tall enough for
+    /// every row, but never shorter than the clip view -- a short document in
+    /// a flipped view would still be top-anchored, but sizing it to the clip
+    /// view keeps the scroller from appearing for a single pixel of rounding)
+    /// and the bottom "New Tab" row.
+    private func layoutVerticalContainers() {
+        let rowBand = Self.verticalNewTabRowHeight
+        setFrameIfNeeded(scrollView, to: NSRect(
+            x: 0, y: rowBand, width: bounds.width, height: max(0, bounds.height - rowBand)
+        ))
+        setFrameIfNeeded(stripContentView, to: NSRect(
+            x: 0, y: 0, width: bounds.width,
+            height: max(scrollView.contentSize.height, verticalContentHeight())
+        ))
+        let inset = Self.verticalPadding
+        newTabButton.frame = NSRect(
+            x: inset, y: (rowBand - Self.verticalRowHeight) / 2,
+            width: max(0, bounds.width - inset * 2), height: Self.verticalRowHeight
+        )
+    }
+
+    /// Assigning a frame inside `layout()` can re-enter it (an NSScrollView
+    /// retiles, which lays this view out again); skipping the no-op case is
+    /// what stops that from looping.
+    private func setFrameIfNeeded(_ view: NSView, to frame: NSRect) {
+        guard view.frame != frame else { return }
+        view.frame = frame
     }
 
     private func layoutTabs() {
@@ -468,11 +660,15 @@ final class TabStripView: NSView {
             let view = item.view
             if let session = drag, session.didMove, view === session.button {
                 // The dragged pill belongs to the cursor, not to the layout,
-                // for as long as the drag lasts -- take only the slot's
-                // vertical geometry (which a window resize can genuinely
-                // change mid-drag) and leave its x alone.
+                // for as long as the drag lasts. Horizontally it still takes
+                // the slot's vertical geometry, which a window resize can
+                // genuinely change mid-drag; vertically the sidebar's width
+                // is fixed, so only the size is worth re-taking and the pill
+                // keeps both of its coordinates (a pinned tab drags on both
+                // axes there -- see the pinned grid in verticalSlotFrames).
                 view.frame = NSRect(
-                    x: view.frame.minX, y: frames[position].minY,
+                    x: view.frame.minX,
+                    y: isVertical ? view.frame.minY : frames[position].minY,
                     width: frames[position].width, height: frames[position].height
                 )
             } else {
@@ -480,12 +676,14 @@ final class TabStripView: NSView {
             }
         }
 
-        newTabButton.frame = NSRect(
-            x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
-            y: (bounds.height - Self.newTabButtonWidth) / 2,
-            width: Self.newTabButtonWidth,
-            height: Self.newTabButtonWidth
-        )
+        if !isVertical {
+            newTabButton.frame = NSRect(
+                x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
+                y: (bounds.height - Self.newTabButtonWidth) / 2,
+                width: Self.newTabButtonWidth,
+                height: Self.newTabButtonWidth
+            )
+        }
 
         if case .tab(let firstButton)? = stripItems.first {
             TabDragDiagnostics.probeHitTestingOnce(button: firstButton)
@@ -524,58 +722,173 @@ final class TabStripView: NSView {
     /// neighbour swaps, the index arithmetic and the model move. None of that
     /// was reachable by any other non-interactive means, and all of it
     /// previously shipped on desk-checking alone.
+    ///
+    /// It runs in both orientations, along whichever axis that orientation
+    /// reorders on -- the sidebar's reorder path is a different one (nearest
+    /// slot centre rather than neighbour swaps, see moveVertically), so a
+    /// self-test that only ever travelled along x would leave exactly the
+    /// newer of the two untested.
     private func runDragSelfTestIfRequested() {
         guard !hasRunDragSelfTest, TabDragDiagnostics.isSelfTestRequested,
               let window, stripItems.count >= 3,
-              case .tab(let button)? = stripItems.first, button.bounds.width > 0 else { return }
+              let button = selfTestSubject(), button.bounds.width > 0 else { return }
         hasRunDragSelfTest = true
 
-        func event(_ type: NSEvent.EventType, x: CGFloat) -> NSEvent? {
-            let inWindow = convert(NSPoint(x: x, y: bounds.midY), to: nil)
+        func event(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
+            let inWindow = glassContentHost.convert(point, to: nil)
             return NSEvent.mouseEvent(
                 with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
             )
         }
 
-        let startX = button.frame.midX
-        // Far enough right to clear two whole slots, so the drag has to swap
-        // twice and the committed index can't accidentally match the source.
-        // +8 so the pill's centre lands clearly past the second slot's
-        // midpoint rather than exactly on it (an exact tie doesn't swap).
-        let endX = startX + button.frame.width * 2 + Self.tabSpacing * 2 + 8
+        let start = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        // Far enough to clear two whole slots, so the drag has to pass two
+        // neighbours and the committed index can't accidentally match the
+        // source. +8 so the pill's centre lands clearly past the second
+        // slot's midpoint rather than exactly on it (an exact tie doesn't
+        // move it).
+        let end: NSPoint = isVertical
+            ? NSPoint(x: start.x, y: start.y + (button.frame.height + Self.verticalRowSpacing) * 2 + 8)
+            : NSPoint(x: start.x + (button.frame.width + Self.tabSpacing) * 2 + 8, y: start.y)
         TabDragDiagnostics.record("selfTestStart", [
-            "tabIndex": button.index, "startX": Double(startX), "endX": Double(endX),
+            "tabIndex": button.index, "orientation": orientation.rawValue,
+            "startX": Double(start.x), "startY": Double(start.y),
+            "endX": Double(end.x), "endY": Double(end.y),
             "stripItemCount": stripItems.count
         ])
-        guard let down = event(.leftMouseDown, x: startX) else { return }
+        guard let down = event(.leftMouseDown, at: start) else { return }
         tabButton(button, didBeginDragWith: down)
         for step in 1...8 {
-            let x = startX + (endX - startX) * CGFloat(step) / 8
-            guard let dragged = event(.leftMouseDragged, x: x) else { continue }
+            let fraction = CGFloat(step) / 8
+            let point = NSPoint(
+                x: start.x + (end.x - start.x) * fraction,
+                y: start.y + (end.y - start.y) * fraction
+            )
+            guard let dragged = event(.leftMouseDragged, at: point) else { continue }
             tabButton(button, didDragWith: dragged)
         }
-        guard let up = event(.leftMouseUp, x: endX) else { return }
+        guard let up = event(.leftMouseUp, at: end) else { return }
         tabButton(button, didEndDragWith: up)
     }
 
+    /// The tab the self-test drags: the first one with at least two other
+    /// slots in its own section, so a two-slot journey stays inside the
+    /// section clamp and actually lands somewhere new.
+    ///
+    /// Pinned tabs are excluded in the sidebar, and only there: they render
+    /// as a grid whose whole run is one 34pt-tall row, so a downward drag
+    /// would be clamped to its own starting row and the test would prove
+    /// nothing. They are a perfectly good subject in the horizontal strip,
+    /// where their section runs along the axis being tested.
+    private func selfTestSubject() -> TabButtonView? {
+        for (position, item) in stripItems.enumerated() {
+            guard case .tab(let button) = item else { continue }
+            if isVertical, button.isPinned { continue }
+            guard sectionRange(around: position).count >= 3 else { continue }
+            return button
+        }
+        return nil
+    }
 
-    /// The frame each entry of `stripItems` should occupy, in the same
-    /// left-to-right render order rebuildButtons established. Pinned tabs and
-    /// group headers get fixed widths off the top; every other tab button
-    /// (loose, or a member of an expanded group) shares whatever width
-    /// remains, same even-width-down-to-a-minimum scheme as before groups
-    /// existed.
+
+    /// The frame each entry of `stripItems` should occupy, in the same render
+    /// order rebuildButtons established, for whichever orientation is current
+    /// -- everything else in this view works off these rects and never asks
+    /// which way the strip runs.
     ///
     /// Pure geometry, deliberately: drag-to-reorder needs to know where slots
     /// *are* without moving anything into them (to decide when the dragged
     /// pill has crossed a neighbour) and needs to animate views into them
     /// rather than assign frames outright, neither of which the old
     /// compute-and-assign-in-one-pass layout could express. It also means
-    /// every slot width within one section is identical by construction,
-    /// which is what lets a drag compare against fixed slot midpoints and
-    /// swap only with immediate neighbours.
+    /// every slot within one section is identical in size by construction, in
+    /// both orientations, which is what lets a drag compare against fixed
+    /// slot geometry that stays valid as items are reordered underneath it.
     private func slotFrames() -> [NSRect] {
+        isVertical ? verticalSlotFrames() : horizontalSlotFrames()
+    }
+
+    /// How tall the sidebar's document view has to be for every row to fit.
+    /// Derived from the same pass that positions them, so the two can't
+    /// disagree about where the last row ends.
+    private func verticalContentHeight() -> CGFloat {
+        let frames = verticalSlotFrames()
+        guard let bottom = frames.map(\.maxY).max() else { return 0 }
+        return bottom + Self.verticalPadding
+    }
+
+    /// Vertical (sidebar) layout, top-down in stripContentView's flipped
+    /// coordinates. Three bands in the order rebuildButtons already
+    /// established: the pinned favicon grid, then group headers with their
+    /// members indented beneath them, then loose tabs.
+    ///
+    /// Same "every slot within one section is identical by construction"
+    /// property the horizontal pass has, and for the same reason -- the drag
+    /// compares against fixed slot geometry that must stay valid while items
+    /// are reordered underneath it.
+    private func verticalSlotFrames() -> [NSRect] {
+        let inset = Self.verticalPadding
+        let contentWidth = max(0, bounds.width - inset * 2)
+        var frames: [NSRect] = []
+        frames.reserveCapacity(stripItems.count)
+        var y = Self.verticalPadding
+        var position = 0
+
+        // Pinned tabs: a grid of favicon tiles. They are always the strip's
+        // leading run (BrowserWindowController's ordering invariant), so this
+        // consumes them up front rather than branching per item below.
+        var pinnedCount = 0
+        while position + pinnedCount < stripItems.count,
+              case .tab(let button) = stripItems[position + pinnedCount], button.isPinned {
+            pinnedCount += 1
+        }
+        if pinnedCount > 0 {
+            let tile = Self.verticalPinnedTileSize
+            let gap = Self.verticalPinnedSpacing
+            let perRow = max(1, Int((contentWidth + gap) / (tile + gap)))
+            for offset in 0..<pinnedCount {
+                let row = offset / perRow
+                let column = offset % perRow
+                frames.append(NSRect(
+                    x: inset + CGFloat(column) * (tile + gap),
+                    y: y + CGFloat(row) * (tile + gap),
+                    width: tile, height: tile
+                ))
+            }
+            let rows = (pinnedCount + perRow - 1) / perRow
+            y += CGFloat(rows) * tile + CGFloat(rows - 1) * gap + Self.verticalSectionSpacing
+            position += pinnedCount
+        }
+
+        while position < stripItems.count {
+            switch stripItems[position] {
+            case .groupHeader:
+                // A group header opens a section; give it air above unless it
+                // is the very first thing in the sidebar.
+                if position > 0 {
+                    y += Self.verticalSectionSpacing - Self.verticalRowSpacing
+                }
+                frames.append(NSRect(x: inset, y: y, width: contentWidth, height: Self.verticalGroupHeaderHeight))
+                y += Self.verticalGroupHeaderHeight + Self.verticalRowSpacing
+            case .tab(let button):
+                let indent = button.groupId == nil ? 0 : Self.verticalGroupIndent
+                frames.append(NSRect(
+                    x: inset + indent, y: y,
+                    width: max(0, contentWidth - indent), height: Self.verticalRowHeight
+                ))
+                y += Self.verticalRowHeight + Self.verticalRowSpacing
+            }
+            position += 1
+        }
+        return frames
+    }
+
+    /// Horizontal layout, left to right. Pinned tabs and group headers get
+    /// fixed widths off the top; every other tab button (loose, or a member
+    /// of an expanded group) shares whatever width remains, same
+    /// even-width-down-to-a-minimum scheme as before groups existed.
+    private func horizontalSlotFrames() -> [NSRect] {
         let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
         let itemCount = stripItems.count
         let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
@@ -700,7 +1013,7 @@ extension TabStripView: TabButtonDragDelegate {
             button: button,
             itemIndex: itemIndex,
             range: range,
-            startPoint: convert(event.locationInWindow, from: nil),
+            startPoint: glassContentHost.convert(event.locationInWindow, from: nil),
             startFrame: button.frame,
             originalItems: stripItems
         )
@@ -751,35 +1064,58 @@ extension TabStripView: TabButtonDragDelegate {
 
     private func continueDrag(_ button: TabButtonView, with event: NSEvent, source: String) {
         guard let session = drag, session.button === button else { return }
-        let deltaX = convert(event.locationInWindow, from: nil).x - session.startPoint.x
+        let point = glassContentHost.convert(event.locationInWindow, from: nil)
+        let delta = NSSize(width: point.x - session.startPoint.x, height: point.y - session.startPoint.y)
+        // Vertical rows travel on y, but a pinned tile in the sidebar's grid
+        // travels on both axes, so the threshold there is plain distance
+        // rather than either single component.
+        let travelled = isVertical ? hypot(delta.width, delta.height) : abs(delta.width)
         if !session.didMove {
-            guard abs(deltaX) >= Self.dragMovementThreshold else {
+            guard travelled >= Self.dragMovementThreshold else {
                 TabDragDiagnostics.record("dragBelowThreshold", [
                     "source": source, "tabIndex": button.index,
-                    "deltaX": Double(deltaX), "threshold": Double(Self.dragMovementThreshold)
+                    "travelled": Double(travelled), "threshold": Double(Self.dragMovementThreshold)
                 ])
                 return
             }
             drag?.didMove = true
             TabDragDiagnostics.record("dragThresholdCrossed", [
-                "source": source, "tabIndex": button.index, "deltaX": Double(deltaX)
+                "source": source, "tabIndex": button.index, "travelled": Double(travelled)
             ])
             // Above its neighbours for the rest of the drag, so the pill it
             // slides over never renders on top of the one being dragged.
             glassContentHost.addSubview(button, positioned: .above, relativeTo: nil)
         }
 
+        // Slot geometry is identical for every item in one section (see
+        // slotFrames), so `frames` stays valid across the reorder below and
+        // never needs recomputing mid-move.
         let frames = slotFrames()
+        let itemIndex = isVertical
+            ? moveVertically(button, session: session, delta: delta, frames: frames)
+            : moveHorizontally(button, session: session, deltaX: delta.width, frames: frames)
+
+        guard itemIndex != session.itemIndex else { return }
+        drag?.itemIndex = itemIndex
+        TabDragDiagnostics.record("dragReflow", [
+            "source": source, "tabIndex": button.index,
+            "fromItemIndex": session.itemIndex, "toItemIndex": itemIndex
+        ])
+        applySlotFrames(animated: true, skipping: button)
+    }
+
+    /// Positions the pill along the row and swaps it past whichever
+    /// neighbours its centre has crossed, returning its new position in
+    /// `stripItems`.
+    private func moveHorizontally(
+        _ button: TabButtonView, session: DragSession, deltaX: CGFloat, frames: [NSRect]
+    ) -> Int {
         let width = button.frame.width
         let lowerLimit = frames[session.range.lowerBound].minX
         let upperLimit = max(lowerLimit, frames[session.range.upperBound].maxX - width)
         let x = min(max(session.startFrame.minX + deltaX, lowerLimit), upperLimit)
         button.frame.origin.x = x
 
-        // Swap past whichever neighbours the pill's centre has crossed. Slot
-        // geometry is identical for every item in one section (see
-        // slotFrames), so `frames` stays valid across these swaps and the
-        // comparison never needs recomputing mid-loop.
         let center = x + width / 2
         var itemIndex = session.itemIndex
         while itemIndex < session.range.upperBound, center > frames[itemIndex + 1].midX {
@@ -790,13 +1126,47 @@ extension TabStripView: TabButtonDragDelegate {
             stripItems.swapAt(itemIndex, itemIndex - 1)
             itemIndex -= 1
         }
-        guard itemIndex != session.itemIndex else { return }
-        drag?.itemIndex = itemIndex
-        TabDragDiagnostics.record("dragReflow", [
-            "source": source, "tabIndex": button.index,
-            "fromItemIndex": session.itemIndex, "toItemIndex": itemIndex
-        ])
-        applySlotFrames(animated: true, skipping: button)
+        return itemIndex
+    }
+
+    /// The sidebar's equivalent, returning the pill's new position in
+    /// `stripItems`.
+    ///
+    /// Targets the *nearest* slot centre rather than swapping past crossed
+    /// neighbours the way the row does, because one of the sidebar's sections
+    /// is two-dimensional: pinned tabs render as a grid, where "the pill has
+    /// crossed its neighbour" has no single axis to be true along. Nearest
+    /// centre reduces to exactly the same behaviour for the one-dimensional
+    /// column of loose/grouped rows.
+    private func moveVertically(
+        _ button: TabButtonView, session: DragSession, delta: NSSize, frames: [NSRect]
+    ) -> Int {
+        // Confine the pill to the bounding box of its own section, so it can
+        // never be dragged over a neighbouring band it may not join.
+        let sectionFrames = session.range.map { frames[$0] }
+        let section = sectionFrames.dropFirst().reduce(sectionFrames[0]) { $0.union($1) }
+        let size = button.frame.size
+        let origin = NSPoint(
+            x: min(max(session.startFrame.minX + delta.width, section.minX), max(section.minX, section.maxX - size.width)),
+            y: min(max(session.startFrame.minY + delta.height, section.minY), max(section.minY, section.maxY - size.height))
+        )
+        button.frame.origin = origin
+
+        let center = NSPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        var target = session.itemIndex
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for position in session.range {
+            let slot = frames[position]
+            let distance = hypot(slot.midX - center.x, slot.midY - center.y)
+            if distance < bestDistance {
+                bestDistance = distance
+                target = position
+            }
+        }
+        guard target != session.itemIndex else { return session.itemIndex }
+        let item = stripItems.remove(at: session.itemIndex)
+        stripItems.insert(item, at: target)
+        return target
     }
 
     /// The contiguous run of `stripItems` holding every tab in the same
