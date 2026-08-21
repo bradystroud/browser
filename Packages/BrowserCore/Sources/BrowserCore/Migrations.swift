@@ -51,6 +51,26 @@ enum Migrations {
             );
             CREATE INDEX idx_downloads_started ON downloads(started_at);
             """)
+        },
+        { db in
+            // Reading list (browser-56p). `article_html` is Readability's
+            // extracted markup, stored inline rather than as a file beside
+            // the database so that deleting an item cannot leave an orphaned
+            // article behind, and so clearing the list is one statement.
+            try db.execute("""
+            CREATE TABLE reading_list_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL UNIQUE,
+                title TEXT NOT NULL DEFAULT '',
+                byline TEXT NOT NULL DEFAULT '',
+                excerpt TEXT NOT NULL DEFAULT '',
+                article_html TEXT,
+                added_at INTEGER NOT NULL,
+                is_read INTEGER NOT NULL DEFAULT 0,
+                read_at INTEGER
+            );
+            CREATE INDEX idx_reading_list_added ON reading_list_items(added_at);
+            """)
         }
     ]
 
