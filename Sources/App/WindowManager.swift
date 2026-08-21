@@ -10,8 +10,21 @@ final class WindowManager {
 
     private init() {}
 
+    /// `initialURL` defaults to whatever the user's "New windows open with"
+    /// setting resolves to right now (browser-m0x). A default argument is
+    /// evaluated per call, not once, so a setting changed mid-session takes
+    /// effect on the very next ⌘N without anything having to observe it.
+    ///
+    /// Every caller that already knows which URL it wants -- a routed link, a
+    /// bookmark, `browser window new` -- passes one and is unaffected. The
+    /// callers that rely on this default are exactly the "just give me a
+    /// window" ones: ⌘N, the Profiles menu, and the profile switcher.
     @discardableResult
-    func openNewWindow(profile: Profile, initialURL: String = "https://example.com", isPrivate: Bool = false) -> BrowserWindowController {
+    func openNewWindow(
+        profile: Profile,
+        initialURL: String = HomepagePreference.newWindowURL,
+        isPrivate: Bool = false
+    ) -> BrowserWindowController {
         let controller = BrowserWindowController(profile: profile, initialURL: initialURL, isPrivate: isPrivate)
         registerAndShow(controller)
         return controller
@@ -30,7 +43,11 @@ final class WindowManager {
     @discardableResult
     func openNewPrivateWindow() -> BrowserWindowController {
         let profile = Profile(id: "private-\(UUID().uuidString)", name: "Private", colorHex: "#3a3a3c")
-        return openNewWindow(profile: profile, initialURL: "about:blank", isPrivate: true)
+        // Always the start page, never the homepage (browser-m0x): a private
+        // window that opened your homepage would hand the one site you visit
+        // most a fresh, empty-cookie-jar session every ⇧⌘N, which is the
+        // opposite of what reaching for a private window means.
+        return openNewWindow(profile: profile, initialURL: HomepagePreference.startPageURL, isPrivate: true)
     }
 
     /// Shared by openNewWindow and restoreSession: registers the controller,
