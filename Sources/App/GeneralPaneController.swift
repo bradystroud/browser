@@ -3,11 +3,12 @@ import AppKit
 /// The "General" pane of the Settings window (see SettingsWindowController,
 /// which hosts this alongside the other panes in an NSTabView): what new
 /// windows open with plus the homepage (browser-m0x), the omnibox
-/// display-mode preference (browser-0y1) and the rendering-engine choice
+/// display-mode preference (browser-0y1), the search engine and its two
+/// opt-in features (browser-0du) and the rendering-engine choice
 /// (browser-2a7). All global rather than per-profile -- see
-/// HomepagePreference, OmniboxDisplayPreference and EnginePreference for each
-/// one's own reason -- so unlike the other panes there's no profile picker
-/// here.
+/// HomepagePreference, OmniboxDisplayPreference, SearchEnginePreference and
+/// EnginePreference for each one's own reason -- so unlike the other panes
+/// there's no profile picker here.
 final class GeneralPaneController: NSObject, SettingsPaneController {
     private static let margin: CGFloat = 12
     private static let headerHeight: CGFloat = 22
@@ -30,6 +31,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             + rowGap + labelHeight + 6 + rowHeight
             + rowGap + homepageHelpHeight
             + rowGap + labelHeight + 6 + rowHeight + rowGap + helpHeight
+            // Search engine row, its help, and the two search toggles.
+            + rowGap + labelHeight + 6 + rowHeight + rowGap + searchHelpHeight
+            + rowGap + checkboxHeight + 6 + suggestionsHelpHeight
+            + rowGap + checkboxHeight + 6 + quickSiteHelpHeight
             + rowGap + labelHeight + 6 + rowHeight + rowGap + engineHelpHeight + margin
     var preferredContentHeight: CGFloat { Self.preferredContentHeight }
     /// Taller than the omnibox row's help text: this one has to carry both
@@ -40,6 +45,16 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private static let homepageHelpHeight: CGFloat = 48
     /// Leaves room for "Set to Current Page" beside it on one row.
     private static let homepageFieldWidth: CGFloat = 330
+    private static let checkboxHeight: CGFloat = 20
+    /// Carries either the name of the selected engine or the "that template
+    /// is unusable" warning, whichever applies.
+    private static let searchHelpHeight: CGFloat = 34
+    /// The longest help text in the pane, and deliberately so: it is the one
+    /// that says what leaves the machine.
+    private static let suggestionsHelpHeight: CGFloat = 62
+    private static let quickSiteHelpHeight: CGFloat = 34
+    /// Sits beside the engine popup, on the same row.
+    private static let customTemplateFieldWidth: CGFloat = 316
 
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: GeneralPaneController.preferredContentHeight))
 
@@ -61,6 +76,31 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         label.textColor = .secondaryLabelColor
         return label
     }()
+
+    /// Search engine, suggestions and Quick Website Search (browser-0du).
+    private let searchEnginePopup = NSPopUpButton()
+    private let customTemplateField = NSTextField()
+    private let searchHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private let suggestionsCheckbox = NSButton()
+    private let suggestionsHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private let quickSiteCheckbox = NSButton()
+    private let quickSiteHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private static let searchEngineOrder: [SearchEngineChoice] = [.google, .duckDuckGo, .bing, .kagi, .custom]
 
     /// Engine choice (browser-2a7). Restart-only by nature -- see
     /// EnginePreference's own doc comment.
@@ -92,6 +132,14 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             modePopup.selectItem(at: index)
         }
         updateHelpText(for: current)
+
+        if let index = Self.searchEngineOrder.firstIndex(of: SearchEnginePreference.choice) {
+            searchEnginePopup.selectItem(at: index)
+        }
+        customTemplateField.stringValue = SearchEnginePreference.customTemplate
+        suggestionsCheckbox.state = SearchEnginePreference.suggestionsEnabled ? .on : .off
+        quickSiteCheckbox.state = SearchEnginePreference.quickSiteSearchEnabled ? .on : .off
+        updateSearchRow()
 
         let engine = EnginePreference.current
         if let index = Self.engineOrder.firstIndex(of: engine) {
@@ -204,8 +252,82 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         helpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(helpLabel)
 
+        // Search row (browser-0du): the engine popup and, beside it, the
+        // template field that only a custom engine uses -- one row rather
+        // than two, because the pane is already tall.
+        let searchLabelY = helpY - rowGap - labelHeight
+        let searchLabel = NSTextField(labelWithString: "Search engine:")
+        searchLabel.frame = NSRect(x: margin, y: searchLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
+        searchLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(searchLabel)
+
+        let searchPopupY = searchLabelY - 6 - rowHeight
+        searchEnginePopup.frame = NSRect(x: margin, y: searchPopupY, width: 200, height: rowHeight)
+        searchEnginePopup.autoresizingMask = [.maxXMargin, .minYMargin]
+        for choice in Self.searchEngineOrder {
+            searchEnginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: choice), action: nil, keyEquivalent: ""))
+        }
+        searchEnginePopup.target = self
+        searchEnginePopup.action = #selector(searchEngineChanged)
+        view.addSubview(searchEnginePopup)
+
+        customTemplateField.frame = NSRect(
+            x: margin + 208, y: searchPopupY, width: Self.customTemplateFieldWidth, height: rowHeight
+        )
+        customTemplateField.autoresizingMask = [.maxXMargin, .minYMargin]
+        customTemplateField.placeholderString = "https://example.com/search?q={searchTerms}"
+        customTemplateField.target = self
+        customTemplateField.action = #selector(customTemplateCommitted)
+        customTemplateField.delegate = self
+        view.addSubview(customTemplateField)
+
+        let searchHelpY = searchPopupY - rowGap - Self.searchHelpHeight
+        searchHelpLabel.frame = NSRect(
+            x: margin, y: searchHelpY, width: view.bounds.width - margin * 2, height: Self.searchHelpHeight
+        )
+        searchHelpLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(searchHelpLabel)
+
+        let suggestionsY = searchHelpY - rowGap - Self.checkboxHeight
+        suggestionsCheckbox.frame = NSRect(
+            x: margin, y: suggestionsY, width: view.bounds.width - margin * 2, height: Self.checkboxHeight
+        )
+        suggestionsCheckbox.autoresizingMask = [.width, .minYMargin]
+        suggestionsCheckbox.setButtonType(.switch)
+        suggestionsCheckbox.title = "Show search suggestions"
+        suggestionsCheckbox.target = self
+        suggestionsCheckbox.action = #selector(suggestionsToggled)
+        view.addSubview(suggestionsCheckbox)
+
+        let suggestionsHelpY = suggestionsY - 6 - Self.suggestionsHelpHeight
+        suggestionsHelpLabel.frame = NSRect(
+            x: margin + 18, y: suggestionsHelpY,
+            width: view.bounds.width - margin * 2 - 18, height: Self.suggestionsHelpHeight
+        )
+        suggestionsHelpLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(suggestionsHelpLabel)
+
+        let quickSiteY = suggestionsHelpY - rowGap - Self.checkboxHeight
+        quickSiteCheckbox.frame = NSRect(
+            x: margin, y: quickSiteY, width: view.bounds.width - margin * 2, height: Self.checkboxHeight
+        )
+        quickSiteCheckbox.autoresizingMask = [.width, .minYMargin]
+        quickSiteCheckbox.setButtonType(.switch)
+        quickSiteCheckbox.title = "Quick Website Search"
+        quickSiteCheckbox.target = self
+        quickSiteCheckbox.action = #selector(quickSiteToggled)
+        view.addSubview(quickSiteCheckbox)
+
+        let quickSiteHelpY = quickSiteY - 6 - Self.quickSiteHelpHeight
+        quickSiteHelpLabel.frame = NSRect(
+            x: margin + 18, y: quickSiteHelpY,
+            width: view.bounds.width - margin * 2 - 18, height: Self.quickSiteHelpHeight
+        )
+        quickSiteHelpLabel.autoresizingMask = [.width, .minYMargin]
+        view.addSubview(quickSiteHelpLabel)
+
         // Engine row, same top-down shape as the omnibox row above it.
-        let engineLabelY = helpY - rowGap - labelHeight
+        let engineLabelY = quickSiteHelpY - rowGap - labelHeight
         let engineLabel = NSTextField(labelWithString: "Rendering engine:")
         engineLabel.frame = NSRect(x: margin, y: engineLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
         engineLabel.autoresizingMask = [.width, .minYMargin]
@@ -275,6 +397,81 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let mode = OmniboxDisplayMode.allCases[index]
         OmniboxDisplayPreference.current = mode
         updateHelpText(for: mode)
+    }
+
+    // MARK: - Search (browser-0du)
+
+    private static func title(for choice: SearchEngineChoice) -> String {
+        SearchEngine.builtIn(choice)?.name ?? "Custom\u{2026}"
+    }
+
+    @objc private func searchEngineChanged() {
+        let index = searchEnginePopup.indexOfSelectedItem
+        guard Self.searchEngineOrder.indices.contains(index) else { return }
+        SearchEnginePreference.choice = Self.searchEngineOrder[index]
+        updateSearchRow()
+    }
+
+    /// Commits the custom template, rewriting the field to the trimmed form
+    /// that was actually stored. An unusable template is stored as typed
+    /// rather than discarded -- a half-finished URL shouldn't vanish on
+    /// focus loss -- and `SearchEnginePreference.current` falls back to the
+    /// default engine for exactly that state, so searching still works.
+    @objc private func customTemplateCommitted() {
+        SearchEnginePreference.customTemplate =
+            customTemplateField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        customTemplateField.stringValue = SearchEnginePreference.customTemplate
+        updateSearchRow()
+    }
+
+    @objc private func suggestionsToggled() {
+        SearchEnginePreference.suggestionsEnabled = suggestionsCheckbox.state == .on
+        updateSearchRow()
+    }
+
+    @objc private func quickSiteToggled() {
+        SearchEnginePreference.quickSiteSearchEnabled = quickSiteCheckbox.state == .on
+        updateSearchRow()
+    }
+
+    /// Keeps the whole search block consistent with the current choice: the
+    /// template field only matters for a custom engine, suggestions are only
+    /// offered by an engine that has an endpoint for them, and the help text
+    /// either explains the selection or warns that the template is unusable.
+    private func updateSearchRow() {
+        let choice = SearchEnginePreference.choice
+        let isCustom = choice == .custom
+        // Hidden rather than merely disabled: a greyed-out field carrying a
+        // placeholder still reads as something to fill in, and there is
+        // nothing to fill in until Custom is the selection.
+        customTemplateField.isHidden = !isCustom
+
+        let typed = customTemplateField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isUnusable = isCustom && !SearchEngine.isValidTemplate(typed)
+        let engine = SearchEnginePreference.current
+
+        if isUnusable {
+            searchHelpLabel.textColor = .systemRed
+            searchHelpLabel.stringValue = typed.isEmpty
+                ? "Enter the site\u{2019}s search address with \u{201c}{searchTerms}\u{201d} where your search goes. Until then, searches use \(SearchEngine.default.name)."
+                : "\u{201c}\(typed)\u{201d} can\u{2019}t be used: it needs to be an http or https address containing \u{201c}{searchTerms}\u{201d}. Searches use \(SearchEngine.default.name) until it is."
+        } else {
+            searchHelpLabel.textColor = .secondaryLabelColor
+            searchHelpLabel.stringValue = "Anything you type in the address bar that isn\u{2019}t a web address is searched with \(engine.name)."
+        }
+
+        // An engine with no suggestion endpoint (a custom one, in practice)
+        // can't offer suggestions at all, so the toggle says so rather than
+        // appearing to work and doing nothing.
+        let canSuggest = engine.suggestURL(for: "test") != nil
+        suggestionsCheckbox.isEnabled = canSuggest
+        if canSuggest {
+            suggestionsHelpLabel.stringValue = "Off by default. When on, what you type in the address bar is sent to \(engine.name) as you type it, so it can suggest completions. Nothing is sent from a Private window, and nothing is sent when this is off. Suggestion requests carry no cookies, so they aren\u{2019}t tied to any account you\u{2019}re signed in to."
+        } else {
+            suggestionsHelpLabel.stringValue = "A custom search engine can\u{2019}t offer suggestions \u{2014} there\u{2019}s no way to find its suggestion address. Choose a built-in engine to use this."
+        }
+
+        quickSiteHelpLabel.stringValue = "Search a site a couple of times and its name becomes a keyword: type \u{201c}wikipedia swift\u{201d} to search Wikipedia directly. Keywords come from your history and never leave your Mac."
     }
 
     // MARK: - New windows / homepage (browser-m0x)
@@ -356,7 +553,8 @@ extension GeneralPaneController: NSTextFieldDelegate {
     /// then abandoned by clicking elsewhere in Settings is still what the
     /// user meant.
     func controlTextDidEndEditing(_ obj: Notification) {
-        guard (obj.object as? NSTextField) === homepageField else { return }
-        homepageCommitted()
+        let field = obj.object as? NSTextField
+        if field === homepageField { homepageCommitted() }
+        if field === customTemplateField { customTemplateCommitted() }
     }
 }

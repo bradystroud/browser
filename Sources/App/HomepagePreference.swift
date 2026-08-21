@@ -103,11 +103,11 @@ enum HomepagePreference {
     /// Turns what the user typed into a URL worth navigating to, or nil if
     /// it isn't one. Deliberately *not* a search fallback: the omnibox turns
     /// "hello world" into a DuckDuckGo query (see BrowserWindowController's
-    /// `resolveOmniboxSubmission`), but a homepage silently becoming a search
+    /// `OmniboxSubmission.resolve`), but a homepage silently becoming a search
     /// for its own text is a setting behaving as though it were accepted when
     /// it wasn't. Rejecting it is what lets the field say so.
     ///
-    /// The scheme-less rule is `resolveOmniboxSubmission`'s own, on purpose,
+    /// The scheme-less rule is `OmniboxSubmission.resolve`'s own, on purpose,
     /// so "example.org" means the same thing typed into either place.
     static func normalized(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
