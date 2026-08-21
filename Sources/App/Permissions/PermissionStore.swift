@@ -36,7 +36,27 @@ final class PermissionStore {
             decisions = [:]
             return
         }
-        decisions = decoded
+        // Normalized on the way in as well as on the way through, so a file
+        // written before this normalization existed keeps working: its keys
+        // are folded to the same shape here, and the next save writes them
+        // back in that shape. Sorted first only so a file that somehow holds
+        // two spellings of one origin merges the same way every launch
+        // rather than in whatever order the dictionary happens to iterate.
+        decisions = [:]
+        for origin in decoded.keys.sorted() {
+            decisions[Self.normalized(origin)] = (decisions[Self.normalized(origin)] ?? [:])
+                .merging(decoded[origin] ?? [:]) { _, new in new }
+        }
+    }
+
+    /// One spelling per origin. Chromium hands permission requests to this
+    /// app as a GURL spec ("https://example.com/"), while anything building
+    /// an origin from a URL's own components naturally writes it without the
+    /// trailing slash -- two keys, one site, and a remembered "allow" that
+    /// silently stops being found. Case follows: hosts are case-insensitive.
+    private static func normalized(_ origin: String) -> String {
+        let lowered = origin.lowercased()
+        return lowered.hasSuffix("/") ? String(lowered.dropLast()) : lowered
     }
 
     private func save() {
@@ -60,7 +80,7 @@ final class PermissionStore {
     /// to resolve, rather than guessing which way the whole batch should go.
     func decision(for origin: String, kinds: EnginePermissionKind) -> Bool? {
         let keys = Self.keys(for: kinds)
-        guard !keys.isEmpty, let originDecisions = decisions[origin] else { return nil }
+        guard !keys.isEmpty, let originDecisions = decisions[Self.normalized(origin)] else { return nil }
         let values = keys.compactMap { originDecisions[$0] }
         guard values.count == keys.count else { return nil }
         if values.allSatisfy({ $0 }) { return true }
@@ -73,11 +93,12 @@ final class PermissionStore {
     /// bundled, so a later single-kind request (e.g. camera alone, after
     /// camera+microphone were granted together) doesn't re-prompt either.
     func setDecision(_ allowed: Bool, for origin: String, kinds: EnginePermissionKind) {
-        var originDecisions = decisions[origin] ?? [:]
-        for key in Self.keys(for: kinds) {
-            originDecisions[key] = allowed
+        let key = Self.normalized(origin)
+        var originDecisions = decisions[key] ?? [:]
+        for kindKey in Self.keys(for: kinds) {
+            originDecisions[kindKey] = allowed
         }
-        decisions[origin] = originDecisions
+        decisions[key] = originDecisions
         save()
     }
 
@@ -110,12 +131,13 @@ final class PermissionStore {
     /// touching its other permissions. Drops the origin's entry entirely
     /// once it has no decisions left, keeping the persisted file tidy.
     func removeDecision(origin: String, kind: String) {
-        guard var originDecisions = decisions[origin] else { return }
+        let key = Self.normalized(origin)
+        guard var originDecisions = decisions[key] else { return }
         originDecisions.removeValue(forKey: kind)
         if originDecisions.isEmpty {
-            decisions.removeValue(forKey: origin)
+            decisions.removeValue(forKey: key)
         } else {
-            decisions[origin] = originDecisions
+            decisions[key] = originDecisions
         }
         save()
     }
