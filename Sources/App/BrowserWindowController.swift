@@ -1503,7 +1503,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         guard let tab = activeTab, let host = URL(string: tab.urlString)?.host else { return }
         contentBlockerPopover.toggle(
             anchorView: contentBlockerButton, profileId: profile.id, host: host,
-            blockedCount: tab.blockedRequestCount, isPrivate: isPrivate
+            blockedCount: tab.blockedRequestCount,
+            // Passing the tracker set is what lets the popover NAME what it
+            // blocked, and count trackers rather than requests (browser-e7r).
+            // Without it the popover falls back to reporting requests, which is
+            // honest but far less useful.
+            trackerDomains: tab.blockedTrackerDomains,
+            isPrivate: isPrivate
         )
     }
 

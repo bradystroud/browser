@@ -127,6 +127,9 @@ set(BROWSER_SWIFT_SRCS
   Blocking/ThreatListCoordinator.swift
   Blocking/PrivacyPaneController.swift
   Blocking/ContentBlockerToolbarController.swift
+  Blocking/TrackerReportRecorder.swift
+  Blocking/TrackerReportCoordinator.swift
+  Blocking/PrivacyReportWindowController.swift
   SiteSettings/SiteSettingsStore.swift
   SiteSettings/SiteSettingsSheetController.swift
   SiteSettings/SiteSettingsEnforcer.swift
@@ -199,6 +202,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ReadingListStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/TrackerReportStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistoryReader.swift
