@@ -11,6 +11,14 @@ final class ProfileDataStores {
         history = HistoryStore(database: database)
         bookmarks = BookmarkStore(database: database)
         downloads = DownloadStore(database: database)
+        // Any download row still non-terminal on disk belongs to a previous
+        // run -- the app was quit or killed mid-transfer, and nothing will
+        // ever finish it (browser-s24). This is the one moment that is
+        // provably safe to say so: a profile's stores are built lazily, on
+        // first use, which for downloads is the store lookup inside
+        // DownloadCoordinator.beginDownload -- i.e. always before this run's
+        // first row exists, and only ever once per profile per run.
+        try? downloads.reconcileUnfinished()
     }
 }
 

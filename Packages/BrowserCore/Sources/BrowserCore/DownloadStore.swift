@@ -81,6 +81,59 @@ public final class DownloadStore {
         }
     }
 
+    /// Rewinds an existing row to the start of a fresh attempt at the same
+    /// download: progress back to zero, state back to `pending`, and the
+    /// destination path replaced (a retry resolves its own unique filename,
+    /// which need not be the one the first attempt picked).
+    ///
+    /// This exists because a retry is not a new download. Chromium restarts an
+    /// interrupted transfer through the same download item and reports it as
+    /// the same id, so the alternative -- inserting a second row -- leaves the
+    /// first one stranded in a non-terminal state with no way to ever finish
+    /// it (browser-s24: one failed download produced six rows, five of them
+    /// permanently "downloading"). `started_at` deliberately survives: the
+    /// download started when the user asked for it, not when the engine gave
+    /// up and tried again.
+    public func restart(id: Int64, destinationPath: String, at date: Date = Date()) throws {
+        try database.perform { db in
+            let stmt = try db.prepare("""
+                UPDATE downloads
+                SET state = ?, received_bytes = 0, total_bytes = -1,
+                    destination_path = ?, updated_at = ?, completed_at = NULL
+                WHERE id = ?;
+                """)
+            try stmt.bind(DownloadState.pending.rawValue, at: 1)
+            try stmt.bind(destinationPath, at: 2)
+            try stmt.bind(Self.epochMs(date), at: 3)
+            try stmt.bind(id, at: 4)
+            try stmt.step()
+        }
+    }
+
+    /// Marks every row still in a non-terminal state as `interrupted`,
+    /// returning how many were changed.
+    ///
+    /// Call once per database connection, at startup, before any new download
+    /// can be recorded. A `pending`/`inProgress` row that is already on disk
+    /// when the process starts belongs to a transfer no longer running --
+    /// nothing can ever move it to a terminal state, so left alone it shows as
+    /// downloading forever (browser-s24). Received bytes are left as they are:
+    /// they still describe what actually landed on disk.
+    @discardableResult
+    public func reconcileUnfinished(at date: Date = Date()) throws -> Int {
+        try database.perform { db in
+            let stmt = try db.prepare("""
+                UPDATE downloads
+                SET state = ?, updated_at = ?
+                WHERE state IN ('pending', 'inProgress');
+                """)
+            try stmt.bind(DownloadState.interrupted.rawValue, at: 1)
+            try stmt.bind(Self.epochMs(date), at: 2)
+            try stmt.step()
+            return Int(db.changes)
+        }
+    }
+
     public func item(id: Int64) throws -> DownloadItem? {
         try database.perform { db in
             let stmt = try db.prepare("""

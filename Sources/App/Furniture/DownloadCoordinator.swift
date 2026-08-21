@@ -49,8 +49,26 @@ final class DownloadCoordinator {
 
     var hasSessionDownloads: Bool { !startedRowIds.isEmpty }
 
+    /// Records the start of a download -- or, when the engine is retrying one
+    /// it already reported, rewinds the row that download already has.
+    ///
+    /// A retry is not a new download. Chromium restarts an interrupted
+    /// transfer by re-entering OnBeforeDownload with the *same*
+    /// CefDownloadItem, so `info.downloadId` is unchanged (measured: one
+    /// interrupted transfer re-entered five times, all reporting id 1).
+    /// Inserting a row per call therefore produced six rows for one file, five
+    /// of them stranded at "downloading" forever, because progress updates
+    /// only ever reach the row this mapping currently points at (browser-s24).
     func beginDownload(profile: Profile, info: TabDownloadStart) {
         let store = ProfileDataStoreManager.shared.stores(for: profile).downloads
+        if let existing = rowsByDownloadId[info.downloadId], existing.profileId == profile.id {
+            try? store.restart(id: existing.rowId, destinationPath: info.destinationPath)
+            // .downloadsDidChange, but deliberately not .downloadDidStart: a
+            // retry must not re-present the toolbar popover the user may have
+            // just dismissed (five times over, for the failure above).
+            NotificationCenter.default.post(name: .downloadsDidChange, object: profile.id)
+            return
+        }
         guard let rowId = try? store.create(
             url: info.url,
             suggestedName: info.suggestedName,

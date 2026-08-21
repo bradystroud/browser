@@ -146,6 +146,19 @@ final class Tab: NSObject, EngineTabDelegate {
     /// "no feedback until it's loaded, then it jumps"). See displayTitle.
     private(set) var hasFreshTitle = true
 
+    /// The last URL that actually committed as a page in this tab, and
+    /// whether `engineURLString` is that URL (as opposed to somewhere this
+    /// tab was merely *pointed* at, which the engine may never load).
+    ///
+    /// `engineURLString` is written optimistically -- at init, and again on
+    /// every load(url:) -- because the omnibox and tab strip have to show the
+    /// destination the instant the user asks for it. A URL that resolves to a
+    /// download never commits, so without these two the tab is left parked on
+    /// a file URL it never displayed (browser-7ol). See
+    /// revertNavigationThatBecameADownload().
+    private var lastCommittedURL: String?
+    private var isCurrentURLCommitted = false
+
     /// What the tab strip/toolbar should show as this tab's title right now
     /// (browser-7z5) -- the real title once one has arrived for the current
     /// navigation, otherwise the target host as a placeholder. Falls back to
@@ -375,6 +388,7 @@ final class Tab: NSObject, EngineTabDelegate {
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
+        isCurrentURLCommitted = false
         // Set synchronously rather than waiting for the page's own title
         // event to round-trip back from CEF -- anything reading `title`
         // directly (not just `displayTitle`, which already guards on
@@ -695,6 +709,14 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidCommitNavigation(_ url: String) {
+        // Recorded before the start-page guard below: the point of these two
+        // is to know whether what the tab is showing is a real, committed page
+        // (see revertNavigationThatBecameADownload), and the start page is one.
+        // It is nil rather than its own address, though: the start page's
+        // giant data: URL is never something to *put back* into the omnibox --
+        // reverting to it means rendering the start page again.
+        lastCommittedURL = isShowingStartPage ? nil : url
+        isCurrentURLCommitted = true
         // The start page's own data: URL "navigation" isn't a real visit --
         // skip favicon/theme-color derivation and (most importantly) the
         // history-recording delegate call for it.
@@ -781,8 +803,51 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidBeginDownload(id downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
+        revertNavigationThatBecameADownload(downloadURL: url)
         delegate?.tab(self, didBeginDownload: TabDownloadStart(
             downloadId: downloadId, url: url, suggestedName: suggestedName, destinationPath: destinationPath))
+    }
+
+    /// Undoes a navigation that turned out to be a download rather than a
+    /// page, so this tab is not left parked on the file's URL (browser-7ol).
+    ///
+    /// Such a navigation never commits and never renders anything, but
+    /// `engineURLString` was already written optimistically when the load was
+    /// requested, so the tab keeps showing a URL it never displayed -- and,
+    /// worse, that URL goes into session.json and is re-navigated on the next
+    /// launch, silently downloading the file a second time with no user
+    /// action. Reverting here fixes both: there is no dead tab, and what gets
+    /// persisted is the page the tab is really on.
+    ///
+    /// Two conditions keep this off downloads that a live page started (a
+    /// clicked link, a scripted download): the file's URL must be the very URL
+    /// this tab was pointed at, and that URL must never have committed. A
+    /// download from a real page fails both -- the engine leaves the address
+    /// alone for it, exactly as Chrome does.
+    private func revertNavigationThatBecameADownload(downloadURL: String) {
+        guard !isShowingStartPage, !isCurrentURLCommitted, downloadURL == engineURLString else { return }
+        pendingNavigationURL = nil
+        if let lastCommittedURL, lastCommittedURL != engineURLString {
+            // This tab was showing a real page and was sent to the file URL
+            // from there (typed, or opened by the CLI). The engine never left
+            // that page, so putting the address back is all that's needed --
+            // no reload, and `title` still holds that page's own title.
+            engineURLString = lastCommittedURL
+            isCurrentURLCommitted = true
+            hasFreshTitle = true
+        } else {
+            // Nothing was ever displayed here: the tab was opened for this URL
+            // alone. It becomes an ordinary new tab rather than being closed,
+            // which would otherwise mean closing the window when it was the
+            // only tab -- a download must not take a window down with it.
+            load(url: Self.blankPageSentinel)
+        }
+        delegate?.tabDidChangeDisplayState(self)
+        // tabDidChangeDisplayState is a redraw signal, not a persistence one,
+        // and no other event follows a download -- so without this the stale
+        // URL can sit in session.json until some unrelated change happens to
+        // trigger a save, which is precisely the state that re-downloads.
+        WindowManager.shared.scheduleSessionSave()
     }
 
     func engineTabDidUpdateDownload(id downloadId: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool) {
