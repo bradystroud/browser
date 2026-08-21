@@ -28,6 +28,9 @@ final class TrackerReportCoordinator: NSObject, TrackerReportSink {
     /// silently lost.
     func start() {
         TrackerReportRecorder.shared.sink = self
+        // Piggy-backs on this one start() so the report window's screenshot
+        // flag needs no launch wiring of its own. A no-op without the flag.
+        PrivacyReportWindowController.shared.registerAutoPresentIfRequested()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationWillTerminate),

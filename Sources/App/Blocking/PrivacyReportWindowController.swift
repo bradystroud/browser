@@ -24,14 +24,57 @@ import AppKit
 /// percentage whose denominator silently changes is worse than no
 /// percentage, so this shows the honest count of sites instead. Please do
 /// not "complete" the feature by adding it back.
-final class PrivacyReportWindowController: NSObject, NSWindowDelegate {
+final class PrivacyReportWindowController: NSObject, NSWindowDelegate, NSMenuItemValidation, TabLifecycleObserver {
     static let shared = PrivacyReportWindowController()
 
     private var window: NSWindow?
     private var profile: Profile?
 
+    /// Test-only launch flag: open the report by itself once a window
+    /// exists. Same reason SiteSettingsSheetController has one -- agents
+    /// working on this app may not drive its UI with synthetic clicks (see
+    /// AGENTS.md's UI verification protocol), and a window only reachable
+    /// from a menu and a popover is otherwise impossible to look at.
+    private static let autoPresentFlag = "--show-privacy-report"
+
+    private var hasAutoPresented = false
+
     private override init() {
         super.init()
+    }
+
+    /// Called once at launch from TrackerReportCoordinator. A no-op unless
+    /// the flag above was passed.
+    func registerAutoPresentIfRequested() {
+        guard CommandLine.arguments.contains(Self.autoPresentFlag) else { return }
+        TabLifecycleCenter.shared.addObserver(self)
+    }
+
+    /// Menu entry point, resolving the front window's profile itself so the
+    /// item can be targeted straight at this singleton -- same shape as
+    /// SiteSettingsSheetController.showFromMenu.
+    @objc func showFromMenu(_ sender: Any?) {
+        guard let controller = WindowManager.shared.keyBrowserWindowController else { return }
+        show(for: controller.profile)
+    }
+
+    /// Enabled whenever there is a real profile to report on.
+    ///
+    /// Deliberately NOT disabled for an empty report: "nothing blocked yet"
+    /// is a legitimate and reassuring thing to open, and a greyed-out item
+    /// would read as broken rather than as good news.
+    ///
+    /// Disabled in a private window, which is the one genuinely meaningless
+    /// case: that window's profile is a throwaway (see
+    /// WindowManager.openNewPrivateWindow) and nothing is ever recorded for
+    /// it, so the report could only ever be empty -- and showing an empty
+    /// report there would imply private browsing had been examined and found
+    /// clean, rather than never watched at all. The shield popover in a
+    /// private window says so in words, which is where the explanation
+    /// belongs.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard let controller = WindowManager.shared.keyBrowserWindowController else { return false }
+        return !controller.isPrivate
     }
 
     func show(for profile: Profile) {
@@ -55,6 +98,14 @@ final class PrivacyReportWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+    }
+
+    // MARK: - TabLifecycleObserver (screenshot flag only)
+
+    func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+        guard case .finishedLoading = event, !hasAutoPresented, !controller.isPrivate else { return }
+        hasAutoPresented = true
+        show(for: controller.profile)
     }
 
     /// Clearing is destructive and unrecoverable, so it asks first -- the one
@@ -138,27 +189,33 @@ private final class PrivacyReportViewController: NSViewController {
 
     // MARK: - Pieces
 
+    /// Leads with the PROFILE, not the words "Privacy Report" -- the window
+    /// title bar already says that, and repeating it inside the window wastes
+    /// the one line the reader looks at first. Which profile's report this is
+    /// is the thing that genuinely needs saying, since every profile has its
+    /// own and they never mix.
     private func headerView() -> NSView {
-        let title = NSTextField(labelWithString: "Privacy Report")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
         let dot = ProfileDotView(colorHex: profile.colorHex)
         dot.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: 10),
-            dot.heightAnchor.constraint(equalToConstant: 10),
+            dot.widthAnchor.constraint(equalToConstant: 12),
+            dot.heightAnchor.constraint(equalToConstant: 12),
         ])
 
-        let subtitle = NSTextField(labelWithString: "\(profile.name) · last \(TrackerReportStore.retentionDays) days")
+        let title = NSTextField(labelWithString: profile.name)
+        title.font = .systemFont(ofSize: 22, weight: .semibold)
+        title.lineBreakMode = .byTruncatingTail
+
+        let titleRow = NSStackView(views: [dot, title])
+        titleRow.orientation = .horizontal
+        titleRow.spacing = 8
+        titleRow.alignment = .centerY
+
+        let subtitle = NSTextField(labelWithString: "Last \(TrackerReportStore.retentionDays) days")
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = .secondaryLabelColor
 
-        let subtitleRow = NSStackView(views: [dot, subtitle])
-        subtitleRow.orientation = .horizontal
-        subtitleRow.spacing = 5
-        subtitleRow.alignment = .centerY
-
-        let stack = NSStackView(views: [title, subtitleRow])
+        let stack = NSStackView(views: [titleRow, subtitle])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
@@ -187,9 +244,14 @@ private final class PrivacyReportViewController: NSViewController {
         let tile = NSView()
         tile.wantsLayer = true
         tile.layer?.cornerRadius = 10
+        // Derived from labelColor rather than a fixed grey: labelColor flips
+        // with the system appearance, so one alpha gives a subtle fill on a
+        // dark window and on a light one. quaternaryLabelColor is already
+        // heavily transparent, and compositing a second alpha over it renders
+        // as a solid slab in dark mode rather than a tint.
         tile.layer?.backgroundColor = (tinted
-            ? NSColor.controlAccentColor.withAlphaComponent(0.14)
-            : NSColor.quaternaryLabelColor.withAlphaComponent(0.35)).cgColor
+            ? NSColor.controlAccentColor.withAlphaComponent(0.16)
+            : NSColor.labelColor.withAlphaComponent(0.07)).cgColor
 
         let number = NSTextField(labelWithString: Self.decimal(value))
         number.font = .systemFont(ofSize: 26, weight: .medium)
@@ -262,7 +324,7 @@ private final class PrivacyReportViewController: NSViewController {
         let track = NSView()
         track.wantsLayer = true
         track.layer?.cornerRadius = 3
-        track.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.3).cgColor
+        track.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.1).cgColor
         track.translatesAutoresizingMaskIntoConstraints = false
 
         let fill = NSView()
@@ -304,8 +366,11 @@ private final class PrivacyReportViewController: NSViewController {
         let title = NSTextField(labelWithString: "Nothing blocked yet")
         title.font = .systemFont(ofSize: 13, weight: .medium)
 
+        // The private-window caveat lives in the footer, which is on screen
+        // in this state too -- saying it twice in a window this small reads
+        // as nagging rather than as reassurance.
         let body = NSTextField(wrappingLabelWithString:
-            "Trackers this profile blocks will be listed here. Private windows are never included, by design.")
+            "Trackers blocked in this profile will be listed here.")
         body.font = .systemFont(ofSize: 11)
         body.textColor = .secondaryLabelColor
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -412,7 +477,7 @@ private final class TrackerReportChartView: NSView {
                 height: height
             )
             let color = count == 0
-                ? NSColor.quaternaryLabelColor.withAlphaComponent(0.4)
+                ? NSColor.labelColor.withAlphaComponent(0.18)
                 : NSColor.controlAccentColor.withAlphaComponent(0.85)
             color.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
