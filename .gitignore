@@ -8,6 +8,12 @@ DerivedData/
 .DS_Store
 xcuserdata/
 RoutingCore/.build/
+# Every SwiftPM package under Packages/ builds into its own .build/.
+# Ignored by pattern rather than one line per package: a new package is
+# added roughly every feature now, and the failure mode of forgetting is
+# thousands of build artifacts swept into a commit by an explicit-path
+# `git add Packages/<name>/`.
+.build/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

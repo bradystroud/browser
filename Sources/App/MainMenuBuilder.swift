@@ -116,6 +116,19 @@ final class MainMenuBuilder {
         )
         siteSettingsItem.keyEquivalentModifierMask = [.command, .option]
         siteSettingsItem.target = SiteSettingsSheetController.shared
+        // Safari keeps its own Privacy Report in this menu too. No key
+        // equivalent: Safari assigns none, and a report read occasionally
+        // doesn't earn a chord. Targeted at the controller singleton for the
+        // same reason the item above is -- its NSMenuItemValidation is what
+        // greys it out in a Private window, where nothing is ever recorded and
+        // an empty report would imply private browsing had been examined and
+        // found clean rather than never watched at all (browser-e7r).
+        let privacyReportItem = menu.addItem(
+            withTitle: "Privacy Report…",
+            action: #selector(PrivacyReportWindowController.showFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        privacyReportItem.target = PrivacyReportWindowController.shared
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Browser", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         menu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -303,8 +316,53 @@ final class MainMenuBuilder {
         historyMenu.addItem(withTitle: "Back", action: #selector(BrowserWindowController.goBackAction(_:)), keyEquivalent: "\u{F702}")
         historyMenu.addItem(withTitle: "Forward", action: #selector(BrowserWindowController.goForwardAction(_:)), keyEquivalent: "\u{F703}")
         historyMenu.addItem(.separator())
+        // ⇧⌘T, the chord every mainstream browser uses for this (browser-n2j).
+        historyMenu.addItem(
+            withTitle: "Reopen Last Closed Tab",
+            action: #selector(BrowserWindowController.reopenLastClosedItem(_:)),
+            keyEquivalent: "t"
+        ).keyEquivalentModifierMask = [.command, .shift]
+        let recentlyClosedItem = NSMenuItem(title: "Recently Closed", action: nil, keyEquivalent: "")
+        recentlyClosedItem.submenu = recentlyClosedMenu
+        historyMenu.addItem(recentlyClosedItem)
+        historyMenu.addItem(.separator())
         historyMenu.addItem(withTitle: "Show All History…", action: #selector(BrowserWindowController.showHistory(_:)), keyEquivalent: "y")
         historyMenuStaticCount = historyMenu.items.count
+    }
+
+    /// The Recently Closed submenu (browser-n2j). Rebuilt from the store each
+    /// time the key window changes, like the recent-history section below.
+    ///
+    /// Item tags are positions within THIS profile's own filtered list, which
+    /// is the same list ClosedItemStore.take(at:profileId:) counts in -- so
+    /// "the second item in my Work menu" can never resolve to whatever
+    /// happens to sit at index 2 of the interleaved all-profiles stack.
+    private let recentlyClosedMenu = NSMenu()
+
+    func rebuildRecentlyClosed(for profile: Profile) {
+        recentlyClosedMenu.removeAllItems()
+        let items = ClosedItemStore.shared.recentItems(profileId: profile.id)
+        guard !items.isEmpty else {
+            let empty = recentlyClosedMenu.addItem(withTitle: "Nothing Recently Closed", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            return
+        }
+        for (position, item) in items.enumerated() {
+            let title: String
+            switch item {
+            case .tab(let closed):
+                title = closed.tab.title.isEmpty ? closed.tab.url : closed.tab.title
+            case .window(let closed):
+                let count = closed.tabs.count
+                title = "Window — \(count) tab\(count == 1 ? "" : "s")"
+            }
+            let menuItem = recentlyClosedMenu.addItem(
+                withTitle: title,
+                action: #selector(BrowserWindowController.reopenRecentlyClosed(_:)),
+                keyEquivalent: ""
+            )
+            menuItem.tag = position
+        }
     }
 
     /// Rebuilds the History menu's recent-items section for `profile` --

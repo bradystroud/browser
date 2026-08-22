@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] notification in
             guard let self, let controller = (notification.object as? NSWindow)?.windowController as? BrowserWindowController else { return }
             self.mainMenuBuilder.rebuildRecentHistory(for: controller.profile)
+            self.mainMenuBuilder.rebuildRecentlyClosed(for: controller.profile)
             self.mainMenuBuilder.rebuildBookmarksMenu(for: controller.profile)
         }
 

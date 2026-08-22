@@ -63,6 +63,7 @@ set(BROWSER_SWIFT_SRCS
   TabGroupPrompt.swift
   WindowManager.swift
   SessionStore.swift
+  ClosedItemStore.swift
   ShortcutsHelp.swift
   ShortcutsOverlayController.swift
   ShortcutsOverlayPanelFactory.swift
@@ -312,6 +313,20 @@ set(BROWSER_SEARCH_CORE_SRCS
   )
 source_group(SearchCore FILES ${BROWSER_SEARCH_CORE_SRCS})
 
+# SessionCore holds the persisted session model (SessionSnapshot) and the
+# closed-tab/window stack behind Cmd-Shift-T (browser-n2j). SessionSnapshot
+# moved here from Sources/App/SessionStore.swift verbatim so the stack can be
+# covered by `swift test` while still reusing the one session record rather
+# than inventing a second shape for it -- SessionStore itself stays in the app,
+# since it needs CommandLineArgs for its --profiles-root-scoped directory.
+# Same "one copy of the logic, two ways to build it" reasoning as every
+# *_CORE_SRCS block above.
+set(BROWSER_SESSION_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/SessionSnapshot.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/ClosedItemStack.swift
+  )
+source_group(SessionCore FILES ${BROWSER_SESSION_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
@@ -322,6 +337,7 @@ set(BROWSER_SRCS
   ${BROWSER_WEBENGINE_CORE_SRCS}
   ${BROWSER_CLI_PROTOCOL_SRCS}
   ${BROWSER_SEARCH_CORE_SRCS}
+  ${BROWSER_SESSION_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS

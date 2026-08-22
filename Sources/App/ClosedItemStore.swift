@@ -35,12 +35,12 @@ final class ClosedItemStore {
         }
     }
 
-    /// Records a closed tab or window. `isPrivate` is passed straight
-    /// through to `ClosedItemStack.record`, which is where the refusal
-    /// actually happens -- see that method for why the check lives at one
-    /// point of entry rather than at each caller.
-    func record(_ item: ClosedItem, isPrivate: Bool) {
-        guard stack.record(item, isPrivate: isPrivate) else { return }
+    /// Records a closed tab or window. The context is passed straight
+    /// through to `ClosedItemStack.record`, which is where a refusal
+    /// actually happens -- see `CloseContext` for what each flag protects
+    /// against and why neither has a default.
+    func record(_ item: ClosedItem, context: CloseContext) {
+        guard stack.record(item, context: context) else { return }
         scheduleSave()
     }
 

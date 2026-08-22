@@ -29,8 +29,8 @@ struct RecordingTests {
     @Test("the newest closed item comes back first")
     func newestFirst() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example"), isPrivate: false)
-        stack.record(closedTab("https://b.example"), isPrivate: false)
+        stack.record(closedTab("https://a.example"), context: .userClosed)
+        stack.record(closedTab("https://b.example"), context: .userClosed)
 
         let first = stack.popMostRecent(profileId: "p1")
         let second = stack.popMostRecent(profileId: "p1")
@@ -43,8 +43,8 @@ struct RecordingTests {
     @Test("the same page closed twice is remembered twice -- it happened twice")
     func noDeduplication() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example"), isPrivate: false)
-        stack.record(closedTab("https://a.example"), isPrivate: false)
+        stack.record(closedTab("https://a.example"), context: .userClosed)
+        stack.record(closedTab("https://a.example"), context: .userClosed)
 
         #expect(stack.items.count == 2)
     }
@@ -53,7 +53,7 @@ struct RecordingTests {
     func evictsOldest() {
         var stack = ClosedItemStack(capacity: 3)
         for index in 0..<5 {
-            stack.record(closedTab("https://\(index).example", at: TimeInterval(index)), isPrivate: false)
+            stack.record(closedTab("https://\(index).example", at: TimeInterval(index)), context: .userClosed)
         }
 
         #expect(stack.items.count == 3)
@@ -63,7 +63,7 @@ struct RecordingTests {
     @Test("a capacity below one is not allowed to produce a stack that cannot hold anything")
     func capacityFloor() {
         var stack = ClosedItemStack(capacity: 0)
-        let recorded = stack.record(closedTab("https://a.example"), isPrivate: false)
+        let recorded = stack.record(closedTab("https://a.example"), context: .userClosed)
         #expect(recorded)
         #expect(stack.items.count == 1)
     }
@@ -84,7 +84,7 @@ struct PrivacyTests {
     @Test("a tab closed in a private window is refused")
     func privateTabRefused() {
         var stack = ClosedItemStack()
-        let recorded = stack.record(closedTab("https://secret.example"), isPrivate: true)
+        let recorded = stack.record(closedTab("https://secret.example"), context: CloseContext(isPrivate: true, isShuttingDown: false))
         #expect(!recorded)
         #expect(stack.items.isEmpty)
     }
@@ -92,7 +92,7 @@ struct PrivacyTests {
     @Test("a private window is refused whole, tabs and all")
     func privateWindowRefused() {
         var stack = ClosedItemStack()
-        let recorded = stack.record(closedWindow(urls: ["https://a.example", "https://b.example"]), isPrivate: true)
+        let recorded = stack.record(closedWindow(urls: ["https://a.example", "https://b.example"]), context: CloseContext(isPrivate: true, isShuttingDown: false))
         #expect(!recorded)
         #expect(stack.items.isEmpty)
     }
@@ -100,8 +100,8 @@ struct PrivacyTests {
     @Test("refusing a private item leaves everything already recorded alone")
     func refusalIsNotDestructive() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example"), isPrivate: false)
-        stack.record(closedTab("https://secret.example"), isPrivate: true)
+        stack.record(closedTab("https://a.example"), context: .userClosed)
+        stack.record(closedTab("https://secret.example"), context: CloseContext(isPrivate: true, isShuttingDown: false))
 
         #expect(stack.items == [closedTab("https://a.example")])
     }
@@ -109,7 +109,7 @@ struct PrivacyTests {
     @Test("nothing private survives a round trip through the file, because it was never stored")
     func nothingPrivateIsEncoded() throws {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://secret.example"), isPrivate: true)
+        stack.record(closedTab("https://secret.example"), context: CloseContext(isPrivate: true, isShuttingDown: false))
 
         let data = try JSONEncoder().encode(stack)
         let json = String(decoding: data, as: UTF8.self)
@@ -122,13 +122,13 @@ struct WorthRememberingTests {
     @Test("only a real web address is remembered")
     func onlyHTTPTabs() {
         var stack = ClosedItemStack()
-        let https = stack.record(closedTab("https://a.example"), isPrivate: false)
-        let http = stack.record(closedTab("http://b.example"), isPrivate: false)
+        let https = stack.record(closedTab("https://a.example"), context: .userClosed)
+        let http = stack.record(closedTab("http://b.example"), context: .userClosed)
         // The start page reports an empty URL (see Tab.urlString), and a
         // data:/about: page has nothing to put back.
-        let blank = stack.record(closedTab(""), isPrivate: false)
-        let about = stack.record(closedTab("about:blank"), isPrivate: false)
-        let data = stack.record(closedTab("data:text/html,"), isPrivate: false)
+        let blank = stack.record(closedTab(""), context: .userClosed)
+        let about = stack.record(closedTab("about:blank"), context: .userClosed)
+        let data = stack.record(closedTab("data:text/html,"), context: .userClosed)
         #expect(https)
         #expect(http)
         #expect(!blank)
@@ -140,7 +140,7 @@ struct WorthRememberingTests {
     @Test("a window counts if any one of its tabs does, and keeps all of them")
     func windowWithOneRealTab() {
         var stack = ClosedItemStack()
-        let recorded = stack.record(closedWindow(urls: ["", "https://a.example"]), isPrivate: false)
+        let recorded = stack.record(closedWindow(urls: ["", "https://a.example"]), context: .userClosed)
         #expect(recorded)
 
         guard case .window(let closed)? = stack.items.first else {
@@ -155,7 +155,7 @@ struct WorthRememberingTests {
     @Test("a window of nothing but blank tabs is not worth a press of the shortcut")
     func windowWithNothingReal() {
         var stack = ClosedItemStack()
-        let recorded = stack.record(closedWindow(urls: ["", ""]), isPrivate: false)
+        let recorded = stack.record(closedWindow(urls: ["", ""]), context: .userClosed)
         #expect(!recorded)
         #expect(stack.items.isEmpty)
     }
@@ -166,8 +166,8 @@ struct ProfileScopingTests {
     @Test("reopening in one profile steps over another profile's entries without consuming them")
     func popSkipsOtherProfiles() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://work.example", profile: "work"), isPrivate: false)
-        stack.record(closedTab("https://home.example", profile: "home"), isPrivate: false)
+        stack.record(closedTab("https://work.example", profile: "work"), context: .userClosed)
+        stack.record(closedTab("https://home.example", profile: "home"), context: .userClosed)
 
         let popped = stack.popMostRecent(profileId: "work")
         #expect(popped == closedTab("https://work.example", profile: "work"))
@@ -178,7 +178,7 @@ struct ProfileScopingTests {
     @Test("a profile with nothing closed gets nothing back")
     func popEmptyProfile() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example", profile: "work"), isPrivate: false)
+        stack.record(closedTab("https://a.example", profile: "work"), context: .userClosed)
 
         let popped = stack.popMostRecent(profileId: "other")
         #expect(popped == nil)
@@ -188,9 +188,9 @@ struct ProfileScopingTests {
     @Test("picking a row out of the menu takes that row, counting within this profile only")
     func takeAtIndexIsProfileRelative() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://work-old.example", profile: "work"), isPrivate: false)
-        stack.record(closedTab("https://home.example", profile: "home"), isPrivate: false)
-        stack.record(closedTab("https://work-new.example", profile: "work"), isPrivate: false)
+        stack.record(closedTab("https://work-old.example", profile: "work"), context: .userClosed)
+        stack.record(closedTab("https://home.example", profile: "home"), context: .userClosed)
+        stack.record(closedTab("https://work-new.example", profile: "work"), context: .userClosed)
 
         // Index 1 in the "work" menu is work-old, even though it sits at
         // position 2 in the underlying stack with home's entry in between.
@@ -202,7 +202,7 @@ struct ProfileScopingTests {
     @Test("an index past the end of this profile's list gives back nothing")
     func takeAtOutOfRangeIndex() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example", profile: "work"), isPrivate: false)
+        stack.record(closedTab("https://a.example", profile: "work"), context: .userClosed)
 
         let tooFar = stack.take(at: 1, profileId: "work")
         let negative = stack.take(at: -1, profileId: "work")
@@ -216,9 +216,9 @@ struct ProfileScopingTests {
     @Test("the menu lists only this profile's entries, newest first, up to the limit")
     func recentItemsFiltersAndLimits() {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example", profile: "work"), isPrivate: false)
-        stack.record(closedTab("https://b.example", profile: "home"), isPrivate: false)
-        stack.record(closedTab("https://c.example", profile: "work"), isPrivate: false)
+        stack.record(closedTab("https://a.example", profile: "work"), context: .userClosed)
+        stack.record(closedTab("https://b.example", profile: "home"), context: .userClosed)
+        stack.record(closedTab("https://c.example", profile: "work"), context: .userClosed)
 
         #expect(stack.recentItems(profileId: "work").map(\.menuTitle) == ["https://c.example", "https://a.example"])
         #expect(stack.recentItems(profileId: "work", limit: 1).map(\.menuTitle) == ["https://c.example"])
@@ -251,9 +251,9 @@ struct PersistenceTests {
                 tab: SessionSnapshot.Tab(url: "https://a.example", title: "A", isPinned: true, groupId: group),
                 profileId: "p1", index: 3, closedAt: Date(timeIntervalSince1970: 1_700_000_000)
             )),
-            isPrivate: false
+            context: .userClosed
         )
-        stack.record(closedWindow(urls: ["https://b.example", "https://c.example"]), isPrivate: false)
+        stack.record(closedWindow(urls: ["https://b.example", "https://c.example"]), context: .userClosed)
 
         let data = try JSONEncoder().encode(stack)
         let decoded = try JSONDecoder().decode(ClosedItemStack.self, from: data)
@@ -271,7 +271,7 @@ struct PersistenceTests {
     @Test("the stored form names its kinds, so the file stays legible")
     func discriminatedForm() throws {
         var stack = ClosedItemStack()
-        stack.record(closedTab("https://a.example"), isPrivate: false)
+        stack.record(closedTab("https://a.example"), context: .userClosed)
 
         let json = String(decoding: try JSONEncoder().encode(stack), as: UTF8.self)
         #expect(json.contains("\"kind\""))
@@ -313,5 +313,35 @@ struct PersistenceTests {
     func emptyFile() throws {
         #expect(try JSONDecoder().decode(ClosedItemStack.self, from: Data("{}".utf8)).items.isEmpty)
         #expect(try JSONDecoder().decode(ClosedItemStack.self, from: Data(#"{"items":[]}"#.utf8)).items.isEmpty)
+    }
+}
+
+@Suite("Shutting down must not fill the stack")
+struct ClosedItemStackShutdownTests {
+    /// Quitting closes every window through the same path a deliberate close
+    /// uses. Without this guard, quitting with six windows open records six
+    /// "recently closed" entries -- so the first ⇧⌘T after relaunch reopens a
+    /// window session restore has *already* put back, and the tab the user
+    /// actually wanted is six presses down the stack. Passes every other test;
+    /// infuriating in daily use.
+    @Test("a window closed by shutdown is not recorded")
+    func shutdownCloseIsRefused() {
+        var stack = ClosedItemStack()
+        let recorded = stack.record(
+            closedWindow(urls: ["https://a.example", "https://b.example"]),
+            context: CloseContext(isPrivate: false, isShuttingDown: true)
+        )
+        #expect(recorded == false)
+        #expect(stack.popMostRecent(profileId: "default") == nil)
+    }
+
+    /// The two refusals are independent: neither flag alone may be trusted to
+    /// stand in for the other.
+    @Test("both flags are checked independently")
+    func flagsAreIndependent() {
+        #expect(CloseContext.userClosed.isRecordable)
+        #expect(CloseContext(isPrivate: true, isShuttingDown: false).isRecordable == false)
+        #expect(CloseContext(isPrivate: false, isShuttingDown: true).isRecordable == false)
+        #expect(CloseContext(isPrivate: true, isShuttingDown: true).isRecordable == false)
     }
 }

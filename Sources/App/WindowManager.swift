@@ -54,6 +54,23 @@ final class WindowManager {
     /// wires its close callback (dropping it from windowControllers and
     /// scheduling a session save so the persisted session reflects the
     /// closed window), activates the app, and shows it.
+    /// Reopens a window closed earlier in this session, or in a previous one
+    /// (browser-n2j). Goes through the same registerAndShow(restoring:) path
+    /// session restore uses, so a reopened window and a restored window are
+    /// built identically -- there is no second way to turn a saved window back
+    /// into a live one.
+    @discardableResult
+    func reopenClosedWindow(
+        profile: Profile,
+        tabs: [SessionSnapshot.Tab],
+        groups: [SessionSnapshot.Group],
+        activeIndex: Int
+    ) -> BrowserWindowController {
+        let controller = BrowserWindowController(profile: profile, initialURL: "about:blank")
+        registerAndShow(controller, restoring: tabs, groups: groups, activeIndex: activeIndex)
+        return controller
+    }
+
     private func registerAndShow(
         _ controller: BrowserWindowController,
         restoring tabs: [SessionSnapshot.Tab] = [],
@@ -130,11 +147,22 @@ final class WindowManager {
     /// -- is also what triggers CEF's own OnBeforeClose delivery for a
     /// windowed-rendering browser (see BRWClientHandler::DoClose's comment),
     /// so this is required for CEF's own sake too, not just to avoid the UAF.
+    /// True while closeAllWindowsForShutdown is tearing every window down, so
+    /// the recently-closed stack can refuse those closes (browser-n2j).
+    ///
+    /// Quitting closes every window through the same path a deliberate close
+    /// uses. Without this, quitting with six windows open records six
+    /// "recently closed" entries -- and the first ⇧⌘T after relaunch reopens a
+    /// window session restore has *already* put back, burying the tab the user
+    /// actually wanted six presses down. Never reset: the process is ending.
+    private(set) var isShuttingDown = false
+
     func closeAllWindowsForShutdown() {
         // Snapshot the still-fully-open state first -- closing each window
         // below tears down its tabs, and we want to persist what the user
         // actually had open, not whatever's left mid-teardown.
         saveSessionNow()
+        isShuttingDown = true
         for controller in windowControllers {
             controller.window?.close()
         }

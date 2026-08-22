@@ -1144,6 +1144,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         thumbnailCache.removeImage(for: tabs[index].id)
         tabs[index].close()
         let closedTab = tabs.remove(at: index)
+        // Remembered for ⇧⌘T before the early return below, for the same
+        // reason the lifecycle post is (browser-n2j). The stack itself decides
+        // whether this may be kept -- see CloseContext, which refuses private
+        // windows and shutdown teardown at one point of entry rather than
+        // trusting every caller to guard.
+        ClosedItemStore.shared.record(
+            .tab(ClosedTab(
+                tab: SessionSnapshot.Tab(
+                    url: closedTab.urlString,
+                    title: closedTab.title,
+                    isPinned: closedTab.isPinned,
+                    groupId: closedTab.groupId
+                ),
+                profileId: profile.id,
+                index: index,
+                closedAt: Date()
+            )),
+            context: CloseContext(
+                isPrivate: isPrivate,
+                isShuttingDown: WindowManager.shared.isShuttingDown
+            )
+        )
         // Posted before the tabs.isEmpty/window-closing early return below,
         // so the last tab's close is never silently skipped.
         TabLifecycleCenter.shared.post(.closed, tab: closedTab, in: self)
@@ -1997,6 +2019,49 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         HistoryWindowManager.shared.show(for: profile)
     }
 
+    /// ⇧⌘T -- reopen the most recently closed tab or window from THIS
+    /// window's profile (browser-n2j). Beeps when there's nothing to give
+    /// back, rather than silently swallowing a shortcut the user pressed.
+    ///
+    /// Only ever this profile's own items: reopening another profile's tab
+    /// here would cross the boundary the whole browser exists to keep.
+    @objc func reopenLastClosedItem(_ sender: Any?) {
+        guard let item = ClosedItemStore.shared.takeMostRecent(profileId: profile.id) else {
+            NSSound.beep()
+            return
+        }
+        reopen(item)
+    }
+
+    /// History > Recently Closed. The item's tag is its position in THIS
+    /// profile's filtered list -- the same list the menu was built from, and
+    /// the same one take(at:profileId:) counts in, so the two cannot disagree
+    /// about what a position means. An entry that has since gone returns nil
+    /// rather than reopening whatever moved into its place.
+    @objc func reopenRecentlyClosed(_ sender: Any?) {
+        guard let menuItem = sender as? NSMenuItem,
+              let item = ClosedItemStore.shared.take(at: menuItem.tag, profileId: profile.id) else {
+            NSSound.beep()
+            return
+        }
+        reopen(item)
+    }
+
+    /// Shared by ⇧⌘T and the History > Recently Closed submenu.
+    func reopen(_ item: ClosedItem) {
+        switch item {
+        case .tab(let closed):
+            _ = addTab(url: closed.tab.url.isEmpty ? "about:blank" : closed.tab.url, makeActive: true)
+        case .window(let closed):
+            let restored = closed.tabs.map {
+                SessionSnapshot.Tab(url: $0.url, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
+            }
+            WindowManager.shared.reopenClosedWindow(
+                profile: profile, tabs: restored, groups: closed.groups, activeIndex: closed.activeTabIndex
+            )
+        }
+    }
+
     /// ⇧⌘D -- "Add to Reading List" (browser-56p). Beeps when the page can't
     /// be saved (an internal page, or a tab on the start page) rather than
     /// silently doing nothing to a shortcut the user just pressed.
@@ -2156,6 +2221,36 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         dismissPermissionPromptIfShowing()
         tabOverview.dismiss()
         let closedTabs = tabs
+        // One entry for the whole window, not one per tab (browser-n2j): ⇧⌘T
+        // after closing a five-tab window should bring the window back in one
+        // press. Recorded here rather than in closeTab(at:) because this path
+        // closes tabs directly via tab.close(), never through closeTab(at:) --
+        // so the two can't both fire for one window.
+        if !closedTabs.isEmpty {
+            ClosedItemStore.shared.record(
+                .window(ClosedWindow(
+                    profileId: profile.id,
+                    tabs: closedTabs.map {
+                        SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
+                    },
+                    groups: tabGroups.map { SessionSnapshot.Group(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed) },
+                    activeTabIndex: activeTabIndex ?? 0,
+                    // The frame too, so a reopened window comes back where it
+                    // was rather than cascading to a fresh default position.
+                    frame: window.map {
+                        SessionSnapshot.WindowFrame(
+                            x: $0.frame.origin.x, y: $0.frame.origin.y,
+                            width: $0.frame.width, height: $0.frame.height
+                        )
+                    },
+                    closedAt: Date()
+                )),
+                context: CloseContext(
+                    isPrivate: isPrivate,
+                    isShuttingDown: WindowManager.shared.isShuttingDown
+                )
+            )
+        }
         for tab in tabs {
             tab.close()
         }

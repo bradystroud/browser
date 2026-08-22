@@ -64,6 +64,40 @@ enum ClosedItem: Equatable {
     }
 }
 
+/// Why a close happened, which is what decides whether it may be
+/// remembered at all.
+///
+/// Both flags are required at every call site on purpose. Each guards
+/// against a bug that is invisible until it is infuriating, and neither has
+/// a safe default:
+///
+/// - `isPrivate`: **a private window's tabs must never be remembered.**
+///   Reopening one later -- and especially after a relaunch, out of a file
+///   on disk -- would hand back exactly the browsing private mode promises
+///   not to keep.
+/// - `isShuttingDown`: **quitting must not fill the stack.** Quitting closes
+///   every open window, so without this, quitting with six windows open
+///   records six "recently closed" entries. The first press of ⇧⌘T after the
+///   next launch would then reopen a window session restore has *already*
+///   put back, and the tab the user actually wanted is six presses further
+///   down. Nothing is lost by refusing: those windows are in `session.json`,
+///   which is what reopens them.
+struct CloseContext: Equatable {
+    let isPrivate: Bool
+    let isShuttingDown: Bool
+
+    init(isPrivate: Bool, isShuttingDown: Bool) {
+        self.isPrivate = isPrivate
+        self.isShuttingDown = isShuttingDown
+    }
+
+    /// The ordinary case: the user closed this deliberately, in a normal
+    /// window, while the app carries on running.
+    static let userClosed = CloseContext(isPrivate: false, isShuttingDown: false)
+
+    var isRecordable: Bool { !isPrivate && !isShuttingDown }
+}
+
 /// The recently-closed stack behind ⇧⌘T and History > Recently Closed
 /// (browser-n2j), newest first.
 ///
@@ -89,16 +123,13 @@ struct ClosedItemStack: Equatable {
     /// Records a closed tab or window, newest first. Returns false when the
     /// entry was refused, which is a normal outcome rather than an error.
     ///
-    /// `isPrivate` has no default on purpose. **A private window's tabs must
-    /// never be remembered** -- reopening one later, and especially after a
-    /// relaunch from a file on disk, would hand back exactly the browsing
-    /// private mode promises not to keep. Requiring the argument at every
-    /// call site means a new caller cannot forget the question exists; the
-    /// check lives here, at the single point of entry, rather than being
-    /// repeated at each caller where one omission would leak.
+    /// Both refusals live here, at the single point of entry, rather than at
+    /// each caller where one omission would be a silent bug -- and
+    /// `CloseContext` has no default, so a new caller cannot forget the
+    /// questions exist. See that type for what each one is protecting.
     @discardableResult
-    mutating func record(_ item: ClosedItem, isPrivate: Bool) -> Bool {
-        guard !isPrivate, Self.isWorthRemembering(item) else { return false }
+    mutating func record(_ item: ClosedItem, context: CloseContext) -> Bool {
+        guard context.isRecordable, Self.isWorthRemembering(item) else { return false }
         items.insert(item, at: 0)
         if items.count > capacity {
             items.removeLast(items.count - capacity)

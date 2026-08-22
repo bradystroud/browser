@@ -60,6 +60,7 @@ enum ShortcutsHelp {
         #selector(BrowserWindow.toggleReaderMode(_:)): .navigation,
         #selector(BrowserWindowController.addBookmark(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showHistory(_:)): .historyAndBookmarks,
+        #selector(BrowserWindowController.reopenLastClosedItem(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.addToReadingList(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showReadingList(_:)): .historyAndBookmarks,
