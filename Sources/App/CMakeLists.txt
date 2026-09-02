@@ -39,6 +39,7 @@ set(BROWSER_SWIFT_SRCS
   AppPreferencesStore.swift
   GeneralPaneController.swift
   GlassBackgroundView.swift
+  ListAppearance.swift
   MainMenuBuilder.swift
   NewProfilePrompt.swift
   OmniboxField.swift
@@ -61,6 +62,7 @@ set(BROWSER_SWIFT_SRCS
   TabGroup.swift
   TabGroupHeaderView.swift
   TabGroupPrompt.swift
+  WindowFrameMemory.swift
   WindowManager.swift
   SessionStore.swift
   ClosedItemStore.swift

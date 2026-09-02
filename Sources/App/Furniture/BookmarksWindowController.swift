@@ -13,6 +13,9 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
         ProfileDataStoreManager.shared.stores(for: profile).bookmarks
     }
 
+    /// Kept alive for the window's lifetime -- see WindowFrameMemory.
+    private var frameMemory: WindowFrameMemory?
+
     init(profile: Profile) {
         self.profile = profile
         let window = NSWindow(
@@ -24,6 +27,7 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
         window.title = "Bookmarks — \(profile.name)"
         window.center()
         super.init(window: window)
+        frameMemory = WindowFrameMemory(window: window, name: "bookmarks-\(profile.id)")
         window.delegate = self
         setUpViews()
     }
@@ -67,7 +71,6 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let column = NSTableColumn(identifier: .init("title"))
         column.title = "Bookmarks"
@@ -79,6 +82,7 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
         outlineView.delegate = self
         outlineView.doubleAction = #selector(openOrToggleSelected)
         outlineView.target = self
+        ListAppearance.apply(to: outlineView, in: scrollView)
         scrollView.documentView = outlineView
         contentView.addSubview(scrollView)
     }

@@ -45,6 +45,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let startPagePane = StartPageSettingsPaneController()
     private let autofillPane = AutofillPaneController()
     private let tabView = NSTabView()
+    /// Kept alive for the window's lifetime -- see WindowFrameMemory.
+    private var frameMemory: WindowFrameMemory?
 
     /// The vertical space the window needs beyond a pane's own content --
     /// the title bar plus NSTabView's tab-label strip. Measured once,
@@ -80,6 +82,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         measureChromeOverheadHeight()
         resizeWindow(for: tabView.selectedTabViewItem, animated: false)
         window.center()
+        // After the initial sizing above, so a remembered frame wins over
+        // the freshly measured one rather than being overwritten by it.
+        frameMemory = WindowFrameMemory(window: window, name: "settings")
     }
 
     required init?(coder: NSCoder) {

@@ -176,7 +176,6 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let matchColumn = NSTableColumn(identifier: .init("match"))
         matchColumn.title = "Match (first match wins)"
@@ -189,9 +188,9 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         tableView.addTableColumn(profileColumn)
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(editSelectedRule)
         tableView.target = self
+        ListAppearance.apply(to: tableView, in: scrollView)
         scrollView.documentView = tableView
         view.addSubview(scrollView)
     }

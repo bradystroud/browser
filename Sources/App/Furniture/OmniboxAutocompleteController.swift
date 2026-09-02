@@ -81,6 +81,14 @@ private final class SuggestionRowView: NSTableCellView {
 final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private static let rowHeight: CGFloat = 36
     private static let maxVisibleRows = 8
+    /// Matches the omnibox pill's own rounding closely enough to read as the
+    /// same control -- the pill is a full capsule at 30pt tall, but a
+    /// dropdown many rows deep cannot be, so this is the flat radius AppKit
+    /// menus use rather than the capsule's own height/2.
+    private static let cornerRadius: CGFloat = 10
+    /// A hair of daylight under the pill, so the dropdown's own rounded top
+    /// edge and shadow read as separate from the capsule above it.
+    private static let anchorGap: CGFloat = 4
     /// History rows shrink to leave room once engine suggestions arrive, so
     /// a full dropdown still shows some of each rather than all of one.
     private static let historyLimit = 5
@@ -96,7 +104,8 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         let quickMatch: QuickSiteSearchMatch?
         let engine: SearchEngine
         let searchURL: String?
-        weak var field: NSTextField?
+        /// The omnibox pill the dropdown hangs from -- see position(below:in:).
+        weak var anchor: NSView?
         weak var window: NSWindow?
     }
 
@@ -135,6 +144,16 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         scrollView.drawsBackground = true
         scrollView.backgroundColor = .windowBackgroundColor
         scrollView.hasVerticalScroller = true
+        // The panel is borderless and transparent, so without this the
+        // dropdown is a hard-cornered rectangle hanging under a fully
+        // rounded omnibox capsule. Matching the capsule's own corner
+        // treatment (and AppKit's own menus/popovers) is what makes the two
+        // read as one control rather than two.
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = Self.cornerRadius
+        scrollView.layer?.masksToBounds = true
+        scrollView.layer?.borderWidth = 0.5
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
 
         let column = NSTableColumn(identifier: .init("suggestion"))
         column.width = 396
@@ -152,10 +171,10 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         panel.contentView = scrollView
     }
 
-    /// Rebuilds the dropdown for `query` and shows it below `field`, or
+    /// Rebuilds the dropdown for `query` and shows it below `anchor`, or
     /// hides it when nothing is worth showing. Engine suggestions, when they
     /// are allowed at all, arrive later and refresh the rows in place.
-    func update(query: String, history: HistoryStore, below field: NSTextField, in window: NSWindow) {
+    func update(query: String, history: HistoryStore, below anchor: NSView, in window: NSWindow) {
         fetcher.cancel()
         engineSuggestions = []
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -182,7 +201,7 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
             quickMatch: quickMatch,
             engine: engine,
             searchURL: searchURL,
-            field: field,
+            anchor: anchor,
             window: window
         )
         render()
@@ -216,7 +235,7 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
     }
 
     private func render() {
-        guard let context, let field = context.field, let window = context.window else {
+        guard let context, let anchor = context.anchor, let window = context.window else {
             dismiss()
             return
         }
@@ -227,7 +246,7 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         }
         selectedIndex = -1
         tableView.reloadData()
-        position(below: field, in: window)
+        position(below: anchor, in: window)
         if !isVisible {
             window.addChildWindow(panel, ordered: .above)
             panel.orderFront(nil)
@@ -324,13 +343,20 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex] : nil
     }
 
-    private func position(below field: NSTextField, in window: NSWindow) {
-        let fieldFrameInWindow = field.convert(field.bounds, to: nil)
-        let fieldFrameOnScreen = window.convertToScreen(fieldFrameInWindow)
+    /// `anchor` is the omnibox *pill*, not the text field inside it -- the
+    /// field is inset by the pill's own padding and its trailing reload
+    /// button, so anchoring to it left the dropdown visibly narrower than,
+    /// and misaligned with, the capsule it hangs from.
+    private func position(below anchor: NSView, in window: NSWindow) {
+        let anchorFrameInWindow = anchor.convert(anchor.bounds, to: nil)
+        let anchorFrameOnScreen = window.convertToScreen(anchorFrameInWindow)
         let rowCount = min(suggestions.count, Self.maxVisibleRows)
         let height = CGFloat(rowCount) * Self.rowHeight
-        let origin = NSPoint(x: fieldFrameOnScreen.minX, y: fieldFrameOnScreen.minY - height)
-        panel.setFrame(NSRect(x: origin.x, y: origin.y, width: fieldFrameOnScreen.width, height: height), display: true)
+        let origin = NSPoint(x: anchorFrameOnScreen.minX, y: anchorFrameOnScreen.minY - Self.anchorGap - height)
+        panel.setFrame(
+            NSRect(x: origin.x, y: origin.y, width: anchorFrameOnScreen.width, height: height),
+            display: true
+        )
     }
 
     @objc private func rowClicked() {

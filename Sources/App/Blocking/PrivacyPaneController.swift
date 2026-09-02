@@ -204,7 +204,6 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         ))
         permissionsScrollView.autoresizingMask = [.width, .minYMargin]
         permissionsScrollView.hasVerticalScroller = true
-        permissionsScrollView.borderType = .bezelBorder
 
         let originColumn = NSTableColumn(identifier: .init("origin"))
         originColumn.title = "Site"
@@ -221,7 +220,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         permissionsTableView.addTableColumn(decisionColumn)
         permissionsTableView.dataSource = self
         permissionsTableView.delegate = self
-        permissionsTableView.usesAlternatingRowBackgroundColors = true
+        ListAppearance.apply(to: permissionsTableView, in: permissionsScrollView)
         permissionsScrollView.documentView = permissionsTableView
         view.addSubview(permissionsScrollView)
 
@@ -281,7 +280,6 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         ))
         allowlistScrollView.autoresizingMask = [.width, .height]
         allowlistScrollView.hasVerticalScroller = true
-        allowlistScrollView.borderType = .bezelBorder
 
         let hostColumn = NSTableColumn(identifier: .init("host"))
         hostColumn.title = "Host"
@@ -290,7 +288,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         allowlistTableView.addTableColumn(hostColumn)
         allowlistTableView.dataSource = self
         allowlistTableView.delegate = self
-        allowlistTableView.usesAlternatingRowBackgroundColors = true
+        ListAppearance.apply(to: allowlistTableView, in: allowlistScrollView)
         allowlistScrollView.documentView = allowlistTableView
         view.addSubview(allowlistScrollView)
     }

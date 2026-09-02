@@ -213,6 +213,34 @@ final class WindowManager {
         SessionStore.shared.saveNow(currentSnapshot())
     }
 
+    /// A saved frame is only meaningful on the display arrangement it was
+    /// saved under. Restore it verbatim and a window last closed on a
+    /// now-disconnected external display -- or one saved by an agent's own
+    /// `--test-no-activate` launch, which parks windows at (-3000, -3000) --
+    /// comes back somewhere the user cannot reach, with no way to drag it
+    /// on screen. `NSWindow.setFrame` does not constrain to a screen, so
+    /// this does: keep the size, and re-centre on the main screen whenever
+    /// the saved rectangle does not meaningfully overlap any screen that
+    /// actually exists right now.
+    static func frameOnAVisibleScreen(_ frame: CGRect) -> CGRect {
+        // Enough of the title bar to grab. A window peeking one pixel onto
+        // a screen is not recoverable in practice, so partial overlap is
+        // not on its own good enough.
+        let minimumVisible = CGSize(width: 120, height: 40)
+        let isReachable = NSScreen.screens.contains { screen in
+            let overlap = screen.visibleFrame.intersection(frame)
+            return overlap.width >= minimumVisible.width && overlap.height >= minimumVisible.height
+        }
+        guard !isReachable, let screen = NSScreen.main ?? NSScreen.screens.first else { return frame }
+        let visible = screen.visibleFrame
+        let size = CGSize(width: min(frame.width, visible.width), height: min(frame.height, visible.height))
+        return CGRect(
+            x: visible.midX - size.width / 2,
+            y: visible.midY - size.height / 2,
+            width: size.width, height: size.height
+        )
+    }
+
     /// Recreates every window/tab from the last persisted session, if any --
     /// called once at launch (see AppDelegate.applicationDidFinishLaunching),
     /// never while the app is already running. Returns whether anything was
@@ -235,9 +263,11 @@ final class WindowManager {
             guard !tabs.isEmpty else { continue }
 
             let controller = BrowserWindowController(profile: profile, initialURL: "about:blank")
-            if let frame = windowSnapshot.frame {
-                controller.window?.setFrame(
-                    CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height), display: false)
+            if let frame = windowSnapshot.frame, let window = controller.window {
+                window.setFrame(
+                    Self.frameOnAVisibleScreen(
+                        CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)),
+                    display: false)
             }
             registerAndShow(controller, restoring: tabs, groups: windowSnapshot.groups ?? [], activeIndex: windowSnapshot.activeTabIndex)
             restoredAny = true

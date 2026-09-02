@@ -383,7 +383,6 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollY, width: contentWidth, height: scrollHeight))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let selectColumn = NSTableColumn(identifier: .init("select"))
         selectColumn.title = ""
@@ -400,8 +399,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         tableView.addTableColumn(destinationColumn)
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.usesAlternatingRowBackgroundColors = true
-        tableView.rowHeight = 40
+        ListAppearance.apply(to: tableView, in: scrollView, rowHeight: 40)
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
     }

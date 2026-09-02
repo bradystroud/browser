@@ -37,6 +37,9 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
     private var downloads: [DownloadItem] = []
     private var changeObserver: NSObjectProtocol?
 
+    /// Kept alive for the window's lifetime -- see WindowFrameMemory.
+    private var frameMemory: WindowFrameMemory?
+
     init(profile: Profile) {
         self.profile = profile
         let window = NSWindow(
@@ -48,6 +51,7 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
         window.title = "Downloads — \(profile.name)"
         window.center()
         super.init(window: window)
+        frameMemory = WindowFrameMemory(window: window, name: "downloads-\(profile.id)")
         window.delegate = self
         setUpViews()
         changeObserver = NotificationCenter.default.addObserver(
@@ -98,7 +102,6 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let nameColumn = NSTableColumn(identifier: .init("name"))
         nameColumn.title = "Name"
@@ -111,8 +114,7 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
         tableView.addTableColumn(statusColumn)
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.usesAlternatingRowBackgroundColors = true
-        tableView.rowHeight = 40
+        ListAppearance.apply(to: tableView, in: scrollView, rowHeight: 40)
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
     }

@@ -8,6 +8,9 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
     private let tableView = NSTableView()
     private var entries: [HistoryEntry] = []
 
+    /// Kept alive for the window's lifetime -- see WindowFrameMemory.
+    private var frameMemory: WindowFrameMemory?
+
     init(profile: Profile) {
         self.profile = profile
         let window = NSWindow(
@@ -19,6 +22,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
         window.title = "History — \(profile.name)"
         window.center()
         super.init(window: window)
+        frameMemory = WindowFrameMemory(window: window, name: "history-\(profile.id)")
         window.delegate = self
         setUpViews()
         reload()
@@ -70,7 +74,6 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let titleColumn = NSTableColumn(identifier: .init("title"))
         titleColumn.title = "Title"
@@ -87,9 +90,9 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
         tableView.addTableColumn(dateColumn)
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(openSelected)
         tableView.target = self
+        ListAppearance.apply(to: tableView, in: scrollView)
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
     }

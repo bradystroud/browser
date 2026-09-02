@@ -88,7 +88,6 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
         let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom)))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let nameColumn = NSTableColumn(identifier: .init("cardholderName"))
         nameColumn.title = "Name"
@@ -107,7 +106,7 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
         cardsTableView.addTableColumn(expiryColumn)
         cardsTableView.dataSource = self
         cardsTableView.delegate = self
-        cardsTableView.usesAlternatingRowBackgroundColors = true
+        ListAppearance.apply(to: cardsTableView, in: scrollView)
         scrollView.documentView = cardsTableView
         view.addSubview(scrollView)
     }

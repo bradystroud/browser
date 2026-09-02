@@ -658,13 +658,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         layoutOmniboxContainer()
     }
 
-    /// The pill's outer frame -- centered in the toolbar, width depending on
-    /// isOmniboxFocused. Called from setUpToolbarContents, windowDidResize,
-    /// and setOmniboxFocused(_:animated:).
+    /// The pill's outer frame -- centered in the toolbar where it fits,
+    /// width depending on isOmniboxFocused. Called from
+    /// setUpToolbarContents, windowDidResize, and
+    /// setOmniboxFocused(_:animated:).
+    ///
+    /// Centering is on the *window*, but the space actually free for the
+    /// pill is not centered on the window: the leading side carries the
+    /// traffic lights, back/forward and the profile pill, and is much wider
+    /// than the trailing side's floating controls. A pill centered in the
+    /// window and sized to the free band therefore starts left of where
+    /// that band begins -- and since the pill is added to the toolbar after
+    /// the profile pill, it is drawn straight over the top of it. Clamping
+    /// the origin into the band is what keeps centering (which is right
+    /// whenever the pill is narrow enough for it) without letting the
+    /// expanded pill, whose width *is* the band, slide off the band's
+    /// leading edge.
     private func omniboxFrame() -> NSRect {
         let toolbarHeight = toolbarView.bounds.height
         let width = isOmniboxFocused ? expandedOmniboxWidth() : collapsedOmniboxWidth()
-        let x = (toolbarView.bounds.width - width) / 2
+        let bandMinX = omniboxLeadingReserved()
+        let bandMaxX = max(bandMinX, toolbarView.bounds.width - omniboxTrailingReserved())
+        let centered = (toolbarView.bounds.width - width) / 2
+        let x = min(max(centered, bandMinX), max(bandMinX, bandMaxX - width))
         return NSRect(x: x, y: (toolbarHeight - Self.omniboxPillHeight) / 2, width: width, height: Self.omniboxPillHeight)
     }
 
@@ -685,17 +701,27 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Private label, if present) on the right -- never narrower than the
     /// collapsed minimum even in a very small window.
     private func expandedOmniboxWidth() -> CGFloat {
+        let band = toolbarView.bounds.width - omniboxLeadingReserved() - omniboxTrailingReserved()
+        return max(Self.omniboxCollapsedMinWidth, band)
+    }
+
+    /// Where the pill's own band starts: everything the toolbar has already
+    /// committed to the leading edge, plus breathing room. Traffic lights
+    /// float over this row (browser-0y1), so back/forward start past them
+    /// (see setUpToolbarContents) and the profile pill sits right after.
+    private func omniboxLeadingReserved() -> CGFloat {
         let margin: CGFloat = 8
         let buttonSize: CGFloat = 28
         let gap: CGFloat = 4
-        // Traffic lights float over this row's leading edge now
-        // (browser-0y1) -- back/forward already start past them (see
-        // setUpToolbarContents), so the expanded pill must stop there too.
-        // The profile pill (also browser-0y1) sits right after them.
         let profilePillReserved = profilePillButton.map { $0.frame.width + gap } ?? 0
-        let leadingReserved = margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2 + profilePillReserved + Self.omniboxHorizontalMargin
-        let trailingReserved = trailingToolbarControlsReservedWidth + Self.omniboxHorizontalMargin
-        return max(Self.omniboxCollapsedMinWidth, toolbarView.bounds.width - leadingReserved - trailingReserved)
+        return margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2
+            + profilePillReserved + Self.omniboxHorizontalMargin
+    }
+
+    /// Where the pill's own band ends: the floating toolbar controls (and
+    /// the Private label, if this is a private window), plus breathing room.
+    private func omniboxTrailingReserved() -> CGFloat {
+        trailingToolbarControlsReservedWidth + Self.omniboxHorizontalMargin
     }
 
     /// Repositions the pill itself (not animated -- see
@@ -715,21 +741,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// whenever the pill itself moves/resizes (window resize, focus
     /// expand/collapse) so the bar always tracks the pill's current x
     /// position and width even if the fill animation isn't mid-flight.
-    private func layoutLoadingProgressTrack() {
+    private func layoutLoadingProgressTrack(pillFrame: NSRect? = nil) {
+        let pill = pillFrame ?? omniboxContainerView.frame
         let barY: CGFloat = 2
         let currentFillWidth = loadingProgressView.frame.width
         loadingProgressView.frame = NSRect(
-            x: omniboxContainerView.frame.minX, y: barY,
-            width: min(currentFillWidth, omniboxContainerView.frame.width),
+            x: pill.minX, y: barY,
+            width: min(currentFillWidth, pill.width),
             height: Self.loadingProgressBarHeight
         )
     }
 
-    private func layoutOmniboxInnerContent() {
-        let width = omniboxContainerView.frame.width
+    /// `width` is the width the pill *will* have, which during a focus
+    /// expand/collapse is not the width it currently has -- passing it in
+    /// is what lets the inner content travel with the pill instead of
+    /// snapping to the end state while the pill is still sliding under it
+    /// (the trailing reload button jumping the full width change in one
+    /// frame was the visible half of that).
+    private func layoutOmniboxInnerContent(width: CGFloat? = nil, animated: Bool = false) {
+        let width = width ?? omniboxContainerView.frame.width
         let reloadSize: CGFloat = 20
         let innerMargin: CGFloat = 8
-        reloadButton.frame = NSRect(
+        let reloadFrame = NSRect(
             x: width - reloadSize - innerMargin, y: (Self.omniboxPillHeight - reloadSize) / 2,
             width: reloadSize, height: reloadSize
         )
@@ -738,7 +771,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // field's leading edge doesn't leave an empty gap on an ordinary
         // page with nothing blocked.
         let blockerWidth = contentBlockerButton.isHidden ? 0 : contentBlockerButton.frame.width
-        contentBlockerButton.frame = NSRect(
+        let blockerFrame = NSRect(
             x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2,
             width: blockerWidth, height: 20
         )
@@ -748,10 +781,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // center that frame in the pill so both the empty placeholder and
         // the focused/editable URL share the same vertically centred baseline.
         let fieldHeight = omniboxField.intrinsicContentSize.height
-        omniboxField.frame = NSRect(
+        let fieldFrame = NSRect(
             x: fieldX, y: (Self.omniboxPillHeight - fieldHeight) / 2,
             width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: fieldHeight
         )
+        guard animated else {
+            reloadButton.frame = reloadFrame
+            contentBlockerButton.frame = blockerFrame
+            omniboxField.frame = fieldFrame
+            return
+        }
+        reloadButton.animator().frame = reloadFrame
+        contentBlockerButton.animator().frame = blockerFrame
+        omniboxField.animator().frame = fieldFrame
     }
 
     /// Just the host, e.g. "example.com" -- what the pill shows while
@@ -954,15 +996,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if updatesText, let tab = activeTab {
             omniboxField.stringValue = focused ? tab.urlString : Self.collapsedOmniboxDisplay(for: tab)
         }
-        if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
-                omniboxContainerView.animator().frame = omniboxFrame()
-            }
-        } else {
-            omniboxContainerView.frame = omniboxFrame()
+        let frame = omniboxFrame()
+        guard animated else {
+            omniboxContainerView.frame = frame
+            layoutOmniboxInnerContent()
+            layoutLoadingProgressTrack()
+            return
         }
-        layoutOmniboxInnerContent()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            omniboxContainerView.animator().frame = frame
+            // Same group, same curve, same duration as the pill itself --
+            // see layoutOmniboxInnerContent(width:animated:).
+            layoutOmniboxInnerContent(width: frame.width, animated: true)
+        }
+        layoutLoadingProgressTrack(pillFrame: frame)
     }
 
     // MARK: - Tabs
@@ -1945,7 +1994,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func controlTextDidChange(_ obj: Notification) {
         guard let window else { return }
         let history = ProfileDataStoreManager.shared.stores(for: profile).history
-        autocomplete.update(query: omniboxField.stringValue, history: history, below: omniboxField, in: window)
+        autocomplete.update(query: omniboxField.stringValue, history: history, below: omniboxContainerView, in: window)
     }
 
     /// NSTextFieldDelegate -- fires when the field editor actually attaches

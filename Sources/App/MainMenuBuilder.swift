@@ -330,6 +330,24 @@ final class MainMenuBuilder {
         historyMenuStaticCount = historyMenu.items.count
     }
 
+    /// Menus size themselves to their widest item, so one page with a long
+    /// `<title>` -- and plenty have one; GitHub repository pages run past a
+    /// hundred characters -- stretches the whole submenu across the screen
+    /// and drags every neighbouring item's text out with it. Truncating in
+    /// the middle keeps both ends, which is what tells two pages from the
+    /// same site apart.
+    static func menuTitle(_ raw: String) -> String {
+        let limit = 60
+        let collapsed = raw
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard collapsed.count > limit else { return collapsed }
+        let keep = limit - 1
+        let lead = collapsed.prefix((keep + 1) / 2)
+        let tail = collapsed.suffix(keep / 2)
+        return "\(lead)…\(tail)"
+    }
+
     /// The Recently Closed submenu (browser-n2j). Rebuilt from the store each
     /// time the key window changes, like the recent-history section below.
     ///
@@ -354,10 +372,14 @@ final class MainMenuBuilder {
                 title = closed.tab.title.isEmpty ? closed.tab.url : closed.tab.title
             case .window(let closed):
                 let count = closed.tabs.count
-                title = "Window — \(count) tab\(count == 1 ? "" : "s")"
+                // Several closed windows otherwise stack up as identical
+                // "Window -- 3 tabs" rows with nothing to pick between them.
+                let lead = closed.tabs.first.map { $0.title.isEmpty ? $0.url : $0.title } ?? ""
+                let counted = "Window — \(count) tab\(count == 1 ? "" : "s")"
+                title = lead.isEmpty ? counted : "\(counted) — \(lead)"
             }
             let menuItem = recentlyClosedMenu.addItem(
-                withTitle: title,
+                withTitle: Self.menuTitle(title),
                 action: #selector(BrowserWindowController.reopenRecentlyClosed(_:)),
                 keyEquivalent: ""
             )
@@ -378,7 +400,7 @@ final class MainMenuBuilder {
         historyMenu.addItem(.separator())
         for entry in entries {
             let item = NSMenuItem(
-                title: entry.title.isEmpty ? entry.url : entry.title,
+                title: Self.menuTitle(entry.title.isEmpty ? entry.url : entry.title),
                 action: #selector(AppDelegate.openMenuURL(_:)),
                 keyEquivalent: ""
             )
@@ -426,7 +448,7 @@ final class MainMenuBuilder {
         for item in items {
             switch item.kind {
             case .bookmark:
-                let menuItem = NSMenuItem(title: item.title, action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
+                let menuItem = NSMenuItem(title: Self.menuTitle(item.title), action: #selector(AppDelegate.openMenuURL(_:)), keyEquivalent: "")
                 menuItem.representedObject = item.url
                 menu.addItem(menuItem)
             case .folder:

@@ -94,7 +94,6 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom)))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let nameColumn = NSTableColumn(identifier: .init("fullName"))
         nameColumn.title = "Name"
@@ -108,7 +107,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         addressesTableView.addTableColumn(addressColumn)
         addressesTableView.dataSource = self
         addressesTableView.delegate = self
-        addressesTableView.usesAlternatingRowBackgroundColors = true
+        ListAppearance.apply(to: addressesTableView, in: scrollView)
         scrollView.documentView = addressesTableView
         view.addSubview(scrollView)
     }

@@ -84,7 +84,6 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let colorColumn = NSTableColumn(identifier: .init("color"))
         colorColumn.title = ""
@@ -95,15 +94,14 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         nameColumn.title = "Name"
         nameColumn.width = 460
 
-        tableView.rowHeight = 24
         tableView.addTableColumn(colorColumn)
         tableView.addTableColumn(nameColumn)
         tableView.dataSource = self
         tableView.delegate = self
         tableView.allowsMultipleSelection = true
-        tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(editSelectedProfile)
         tableView.target = self
+        ListAppearance.apply(to: tableView, in: scrollView)
         scrollView.documentView = tableView
         view.addSubview(scrollView)
     }

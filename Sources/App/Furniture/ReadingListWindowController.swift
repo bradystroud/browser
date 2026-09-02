@@ -16,6 +16,9 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
     private var items: [ReadingListItem] = []
     private var changeObserver: NSObjectProtocol?
 
+    /// Kept alive for the window's lifetime -- see WindowFrameMemory.
+    private var frameMemory: WindowFrameMemory?
+
     init(profile: Profile) {
         self.profile = profile
         let window = NSWindow(
@@ -27,6 +30,7 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
         window.title = "Reading List — \(profile.name)"
         window.center()
         super.init(window: window)
+        frameMemory = WindowFrameMemory(window: window, name: "reading-list-\(profile.id)")
         window.delegate = self
         setUpViews()
         // The list changes from outside this window all the time -- ⇧⌘D in
@@ -118,7 +122,6 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let titleColumn = NSTableColumn(identifier: .init("title"))
         titleColumn.title = "Title"
@@ -138,9 +141,9 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
         }
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.usesAlternatingRowBackgroundColors = true
         tableView.doubleAction = #selector(openSelected)
         tableView.target = self
+        ListAppearance.apply(to: tableView, in: scrollView)
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
     }

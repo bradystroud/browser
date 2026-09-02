@@ -118,7 +118,6 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         ))
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
 
         let siteColumn = NSTableColumn(identifier: .init("site"))
         siteColumn.title = "Site"
@@ -132,7 +131,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         credentialsTableView.addTableColumn(usernameColumn)
         credentialsTableView.dataSource = self
         credentialsTableView.delegate = self
-        credentialsTableView.usesAlternatingRowBackgroundColors = true
+        ListAppearance.apply(to: credentialsTableView, in: scrollView)
         scrollView.documentView = credentialsTableView
         view.addSubview(scrollView)
     }
