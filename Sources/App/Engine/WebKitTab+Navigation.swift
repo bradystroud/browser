@@ -1,16 +1,25 @@
 import AppKit
 import WebKit
 
+/// Per-tab bookkeeping the navigation delegate needs across callbacks.
+/// A class held by WebKitTab (extensions can't add stored properties), so
+/// this file owns every field it reads and writes.
+final class WebKitNavigationState {
+    /// Bumped at every provisional start, so an async step that began for
+    /// one navigation (the favicon read in didFinish) can tell it has been
+    /// superseded by the next one.
+    var generation = 0
+}
+
 extension WebKitTab: WKNavigationDelegate {
-    // MARK: - WKNavigationDelegate
+    // MARK: - Policy
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         // target="_blank"/window.open() -- see
-        // webView(_:createWebViewWith:for:windowFeatures:) below for the
-        // matching new-tab signal. Threat-warning check (browser-12m.6) only
-        // applies to top-level main-frame navigations, matching
-        // BRWClientHandler::OnBeforeResourceLoad's own scope for this
-        // feature.
+        // webView(_:createWebViewWith:for:windowFeatures:) for the matching
+        // new-tab signal. The threat-warning check only applies to top-level
+        // main-frame navigations, matching
+        // BRWClientHandler::OnBeforeResourceLoad's own scope for this feature.
         if navigationAction.targetFrame?.isMainFrame == true,
            let url = navigationAction.request.url, let host = url.host,
            WebKitEngine.shouldWarn(host: host, profileName: profileName),
@@ -64,23 +73,93 @@ extension WebKitTab: WKNavigationDelegate {
         download.delegate = self
     }
 
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    // MARK: - Navigation lifecycle
+    //
+    // CEF's order, which this reproduces: OnBeforeBrowse (will-start) ->
+    // OnLoadingProgressChange (repeatedly) -> OnLoadStart (document start)
+    // -> OnFaviconURLChange -> OnLoadEnd (commit, i.e. "visited").
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        navigationState.generation += 1
         guard let url = webView.url?.absoluteString else { return }
-        delegate?.engineTabDidCommitNavigation(url)
-        // Approximation, not CEF's exact guarantee: BRWBrowser's
-        // -browserDidStartMainFrameLoad fires after commit but before the
-        // new document's own scripts run (see BrowserEngine.swift's own doc
-        // comment on the exact CEF contract). WKNavigationDelegate has no
-        // equivalent hook -- didCommitNavigation fires once the response
-        // begins arriving, close enough for this signal's actual use
-        // (triggering a same-timing executeJavaScript(_:) injection) but not
-        // a verified guarantee. The idiomatic WebKit way to guarantee
-        // before-page-scripts injection is a persistent WKUserScript with
-        // injectionTime .atDocumentStart added once to the
-        // WKUserContentController -- a real production port of the
-        // password-manager/autofill/notification-override scripts onto this
-        // engine should very likely use that instead of reacting to this
-        // signal with an imperative executeJavaScript(_:) call every time.
+        delegate?.engineTabWillStartMainFrameNavigation(url)
+    }
+
+    /// CEF's OnBeforeBrowse runs again for every redirect hop, so the
+    /// optimistic omnibox text follows the redirect there too.
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        guard let url = webView.url?.absoluteString else { return }
+        delegate?.engineTabWillStartMainFrameNavigation(url)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // CEF's OnLoadStart, which fires after commit but before the new
+        // document's own scripts run. didCommit is the closest WebKit hook:
+        // the response has started arriving and the old document is gone,
+        // but nothing guarantees the page's inline scripts haven't run yet.
+        // A script that truly must win that race belongs in a WKUserScript
+        // at .atDocumentStart instead.
         delegate?.engineTabDidStartMainFrameLoad()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        reportFinishedNavigation()
+    }
+
+    /// Reads the page's declared icons, reports the chosen one, then reports
+    /// the visit -- the same order CEF delivers OnFaviconURLChange and
+    /// OnLoadEnd in, which matters: FaviconLoader caches by host, so a hint
+    /// that arrives after the first fetch is ignored.
+    private func reportFinishedNavigation() {
+        let generation = navigationState.generation
+        webView.evaluateJavaScript(Self.faviconCandidatesScript) { [weak self] result, _ in
+            guard let self, self.navigationState.generation == generation,
+                  let url = self.webView.url?.absoluteString else { return }
+            let candidates = (result as? [[String: Any]] ?? []).compactMap(FaviconCandidate.init)
+            self.delegate?.engineTabDidChangeFaviconURL(FaviconCandidate.best(of: candidates))
+            self.delegate?.engineTabDidCommitNavigation(url)
+        }
+    }
+
+    // MARK: - Favicons
+
+    /// Every declared icon link in document order. `link.href` is already
+    /// resolved against the document's base URL.
+    static let faviconCandidatesScript = """
+    (() => Array.from(document.querySelectorAll('link[rel][href]')).map(l => ({
+      rel: (l.getAttribute('rel') || '').toLowerCase(),
+      href: l.href,
+      type: (l.getAttribute('type') || '').toLowerCase()
+    })))()
+    """
+}
+
+/// One `<link>` the favicon script found.
+struct FaviconCandidate {
+    let rels: Set<String>
+    let href: String
+    let type: String
+
+    init?(_ dictionary: [String: Any]) {
+        guard let rel = dictionary["rel"] as? String, let href = dictionary["href"] as? String, !href.isEmpty else { return nil }
+        rels = Set(rel.split(whereSeparator: \.isWhitespace).map(String.init))
+        self.href = href
+        type = dictionary["type"] as? String ?? ""
+    }
+
+    private var isIcon: Bool { rels.contains("icon") }
+    private var isTouchIcon: Bool { rels.contains("apple-touch-icon") || rels.contains("apple-touch-icon-precomposed") }
+    private var isSVG: Bool { type == "image/svg+xml" || href.lowercased().hasSuffix(".svg") }
+
+    /// CEF hands over Chromium's favicon list and the app takes its first
+    /// entry, which is the first `rel~=icon` in document order. SVG is
+    /// passed over when anything else is declared, because FaviconLoader
+    /// decodes through NSImage and a hint it can't decode means no icon at
+    /// all rather than the /favicon.ico fallback. Touch icons are a last
+    /// resort. nil lets FaviconLoader guess /favicon.ico.
+    static func best(of candidates: [FaviconCandidate]) -> String? {
+        let icons = candidates.filter(\.isIcon)
+        if let icon = icons.first(where: { !$0.isSVG }) ?? icons.first { return icon.href }
+        return candidates.first(where: \.isTouchIcon)?.href
     }
 }

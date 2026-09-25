@@ -220,6 +220,7 @@ final class WebKitTab: NSObject, EngineTab {
     let profileName: String
     private var observations: [NSKeyValueObservation] = []
     private var isFindingActive = false
+    let navigationState = WebKitNavigationState()
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
@@ -282,13 +283,11 @@ final class WebKitTab: NSObject, EngineTab {
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] webView, _ in
             self?.delegate?.engineTabDidChangeLoadingState(webView.isLoading, canGoBack: webView.canGoBack, canGoForward: webView.canGoForward)
         })
-        // No favicon KVO/delegate hook exists on WKWebView at all (no
-        // public "favicon changed" signal, unlike CEF's own
-        // browserDidChangeFaviconURL) -- engineTabDidChangeFaviconURL simply
-        // never fires on this engine. A real implementation would need to
-        // scrape <link rel="icon"> via injected JS (WebEngineCore has no
-        // WebKit dependency to do this from, and it's a UI-polish gap, not
-        // a functional one, so left unimplemented for this spike).
+        observations.append(webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, _ in
+            self?.delegate?.engineTabDidUpdateLoadingProgress(webView.estimatedProgress)
+        })
+        // Favicons have no KVO/delegate hook on WKWebView; the navigation
+        // delegate reads <link rel="icon"> itself when a load finishes.
 
         if let ruleList = WebKitEngine.compiledContentRuleLists[profileName] {
             applyContentRuleList(ruleList)
@@ -439,8 +438,8 @@ final class WebKitTab: NSObject, EngineTab {
         webView.evaluateJavaScript("window.getSelection() && window.getSelection().removeAllRanges();", completionHandler: nil)
     }
 
-    // No engineTabDidChangeFaviconURL or engineTabDidRequestVisualLookUp --
-    // see this file's other doc comments for why each is missing.
+    // No engineTabDidRequestVisualLookUp -- see setVisualLookUpAvailable's
+    // doc comment for why it is missing.
 
     /// Features already logged this session, so a repeatedly-called gap (a
     /// polled CPU reading, a mute toggle) logs once rather than every time.
