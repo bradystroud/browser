@@ -135,7 +135,15 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// pending forever (until the page itself calls `cefQueryCancel` or
 /// navigates away, either of which cancels it from CEF's side with no
 /// notification back to this delegate).
-- (void)browserDidReceivePageMessage:(NSString *)request requestId:(int64_t)requestId;
+///
+/// `isMainFrame`/`frameURL` describe the frame the query came from, taken
+/// from CEF's own `CefFrame` -- any frame, cross-origin iframes included,
+/// can call `cefQuery`, so this is the only trustworthy statement of who
+/// sent `request`. Nothing inside `request` is.
+- (void)browserDidReceivePageMessage:(NSString *)request
+                           requestId:(int64_t)requestId
+                         isMainFrame:(BOOL)isMainFrame
+                            frameURL:(NSString *)frameURL;
 
 /// Fires once per top-level (main-frame) navigation, after it has committed
 /// but before the new document starts loading/running its own scripts --
@@ -425,7 +433,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 - (void)getPageSourceWithCompletion:(void (^)(NSString *_Nullable source))completion;
 
 /// Answers a page message previously delivered via
-/// -browserDidReceivePageMessage:requestId: on this browser's delegate (or
+/// -browserDidReceivePageMessage:requestId:isMainFrame:frameURL: on this browser's delegate (or
 /// any other browser's -- `requestId` is globally unique across the whole
 /// process, not just this tab, since it's CEF's own query id). `response`
 /// becomes the string the page's `onSuccess`/`onFailure` callback receives.

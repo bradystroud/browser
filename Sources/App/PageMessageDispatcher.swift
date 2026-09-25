@@ -2,6 +2,20 @@ import AppKit
 
 private struct PageMessageTypeEnvelope: Decodable { let type: String }
 
+/// One page message that has passed PageMessagePolicy. `origin` is the
+/// sender's origin as the engine reported it and the tab's committed URL
+/// confirmed -- the only origin a feature may act on. It is nil only for
+/// the start page. Any `origin` field in `request` is page-controlled and
+/// must never be read.
+struct PageMessage {
+    let type: String
+    let request: String
+    let requestId: Int64
+    let tab: Tab
+    let source: PageMessageSource
+    let origin: WebOrigin?
+}
+
 /// App-wide singleton that wires every tab's generic page-message channel
 /// (Tab.onPageMessage) to native code, and dispatches each incoming message
 /// by its `"type"` field to whichever feature registered for it.
@@ -33,7 +47,7 @@ final class PageMessageDispatcher: TabLifecycleObserver {
 
     private var isActivated = false
     private var wiredTabs = NSHashTable<Tab>.weakObjects()
-    private var handlers: [String: (_ type: String, _ request: String, _ requestId: Int64, _ tab: Tab) -> Void] = [:]
+    private var handlers: [String: (PageMessage) -> Void] = [:]
 
     private init() {}
 
@@ -66,9 +80,9 @@ final class PageMessageDispatcher: TabLifecycleObserver {
     private func wire(_ tab: Tab) {
         guard !wiredTabs.contains(tab) else { return }
         wiredTabs.add(tab)
-        tab.onPageMessage = { [weak self, weak tab] request, requestId in
+        tab.onPageMessage = { [weak self, weak tab] request, requestId, source in
             guard let self, let tab else { return }
-            self.dispatch(request, requestId: requestId, tab: tab)
+            self.dispatch(request, requestId: requestId, source: source, tab: tab)
         }
     }
 
@@ -78,13 +92,20 @@ final class PageMessageDispatcher: TabLifecycleObserver {
     /// fighting over the same message, which is always a bug, never
     /// intended, so it's asserted against in debug builds.
     func register(types: [String], handler: @escaping (_ type: String, _ request: String, _ requestId: Int64, _ tab: Tab) -> Void) {
+        register(types: types) { (message: PageMessage) in
+            handler(message.type, message.request, message.requestId, message.tab)
+        }
+    }
+
+    /// The same, for a feature that needs the sender's verified origin.
+    func register(types: [String], handler: @escaping (PageMessage) -> Void) {
         for type in types {
             assert(handlers[type] == nil, "PageMessageDispatcher: a handler for \"\(type)\" is already registered")
             handlers[type] = handler
         }
     }
 
-    private func dispatch(_ request: String, requestId: Int64, tab: Tab) {
+    private func dispatch(_ request: String, requestId: Int64, source: PageMessageSource, tab: Tab) {
         guard let data = request.data(using: .utf8),
               let envelope = try? JSONDecoder().decode(PageMessageTypeEnvelope.self, from: data),
               let handler = handlers[envelope.type]
@@ -96,6 +117,14 @@ final class PageMessageDispatcher: TabLifecycleObserver {
             tab.respondToPageMessage(requestId: requestId, success: false, response: "")
             return
         }
-        handler(envelope.type, request, requestId, tab)
+        // Every type passes the frame/origin gate before its feature sees
+        // it; see PageMessagePolicy.rules for which frames may send what.
+        switch PageMessagePolicy.evaluate(type: envelope.type, source: source, tab: tab.pageMessageTabState) {
+        case .reject(let reason):
+            NSLog("Browser: dropped page message \"%@\" (%@)", envelope.type, reason)
+            tab.respondToPageMessage(requestId: requestId, success: false, response: "")
+        case .allow(let origin):
+            handler(PageMessage(type: envelope.type, request: request, requestId: requestId, tab: tab, source: source, origin: origin))
+        }
     }
 }
