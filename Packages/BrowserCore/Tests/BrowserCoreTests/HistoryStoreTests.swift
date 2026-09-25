@@ -25,6 +25,18 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(results.first?.title, "Example Domain")
     }
 
+    func testUpdateTitleSkipsWriteWhenTitleIsUnchanged() throws {
+        try store.recordVisit(url: "https://example.com", title: nil)
+
+        XCTAssertTrue(try store.setTitle(url: "https://example.com", title: "Example Domain"))
+        XCTAssertFalse(try store.setTitle(url: "https://example.com", title: "Example Domain"))
+        XCTAssertTrue(try store.setTitle(url: "https://example.com", title: "(1) Example Domain"))
+        XCTAssertFalse(try store.setTitle(url: "https://never-visited.example", title: "Ignored"))
+
+        try store.updateTitle(url: "https://example.com", title: "(1) Example Domain")
+        XCTAssertEqual(try store.autocomplete(query: "example").first?.title, "(1) Example Domain")
+    }
+
     func testPrefixMatchRanksAboveMidStringMatch() throws {
         let now = Date()
         try store.recordVisit(url: "https://example.com", title: "Example Homepage", at: now)

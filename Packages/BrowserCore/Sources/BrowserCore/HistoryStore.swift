@@ -41,14 +41,25 @@ public final class HistoryStore {
     /// Sets the stored title of an already-recorded URL. A visit is recorded
     /// when a navigation commits, which is before the new page has told us
     /// its title, so the real title arrives through here afterwards. Does
-    /// nothing for a URL that was never recorded or for an empty title.
+    /// nothing for a URL that was never recorded, for an empty title, or for
+    /// a title equal to the stored one -- pages that animate their title
+    /// report it many times a second, and each of those would otherwise be
+    /// a write.
     public func updateTitle(url: String, title: String) throws {
-        guard !title.isEmpty else { return }
-        try database.perform { db in
-            let update = try db.prepare("UPDATE history_urls SET title = ? WHERE url = ?;")
+        try setTitle(url: url, title: title)
+    }
+
+    /// updateTitle, reporting whether a row actually changed.
+    @discardableResult
+    func setTitle(url: String, title: String) throws -> Bool {
+        guard !title.isEmpty else { return false }
+        return try database.perform { db in
+            let update = try db.prepare("UPDATE history_urls SET title = ? WHERE url = ? AND title != ?;")
             try update.bind(title, at: 1)
             try update.bind(url, at: 2)
+            try update.bind(title, at: 3)
             try update.step()
+            return db.changes > 0
         }
     }
 

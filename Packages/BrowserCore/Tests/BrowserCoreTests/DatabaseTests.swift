@@ -18,6 +18,26 @@ final class DatabaseTests: XCTestCase {
         }
     }
 
+    func testConnectionsWaitOutLocksAndReadWriteOnesSyncNormally() throws {
+        let dir = try TestSupport.makeTempProfileDirectory()
+        defer { TestSupport.removeQuietly(dir) }
+
+        func pragma(_ name: String, _ db: Database) throws -> Int {
+            try db.perform { conn in
+                let stmt = try conn.prepare("PRAGMA \(name);")
+                _ = try stmt.step()
+                return Int(stmt.int(0))
+            }
+        }
+
+        let readWrite = try Database(profileDirectory: dir)
+        XCTAssertEqual(try pragma("busy_timeout", readWrite), Int(SQLiteConnection.busyTimeoutMilliseconds))
+        XCTAssertEqual(try pragma("synchronous", readWrite), 1, "1 is NORMAL")
+
+        let readOnly = try Database.openExistingReadOnly(profileDirectory: dir)
+        XCTAssertEqual(try pragma("busy_timeout", readOnly), Int(SQLiteConnection.busyTimeoutMilliseconds))
+    }
+
     func testInMemoryDatabaseHasTheFullSchemaAndIsNotShared() throws {
         let first = HistoryStore(database: try Database.inMemory())
         try first.recordVisit(url: "https://example.com", title: "Example")

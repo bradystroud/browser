@@ -25,11 +25,10 @@ final class SearchSuggestionFetcher {
     /// start of a URL than a real query.
     private static let minimumQueryLength = 2
 
-    private let session: URLSession
-    private var pendingRequest: DispatchWorkItem?
-    private var inFlight: URLSessionDataTask?
-
-    init() {
+    /// One for the whole app rather than one per fetcher (there is a fetcher
+    /// per window): a URLSession holds its delegate queue and connection
+    /// pool until it is invalidated, and nothing ever invalidates these.
+    private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -40,8 +39,11 @@ final class SearchSuggestionFetcher {
         // suggestion, so these give up quickly.
         configuration.timeoutIntervalForRequest = 4
         configuration.timeoutIntervalForResource = 6
-        session = URLSession(configuration: configuration)
-    }
+        return URLSession(configuration: configuration)
+    }()
+
+    private var pendingRequest: DispatchWorkItem?
+    private var inFlight: URLSessionDataTask?
 
     /// Asks for suggestions for `query`, calling `completion` on the main
     /// queue with the parsed terms. Supersedes any earlier request: an
@@ -58,7 +60,7 @@ final class SearchSuggestionFetcher {
 
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            let task = self.session.dataTask(with: url) { data, _, _ in
+            let task = Self.session.dataTask(with: url) { data, _, _ in
                 guard let data else { return }
                 let terms = SearchSuggestionParser.parse(data, query: trimmed)
                 guard !terms.isEmpty else { return }

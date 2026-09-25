@@ -239,7 +239,10 @@ private final class DownloadsPopoverViewController: NSViewController {
 
         stackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for download in downloads {
-            stackView.addArrangedSubview(DownloadRowView(download: download, width: Self.width))
+            stackView.addArrangedSubview(DownloadRowView(
+                download: download,
+                liveProgress: DownloadCoordinator.shared.liveProgress(rowId: download.id),
+                width: Self.width))
         }
         emptyLabel.isHidden = !downloads.isEmpty
         scrollView.isHidden = downloads.isEmpty
@@ -289,14 +292,21 @@ private final class DownloadsPopoverViewController: NSViewController {
 /// One download: icon, file name, status/progress, Reveal in Finder.
 private final class DownloadRowView: NSView {
     private let download: DownloadItem
+    private let receivedBytes: Int64
+    private let totalBytes: Int64
     private let nameLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let iconView = NSImageView()
     private let revealButton = NSButton()
 
-    init(download: DownloadItem, width: CGFloat) {
+    /// `liveProgress`, when given, takes precedence over the row's stored
+    /// byte counts, which trail it by up to
+    /// DownloadCoordinator.progressPersistInterval.
+    init(download: DownloadItem, liveProgress: DownloadCoordinator.Progress?, width: CGFloat) {
         self.download = download
+        self.receivedBytes = liveProgress?.receivedBytes ?? download.receivedBytes
+        self.totalBytes = liveProgress?.totalBytes ?? download.totalBytes
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 48))
         setUpViews()
     }
@@ -352,9 +362,9 @@ private final class DownloadRowView: NSView {
         case .pending, .inProgress:
             progressIndicator.isHidden = false
             statusLabel.isHidden = true
-            if download.totalBytes > 0 {
+            if totalBytes > 0 {
                 progressIndicator.isIndeterminate = false
-                progressIndicator.doubleValue = Double(download.receivedBytes) / Double(download.totalBytes) * 100
+                progressIndicator.doubleValue = Double(receivedBytes) / Double(totalBytes) * 100
             } else {
                 // No Content-Length: a determinate bar stuck at 0 would read
                 // as "not started" rather than "size unknown".
@@ -364,7 +374,7 @@ private final class DownloadRowView: NSView {
         case .completed:
             progressIndicator.isHidden = true
             statusLabel.isHidden = false
-            statusLabel.stringValue = Self.byteFormatter.string(fromByteCount: max(download.receivedBytes, 0))
+            statusLabel.stringValue = Self.byteFormatter.string(fromByteCount: max(receivedBytes, 0))
         case .cancelled:
             progressIndicator.isHidden = true
             statusLabel.isHidden = false

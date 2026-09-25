@@ -2,8 +2,11 @@ import AppKit
 
 /// Fetches, caches, and serves tab favicons.
 ///
-/// - In-memory cache keyed by host, so switching between already-visited
-///   tabs never re-fetches.
+/// - In-memory cache keyed by profile id and host, so switching between
+///   already-visited tabs never re-fetches. It is per profile because a hit
+///   skips the disk write below: a shared entry would let one profile's
+///   fetch leave another profile's disk cache (and so its start-page tiles,
+///   see cachedFaviconData) without the icon.
 /// - On-disk cache per profile, under the same directory CEF already uses
 ///   for that profile's own cache (see CommandLineArgs.profileDirectory) --
 ///   `<profilesRootPath>/<profileId>/BrowserFavicons/<host>.png`, keyed by
@@ -31,8 +34,13 @@ import AppKit
 final class FaviconLoader {
     static let shared = FaviconLoader()
 
+    private struct CacheKey: Hashable {
+        let profileId: String
+        let host: String
+    }
+
     /// Only touched on `queue`.
-    private var memoryCache: [String: NSImage] = [:]
+    private var memoryCache: [CacheKey: NSImage] = [:]
     private let queue = DispatchQueue(label: "dev.stroud.browser.faviconloader")
     private let session = URLSession(configuration: .ephemeral)
     private let targetSize = NSSize(width: 32, height: 32) // @2x for a 16pt tab icon slot
@@ -42,15 +50,16 @@ final class FaviconLoader {
     func loadFavicon(host: String, hintURL: String?, profileId: String, completion: @escaping (NSImage?) -> Void) {
         queue.async { [weak self] in
             guard let self else { return }
+            let key = CacheKey(profileId: profileId, host: host)
 
-            if let cached = self.memoryCache[host] {
+            if let cached = self.memoryCache[key] {
                 DispatchQueue.main.async { completion(cached) }
                 return
             }
 
             let diskURL = self.diskCacheURL(host: host, profileId: profileId)
             if let diskURL, let data = try? Data(contentsOf: diskURL), let image = self.decodedImage(from: data) {
-                self.memoryCache[host] = image
+                self.memoryCache[key] = image
                 DispatchQueue.main.async { completion(image) }
                 return
             }
@@ -69,7 +78,7 @@ final class FaviconLoader {
                     return
                 }
                 self.queue.async {
-                    self.memoryCache[host] = image
+                    self.memoryCache[key] = image
                     if let diskURL {
                         self.saveToDisk(image: image, url: diskURL)
                     }
@@ -145,6 +154,8 @@ final class FaviconLoader {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        try? png.write(to: url)
+        // Atomic, because cachedFaviconData reads these files synchronously
+        // from the main thread and must never see a half-written PNG.
+        try? png.write(to: url, options: .atomic)
     }
 }

@@ -1,8 +1,9 @@
 import Foundation
 
 /// Posted (object: the profile id whose downloads changed) whenever a
-/// download is created or updated, so DownloadsWindowController can refresh
-/// without polling.
+/// download is created, changes state, or has made progress -- the last at
+/// most once per DownloadCoordinator.progressPersistInterval per download --
+/// so DownloadsWindowController can refresh without polling.
 extension Notification.Name {
     static let downloadsDidChange = Notification.Name("Browser.downloadsDidChange")
     /// Posted (object: the profile id) only when a download *begins*, not on
@@ -28,7 +29,21 @@ final class DownloadCoordinator {
         let rowId: Int64
     }
 
+    struct Progress: Equatable {
+        let receivedBytes: Int64
+        let totalBytes: Int64
+    }
+
+    /// The engine reports progress many times a second, far more often than
+    /// a SQLite write plus a notification that rebuilds every observing view
+    /// is worth. Progress between persists lives only in liveProgressByRowId;
+    /// state changes are always written at once, since those are what must
+    /// survive a crash and what the UI must never show late.
+    static let progressPersistInterval: TimeInterval = 1
+
     private var rowsByDownloadId: [Int64: Entry] = [:]
+    private var liveProgressByRowId: [Int64: Progress] = [:]
+    private var lastPersistByRowId: [Int64: Date] = [:]
 
     /// DownloadStore rows created during *this* run of the app. The store
     /// itself persists across launches (that's what the ⌘⇧J window shows),
@@ -49,6 +64,13 @@ final class DownloadCoordinator {
 
     var hasSessionDownloads: Bool { !startedRowIds.isEmpty }
 
+    /// The newest progress the engine has reported for an unfinished
+    /// download, which can be ahead of its DownloadStore row by up to
+    /// progressPersistInterval.
+    func liveProgress(rowId: Int64) -> Progress? {
+        liveProgressByRowId[rowId]
+    }
+
     /// Records the start of a download -- or, when the engine is retrying one
     /// it already reported, rewinds the row that download already has.
     ///
@@ -63,6 +85,7 @@ final class DownloadCoordinator {
         let store = ProfileDataStoreManager.shared.stores(for: profile).downloads
         if let existing = rowsByDownloadId[info.downloadId], existing.profileId == profile.id {
             try? store.restart(id: existing.rowId, destinationPath: info.destinationPath)
+            forgetProgress(rowId: existing.rowId)
             // .downloadsDidChange, but deliberately not .downloadDidStart: a
             // retry must not re-present the toolbar popover the user may have
             // just dismissed (five times over, for the failure above).
@@ -90,15 +113,39 @@ final class DownloadCoordinator {
             return
         }
         let store = ProfileDataStoreManager.shared.stores(for: profile).downloads
+        let terminalState: DownloadState?
         if info.isComplete {
-            try? store.updateState(id: entry.rowId, state: .completed)
+            terminalState = .completed
         } else if info.isCancelled {
-            try? store.updateState(id: entry.rowId, state: .cancelled)
+            terminalState = .cancelled
         } else if info.isInterrupted {
-            try? store.updateState(id: entry.rowId, state: .interrupted)
+            terminalState = .interrupted
         } else {
+            terminalState = nil
+        }
+
+        if let terminalState {
+            // The final byte counts may not have been persisted yet.
             try? store.updateProgress(id: entry.rowId, receivedBytes: info.receivedBytes, totalBytes: info.totalBytes)
+            try? store.updateState(id: entry.rowId, state: terminalState)
+            forgetProgress(rowId: entry.rowId)
+        } else {
+            let progress = Progress(receivedBytes: info.receivedBytes, totalBytes: info.totalBytes)
+            guard progress != liveProgressByRowId[entry.rowId] else { return }
+            liveProgressByRowId[entry.rowId] = progress
+            let now = Date()
+            if let last = lastPersistByRowId[entry.rowId],
+               now.timeIntervalSince(last) < Self.progressPersistInterval {
+                return
+            }
+            lastPersistByRowId[entry.rowId] = now
+            try? store.updateProgress(id: entry.rowId, receivedBytes: progress.receivedBytes, totalBytes: progress.totalBytes)
         }
         NotificationCenter.default.post(name: .downloadsDidChange, object: entry.profileId)
+    }
+
+    private func forgetProgress(rowId: Int64) {
+        liveProgressByRowId.removeValue(forKey: rowId)
+        lastPersistByRowId.removeValue(forKey: rowId)
     }
 }
