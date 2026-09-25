@@ -11,6 +11,15 @@ enum CEFEngine: BrowserEngine {
         BRWApplication.bootstrap()
     }
 
+    static var capabilities: EngineCapabilities {
+        EngineCapabilities(
+            inAppDevTools: true,
+            responsiveDesignMode: true,
+            perTabCPUUsage: true,
+            perTabAudioMute: true,
+            customContextMenuItems: true)
+    }
+
     static func initialize(profilesRootPath: String) -> Bool {
         BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
     }
@@ -223,6 +232,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         @unknown default: engineDisposition = .foregroundTab
         }
         delegate?.engineTabDidRequestNewTab(url: url, disposition: engineDisposition)
+    }
+
+    func browserDidRequestClose() {
+        delegate?.engineTabDidRequestClose()
     }
 
     func browserDidBlockRequest(toTracker trackerDomain: String, onPageHost pageHost: String) {

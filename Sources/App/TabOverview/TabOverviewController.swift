@@ -35,8 +35,10 @@ final class TabOverviewController {
         // cpuUsagePercent is read once here, matching this view's existing
         // "built once when shown; no live updates" design (see
         // TabOverviewView's own doc comment) -- not a live-refreshing
-        // monitor, just a subtle snapshot indicator (browser-7jz.4).
-        let tabs = windowController.tabs.map { (id: $0.id, title: $0.title, favicon: $0.faviconImage, cpuUsagePercent: $0.cpuUsagePercent()) }
+        // monitor, just a subtle snapshot indicator (browser-7jz.4). nil
+        // when the engine has no per-tab figure, so no badge is shown.
+        let readsCPU = ActiveEngine.capabilities.perTabCPUUsage
+        let tabs = windowController.tabs.map { (id: $0.id, title: $0.title, favicon: $0.faviconImage, cpuUsagePercent: readsCPU ? $0.cpuUsagePercent() : nil) }
         view.configure(
             tabs: tabs,
             selectedTabId: windowController.activeTab?.id,

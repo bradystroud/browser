@@ -16,6 +16,15 @@ final class MainMenuBuilder {
     /// trailing items are their own dynamic content to clear before
     /// repopulating -- simpler than scanning for a sentinel separator.
     private var historyMenuStaticCount = 0
+
+    /// Items whose presence or title depends on what the running engine can
+    /// do -- see refreshEngineDependentItems().
+    private let responsiveDesignModeItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
+    private let devToolsItem = NSMenuItem(title: "Open Developer Tools", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "i")
+    private let javaScriptConsoleItem = NSMenuItem(title: "JavaScript Console", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "j")
+    private lazy var engineDependentItemsUpdater = MenuUpdater { [weak self] in
+        self?.refreshEngineDependentItems()
+    }
     private var bookmarksMenuStaticCount = 0
 
     /// Keeps the Profiles menu in sync with ProfileManager regardless of
@@ -251,9 +260,10 @@ final class MainMenuBuilder {
             keyEquivalent: "s"
         ).keyEquivalentModifierMask = [.command, .control]
         menu.addItem(.separator())
-        let responsiveItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
-        responsiveItem.submenu = responsiveDesignModeMenu()
-        menu.addItem(responsiveItem)
+        responsiveDesignModeItem.submenu = responsiveDesignModeMenu()
+        menu.addItem(responsiveDesignModeItem)
+        menu.delegate = engineDependentItemsUpdater
+        refreshEngineDependentItems()
         menu.addItem(.separator())
         // browser-7jz.1 -- targets AppDelegate (not BrowserWindowController),
         // matching the Responsive Design Mode item just above.
@@ -524,11 +534,25 @@ final class MainMenuBuilder {
     /// menu (History, Bookmarks, Develop, then Window/Help).
     private func developerMenu() -> NSMenu {
         let menu = NSMenu(title: "Developer")
-        menu.addItem(withTitle: "Open Developer Tools", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "i")
-            .keyEquivalentModifierMask = [.command, .option]
-        menu.addItem(withTitle: "JavaScript Console", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "j")
-            .keyEquivalentModifierMask = [.command, .option]
+        devToolsItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(devToolsItem)
+        javaScriptConsoleItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(javaScriptConsoleItem)
+        menu.delegate = engineDependentItemsUpdater
+        refreshEngineDependentItems()
         return menu
+    }
+
+    /// Re-read on every open of the View and Developer menus, not once at
+    /// launch: an engine can learn a capability at runtime. Without in-app
+    /// developer tools, the DevTools command explains how to inspect the
+    /// page from Safari, and a separate JavaScript Console entry would only
+    /// repeat it.
+    private func refreshEngineDependentItems() {
+        let capabilities = ActiveEngine.capabilities
+        responsiveDesignModeItem.isHidden = !capabilities.responsiveDesignMode
+        devToolsItem.title = capabilities.inAppDevTools ? "Open Developer Tools" : "Inspect Page in Safari…"
+        javaScriptConsoleItem.isHidden = !capabilities.inAppDevTools
     }
 
     private func buildWindowMenuStaticItems() {

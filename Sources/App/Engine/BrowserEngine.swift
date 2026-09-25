@@ -131,6 +131,21 @@ protocol EngineTabDelegate: AnyObject {
     /// full contract and the two distinct CEF callbacks behind it.
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
 
+    /// The page opened a new browsing context (window.open() or a
+    /// target="_blank" link) and the engine created the new tab itself,
+    /// already linked to this one -- so the popup's `window.opener` is set
+    /// and it can postMessage back, which OAuth sign-in flows depend on.
+    /// The receiver must adopt `popup` synchronously (keep a strong
+    /// reference and attach it to a host view) or it is lost. Engines that
+    /// can only reopen a popup by URL use engineTabDidRequestNewTab instead.
+    func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition)
+
+    /// The page called window.close() and the engine allowed it (engines
+    /// only allow it for a script-opened window, or one with a single
+    /// history entry). Closes this one tab -- never its whole window, which
+    /// may hold other tabs.
+    func engineTabDidRequestClose()
+
     /// The content blocker cancelled a resource request to an ad/tracker
     /// domain -- see BRWBrowser.h's
     /// -browserDidBlockRequestToTracker:onPageHost: for the exact CEF-side
@@ -258,6 +273,33 @@ protocol EngineTab: AnyObject {
     func respondToPageMessage(requestId: Int64, success: Bool, response: String)
 }
 
+/// A tab the engine created on its own for a page-opened popup, before it
+/// has anywhere to draw -- see EngineTabDelegate.engineTabDidCreatePopup.
+protocol EnginePopupTab: EngineTab {
+    /// Puts the tab's view into `hostView`, sized to fill it and tracking
+    /// its size from then on. Called once, by whoever adopts the popup.
+    func attach(to hostView: NSView)
+}
+
+/// What the running engine can actually do, for UI that would otherwise
+/// offer a command the engine cannot carry out. UI reads
+/// `ActiveEngine.capabilities` rather than asking which engine is running.
+struct EngineCapabilities {
+    /// A developer-tools window opened from inside the app, including
+    /// right-click Inspect Element. When false, showDevTools() explains how
+    /// to inspect the page from another app instead.
+    var inAppDevTools: Bool
+    /// setResponsiveDesignMode(...) actually resizes the viewport.
+    var responsiveDesignMode: Bool
+    /// cpuUsagePercent() reports a real per-tab figure rather than 0.
+    var perTabCPUUsage: Bool
+    /// setAudioMuted(_:) silences just that tab.
+    var perTabAudioMute: Bool
+    /// The native context menu carries this app's own items (Look Up Image,
+    /// Copy Image, View Page Source and so on).
+    var customContextMenuItems: Bool
+}
+
 /// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
 /// selects at launch. Exhaustive by design -- adding a third engine means
 /// updating this enum, its one switch in WebKitEngineAdapter.swift's
@@ -299,6 +341,10 @@ protocol BrowserEngine {
     /// Must run before anything touches NSApplication.shared -- see
     /// main.swift and the CEF adapter's own doc comment for why.
     static func bootstrapApplication()
+
+    /// Read at the point of use rather than cached: a capability may only
+    /// become known at runtime.
+    static var capabilities: EngineCapabilities { get }
 
     static func initialize(profilesRootPath: String) -> Bool
 

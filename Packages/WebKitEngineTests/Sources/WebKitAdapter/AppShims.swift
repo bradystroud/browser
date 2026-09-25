@@ -10,6 +10,9 @@ enum CommandLineArgs {
 
 enum CEFEngine: BrowserEngine {
     static func bootstrapApplication() {}
+    static var capabilities: EngineCapabilities {
+        EngineCapabilities(inAppDevTools: false, responsiveDesignMode: false, perTabCPUUsage: false, perTabAudioMute: false, customContextMenuItems: false)
+    }
     static func initialize(profilesRootPath: String) -> Bool { false }
     static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
         fatalError("CEF is not available in the WebKit adapter test harness")

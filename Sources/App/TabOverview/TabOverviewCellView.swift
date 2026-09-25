@@ -49,7 +49,7 @@ final class TabOverviewCellView: NSView {
         }
     }
 
-    init(tabId: UUID, title: String, favicon: NSImage?, thumbnail: NSImage?, cpuUsagePercent: Double) {
+    init(tabId: UUID, title: String, favicon: NSImage?, thumbnail: NSImage?, cpuUsagePercent: Double?) {
         self.tabId = tabId
         super.init(frame: .zero)
         wantsLayer = true
@@ -74,7 +74,7 @@ final class TabOverviewCellView: NSView {
         titleLabel.stringValue = title
         addSubview(titleLabel)
 
-        if cpuUsagePercent > Self.highUsageThreshold {
+        if let cpuUsagePercent, cpuUsagePercent > Self.highUsageThreshold {
             energyBadgeView.isHidden = false
             energyBadgeView.toolTip = String(format: "Using %.0f%% CPU", cpuUsagePercent)
         }

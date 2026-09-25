@@ -71,18 +71,16 @@ class BRWClientHandler : public CefClient,
   // CefLifeSpanHandler methods:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
 
-  // DoClose is deliberately NOT overridden -- CefLifeSpanHandler's default
-  // (returning false) is what's required here. Per its own doc comment,
-  // returning true means "the application will send a non-standard close
-  // notification and complete the browser close itself," and if it then
-  // doesn't, "the browser will be left in a partially closed state that
-  // interferes with proper functioning." The default instead makes CEF send
-  // the standard close notification (-performClose: on macOS, given windowed
-  // rendering) to the SetAsChild host view's top-level NSWindow -- our own
-  // BrowserWindowController's window -- and it's that window's teardown
-  // completing (handled by our own windowWillClose, which closes every
-  // tab's BRWBrowser) that actually triggers OnBeforeClose, not
-  // CloseBrowser() by itself.
+  // Two ways in. Our own close (RequestClose) returns false, CEF's default:
+  // RequestClose has already taken the browser's view out of the window, so
+  // the standard -performClose: goes nowhere and the view's teardown is what
+  // delivers OnBeforeClose. A page's own window.close() arrives here with no
+  // close requested; the default would send -performClose: to the whole
+  // BrowserWindowController window and take every other tab with it. That
+  // case returns true -- CEF then resets the browser to "not closing" -- and
+  // asks the delegate to close just this tab, which comes back through
+  // RequestClose as an ordinary close.
+  bool DoClose(CefRefPtr<CefBrowser> browser) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // Cancels CEF's own default popup/new-window browser creation for every

@@ -41,6 +41,9 @@ final class RecordingTabDelegate: EngineTabDelegate {
         findResults.removeAll()
     }
 
+    /// Popups must be adopted synchronously; holding them keeps them alive.
+    var popups: [EnginePopupTab] = []
+
     func engineTabDidChangeTitle(_ title: String) { events.append("title:\(title)") }
     func engineTabDidChangeURL(_ url: String) { events.append("url:\(url)") }
     func engineTabDidChangeFaviconURL(_ faviconURL: String?) { events.append("favicon:\(faviconURL ?? "nil")") }
@@ -51,6 +54,11 @@ final class RecordingTabDelegate: EngineTabDelegate {
     func engineTabDidUpdateLoadingProgress(_ progress: Double) { events.append("progress:\(progress)") }
     func engineTabDidCommitNavigation(_ url: String) { events.append("commit:\(url)") }
     func engineTabDidStartMainFrameLoad() { events.append("didStartLoad") }
+    func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition) {
+        events.append("popup")
+        popups.append(popup)
+    }
+    func engineTabDidRequestClose() { events.append("requestClose") }
 
     func engineTabDidBeginDownload(id: Int64, url: String, suggestedName: String, destinationPath: String) {
         events.append("downloadBegin:\(suggestedName)")

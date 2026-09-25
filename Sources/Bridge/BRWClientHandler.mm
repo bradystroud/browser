@@ -191,6 +191,23 @@ bool BRWClientHandler::OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
   return false;
 }
 
+bool BRWClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  if (close_requested_ || closed_ || !browser_ || !browser_->IsSame(browser)) {
+    return false;
+  }
+  __weak id<BRWBrowserDelegate> delegate = delegate_;
+  if (![delegate respondsToSelector:@selector(browserDidRequestClose)]) {
+    return false;
+  }
+  // Deferred: the delegate's answer is RequestClose(), which must not
+  // re-enter CloseBrowser() from inside CEF's own close callback.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [delegate browserDidRequestClose];
+  });
+  return true;
+}
+
 void BRWClientHandler::RequestClose() {
   CEF_REQUIRE_UI_THREAD();
   if (closed_ || close_requested_) {
