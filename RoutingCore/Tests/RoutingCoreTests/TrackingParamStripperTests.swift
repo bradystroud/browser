@@ -54,6 +54,14 @@ struct TrackingParamStripperTests {
         #expect(!result.contains("?"))
     }
 
+    @Test("a kept parameter's percent-encoded bytes survive stripping exactly")
+    func keptParamEncodingPreserved() {
+        let result = TrackingParamStripper.strip("https://www.google.com/search?q=c%2B%2B&utm_source=x")
+        #expect(result == "https://www.google.com/search?q=c%2B%2B")
+        let spaces = TrackingParamStripper.strip("https://example.com/?q=a+b%20c%26d&fbclid=1&x=%3D")
+        #expect(spaces == "https://example.com/?q=a+b%20c%26d&x=%3D")
+    }
+
     @Test("an unparseable string is returned unchanged rather than crashing")
     func unparseableStringUnchanged() {
         let notAURL = "not a url at all ??? %"

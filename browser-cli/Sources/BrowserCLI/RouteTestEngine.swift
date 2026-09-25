@@ -73,10 +73,15 @@ public enum RouteTestEngine {
 
         let context = RoutingContext(url: effectiveURL, sourceBundleId: fromApp)
         let evaluation = RuleMatcher.evaluate(context: context, rules: configuration.rules, defaultProfileId: configuration.defaultProfileId)
-        let profileName = profiles.first { $0.id == evaluation.profileId }?.name ?? "(unknown profile id \(evaluation.profileId))"
+        let resolvedProfile = evaluation
+            .existingProfileId(configuredDefaultId: configuration.defaultProfileId) { id in profiles.contains { $0.id == id } }
+            .flatMap { id in profiles.first { $0.id == id } }
+            ?? profiles.first { $0.name == "default" }
+        let profileId = resolvedProfile?.id ?? evaluation.profileId
+        let profileName = resolvedProfile?.name ?? "(unknown profile id \(evaluation.profileId))"
 
         switch evaluation {
-        case .matched(let rule, let profileId):
+        case .matched(let rule, _):
             return RouteTestOutput(
                 url: url,
                 effectiveURL: effectiveURL,
@@ -86,14 +91,14 @@ public enum RouteTestEngine {
                 profileId: profileId,
                 profileName: profileName
             )
-        case .noMatch(let defaultProfileId):
+        case .noMatch:
             return RouteTestOutput(
                 url: url,
                 effectiveURL: effectiveURL,
                 fromApp: fromApp,
                 matchedRuleIndex: nil,
                 matchedRuleSummary: nil,
-                profileId: defaultProfileId,
+                profileId: profileId,
                 profileName: profileName
             )
         }

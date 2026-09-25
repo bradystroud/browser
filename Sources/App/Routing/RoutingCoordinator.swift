@@ -75,14 +75,17 @@ final class RoutingCoordinator {
     private func routeCleaned(url: String, sourceBundleId: String?) {
         let store = RoutingRulesStore.shared
         let context = RoutingContext(url: url, sourceBundleId: sourceBundleId)
-        let profileId = RuleMatcher.resolveProfileId(
-            for: context,
+        let evaluation = RuleMatcher.evaluate(
+            context: context,
             rules: store.rules,
             defaultProfileId: store.defaultProfileId
         )
 
-        let profile = ProfileManager.shared.profile(id: profileId)
-            ?? ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
+        let profiles = ProfileManager.shared
+        let profile = evaluation
+            .existingProfileId(configuredDefaultId: store.defaultProfileId) { profiles.profile(id: $0) != nil }
+            .flatMap { profiles.profile(id: $0) }
+            ?? profiles.profileOrCreate(named: ProfileManager.defaultProfileName)
 
         openURL(url, in: profile)
     }

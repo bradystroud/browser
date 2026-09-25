@@ -40,14 +40,16 @@ final class BookmarkImportCoordinator: NSObject {
             return
         }
 
+        // Every browser emits this same HTML format and none of them names
+        // itself in it, so the folder cannot honestly claim a source.
         let nodes = NetscapeBookmarkParser.parse(html)
-        presentImportConfirmation(nodes: nodes, sourceDescription: url.lastPathComponent)
+        presentImportConfirmation(nodes: nodes, sourceDescription: url.lastPathComponent, folderTitle: "Imported Bookmarks")
     }
 
     @objc func importFromSafari(_ sender: Any?) {
         do {
             let nodes = try SafariBookmarksPlistParser.parse(fileURL: SafariBookmarksPlistParser.defaultFileURL())
-            presentImportConfirmation(nodes: nodes, sourceDescription: "Safari")
+            presentImportConfirmation(nodes: nodes, sourceDescription: "Safari", folderTitle: "Imported from Safari")
         } catch {
             // Never silently no-op: NSDictionary(contentsOf:) returning nil
             // (both a genuine TCC/Full-Disk-Access denial and "file simply
@@ -61,7 +63,7 @@ final class BookmarkImportCoordinator: NSObject {
 
     // MARK: - Confirmation + import
 
-    private func presentImportConfirmation(nodes: [ImportedBookmarkNode], sourceDescription: String) {
+    private func presentImportConfirmation(nodes: [ImportedBookmarkNode], sourceDescription: String, folderTitle: String) {
         guard !nodes.isEmpty else {
             presentAlert(
                 title: "No Bookmarks Found",
@@ -84,7 +86,7 @@ final class BookmarkImportCoordinator: NSObject {
         label.frame = NSRect(x: 0, y: 30, width: 260, height: 16)
 
         let destinationPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        destinationPopup.addItem(withTitle: "New folder: “Imported from Safari”")
+        destinationPopup.addItem(withTitle: "New folder: \u{201C}\(folderTitle)\u{201D}")
         destinationPopup.addItem(withTitle: "Top level")
 
         let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 54))
@@ -95,11 +97,11 @@ final class BookmarkImportCoordinator: NSObject {
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
-        let useSubfolder = destinationPopup.indexOfSelectedItem == 0
-        performImport(nodes: nodes, useSubfolder: useSubfolder)
+        let subfolderTitle = destinationPopup.indexOfSelectedItem == 0 ? folderTitle : nil
+        performImport(nodes: nodes, subfolderTitle: subfolderTitle)
     }
 
-    private func performImport(nodes: [ImportedBookmarkNode], useSubfolder: Bool) {
+    private func performImport(nodes: [ImportedBookmarkNode], subfolderTitle: String?) {
         // The current window's profile, per browser-ymx -- falling back to
         // whatever profile exists if no window happens to be key (e.g.
         // import triggered in an unusual state); ProfileManager always has
@@ -113,8 +115,8 @@ final class BookmarkImportCoordinator: NSObject {
         let favoritesFolderId = FavoritesFolder.id(in: stores.bookmarks)
 
         let destinationParentId: Int64?
-        if useSubfolder {
-            destinationParentId = try? stores.bookmarks.addFolder(title: "Imported from Safari", parentId: nil)
+        if let subfolderTitle {
+            destinationParentId = try? stores.bookmarks.addFolder(title: subfolderTitle, parentId: nil)
         } else {
             destinationParentId = nil
         }

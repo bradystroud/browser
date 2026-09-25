@@ -36,6 +36,15 @@ public enum RuleEvaluation: Equatable {
         case .noMatch(let defaultProfileId): return defaultProfileId
         }
     }
+
+    /// The profile a link actually opens in: the resolved profile if it
+    /// still exists, else the configured default, else nil (the caller then
+    /// falls back to the profile named "default"). A rule can outlive the
+    /// profile it points at, and the app and `browser route-test` must pick
+    /// the same replacement.
+    public func existingProfileId(configuredDefaultId: String, exists: (String) -> Bool) -> String? {
+        [profileId, configuredDefaultId].first(where: exists)
+    }
 }
 
 public enum RuleMatcher {
@@ -108,14 +117,30 @@ public enum RuleMatcher {
 
     /// `*.example.com` matches `example.com` and any subdomain
     /// (`www.example.com`, `a.b.example.com`, ...); a bare `example.com`
-    /// matches that exact host only. Case-insensitive, matching DNS.
+    /// matches that exact host only. Case-insensitive, matching DNS, and
+    /// both sides are normalized first -- see `normalizedDomain`.
     static func matchesDomainGlob(_ glob: String, host: String) -> Bool {
-        let host = host.lowercased()
-        let glob = glob.lowercased()
+        let host = normalizedDomain(host)
         if glob.hasPrefix("*.") {
-            let suffix = String(glob.dropFirst(2))
+            let suffix = normalizedDomain(String(glob.dropFirst(2)))
             return host == suffix || host.hasSuffix("." + suffix)
         }
-        return host == glob
+        return host == normalizedDomain(glob)
+    }
+
+    /// Lowercased ASCII (punycode) form with one trailing dot removed.
+    /// `URL.host` always yields punycode (`xn--bcher-kva.de`), while a rule
+    /// is typed the way the name reads (`bücher.de`), and the fully
+    /// qualified `example.com.` names the same host as `example.com`.
+    /// Foundation's own URL parser does the IDNA conversion, since it is the
+    /// same parser that produced the host being compared against.
+    static func normalizedDomain(_ domain: String) -> String {
+        var domain = domain.lowercased()
+        if domain.hasSuffix(".") { domain.removeLast() }
+        if !domain.allSatisfy(\.isASCII),
+           let ascii = URL(string: "https://" + domain)?.host {
+            domain = ascii.lowercased()
+        }
+        return domain
     }
 }

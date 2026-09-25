@@ -46,7 +46,7 @@ public enum TrackingParamStripper {
     /// attempting to rebuild it).
     public static func strip(_ urlString: String) -> String {
         guard var components = URLComponents(string: urlString),
-              let queryItems = components.queryItems, !queryItems.isEmpty
+              let queryItems = components.percentEncodedQueryItems, !queryItems.isEmpty
         else {
             return urlString
         }
@@ -63,7 +63,10 @@ public enum TrackingParamStripper {
         // when every query item was a tracking param -- an empty-but-
         // present query items array would instead serialize as a bare
         // trailing "?".
-        components.queryItems = filtered.isEmpty ? nil : filtered
+        // The percent-encoded form, not `queryItems`: decoding and
+        // re-encoding turns a kept `q=c%2B%2B` into `q=c++`, which a server
+        // reads as "c  ".
+        components.percentEncodedQueryItems = filtered.isEmpty ? nil : filtered
         return components.string ?? urlString
     }
 }

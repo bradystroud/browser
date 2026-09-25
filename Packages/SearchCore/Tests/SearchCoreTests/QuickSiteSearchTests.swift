@@ -48,6 +48,23 @@ struct QuickSiteSearchLearningTests {
         // once, not twice.
         #expect(SearchEngine.fill(template: site?.template ?? "", with: "x y") == "https://example.com/?q=x%20y")
     }
+
+    @Test("a WordPress ?p= post id is not a search page")
+    func ignoresWordPressPostIds() {
+        #expect(QuickSiteSearch.site(fromVisitedURL: "https://blog.example.com/?p=123") == nil)
+    }
+
+    @Test("the default search engine's own results pages never become a keyword")
+    func excludesDefaultEngine() {
+        let sites = [
+            QuickSiteSearchSite(keyword: "google", host: "www.google.com", template: "https://www.google.com/search?q={searchTerms}", useCount: 50),
+            QuickSiteSearchSite(keyword: "github", host: "github.com", template: "https://github.com/search?q={searchTerms}", useCount: 2),
+        ]
+        let kept = QuickSiteSearch.sites(sites, excludingEngine: .google)
+        #expect(kept.map(\.keyword) == ["github"])
+        #expect(QuickSiteSearch.match(input: "go fund me", sites: kept) == nil)
+        #expect(QuickSiteSearch.sites(sites, excludingEngine: .duckDuckGo).count == 2)
+    }
 }
 
 @Suite("Quick Website Search: keywords")

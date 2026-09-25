@@ -45,10 +45,12 @@ final class QuickSiteSearchCatalog {
 
     /// The catalog for a profile, as it stands right now. Kicks off a
     /// rebuild when the cached copy is missing or stale, and returns without
-    /// waiting for it.
+    /// waiting for it. The default engine is filtered out here rather than
+    /// at build time, so changing the engine takes effect on the next
+    /// keystroke instead of after the next rebuild.
     func sites(profileId: String, history: HistoryStore) -> [QuickSiteSearchSite] {
         lock.lock()
-        let result = cache[profileId] ?? []
+        let cached = cache[profileId] ?? []
         let age = buildStartedAt[profileId].map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
         let needsBuild = !building.contains(profileId) && age > Self.maximumAge
         if needsBuild {
@@ -67,7 +69,7 @@ final class QuickSiteSearchCatalog {
                 self.lock.unlock()
             }
         }
-        return result
+        return QuickSiteSearch.sites(cached, excludingEngine: SearchEnginePreference.current)
     }
 
     private static func build(history: HistoryStore) -> [QuickSiteSearchSite] {

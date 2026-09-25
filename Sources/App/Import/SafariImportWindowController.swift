@@ -200,8 +200,10 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
 
             if let historyPath = row.profile.historyDatabasePath,
                let visits = try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: historyPath) {
-                try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) })
-                totalHistory += visits.count
+                // One transaction: it either writes every visit or none.
+                if (try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) })) != nil {
+                    totalHistory += visits.count
+                }
             }
 
             for url in insertedURLs {
@@ -214,7 +216,8 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         // Passwords: a single independent CSV, not tied to any Safari
         // profile row above -- see passwordEntries' own doc comment.
         var totalPasswords = 0
-        let passwordFileToOfferDeleting = chosenPasswordFileURL
+        let passwordEntryCount = passwordEntries.count
+        let passwordFile = chosenPasswordFileURL
         if !passwordEntries.isEmpty {
             let destination = resolvePasswordDestinationProfile()
             let result = PasswordImportCoordinator.importEntries(
@@ -238,18 +241,29 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         var summary = "Imported \(totalBookmarks) bookmark\(totalBookmarks == 1 ? "" : "s"), "
             + "\(totalFavorites) favourite\(totalFavorites == 1 ? "" : "s"), "
             + "\(totalHistory) history entr\(totalHistory == 1 ? "y" : "ies")"
-        if passwordFileToOfferDeleting != nil {
+        if passwordFile != nil {
             summary += ", \(totalPasswords) password\(totalPasswords == 1 ? "" : "s")"
         }
         summary += " into \(importedProfileCount) profile\(importedProfileCount == 1 ? "" : "s")."
+
+        // The plaintext file is the only remaining copy of any entry that
+        // was not imported, so deleting it is only offered once nothing in
+        // it would be lost.
+        let skippedPasswords = passwordEntryCount - totalPasswords
+        let offerToDeletePasswordFile = passwordFile != nil && passwordEntryCount > 0 && skippedPasswords == 0
+        if let passwordFile, !offerToDeletePasswordFile {
+            summary += " \(skippedPasswords) password\(skippedPasswords == 1 ? " was" : "s were") not imported "
+                + "(already saved, missing a site or username, or the Keychain refused them), "
+                + "so \(passwordFile.lastPathComponent) has been kept."
+        }
 
         let alert = NSAlert()
         alert.messageText = "Import Complete"
         alert.informativeText = summary
         alert.runModal()
 
-        if let csvURL = passwordFileToOfferDeleting {
-            offerToDeletePasswordCSV(at: csvURL)
+        if offerToDeletePasswordFile, let passwordFile {
+            offerToDeletePasswordCSV(at: passwordFile)
         }
     }
 

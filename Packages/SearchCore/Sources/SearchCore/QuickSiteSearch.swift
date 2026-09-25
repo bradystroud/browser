@@ -37,8 +37,9 @@ public enum QuickSiteSearch {
     /// and deliberate: a permissive list turns every `?s=1` tracking
     /// parameter into a bogus site-search keyword, and a wrong keyword is
     /// worse than a missing one because it hijacks a word the user types.
+    /// `p` is deliberately absent: it is WordPress's post id (`?p=123`).
     private static let searchParameters: Set<String> = [
-        "q", "query", "search", "search_query", "searchterm", "keywords", "k", "wd", "text", "p",
+        "q", "query", "search", "search_query", "searchterm", "keywords", "k", "wd", "text",
     ]
 
     /// Second-level labels that are part of a public suffix rather than a
@@ -93,6 +94,17 @@ public enum QuickSiteSearch {
         }
         guard let keyword = labels.last, !keyword.isEmpty else { return nil }
         return keyword
+    }
+
+    /// `sites` without the search engine's own site. Its results pages are
+    /// the most-visited search pages in any history, so it would otherwise
+    /// always be learned -- and then "go fund me" becomes a search for
+    /// "fund me" through the prefix match, instead of the search it is.
+    public static func sites(_ sites: [QuickSiteSearchSite], excludingEngine engine: SearchEngine) -> [QuickSiteSearchSite] {
+        guard let url = engine.searchURL(for: "x"),
+              let host = URLComponents(string: url)?.host,
+              let engineKeyword = keyword(forHost: host) else { return sites }
+        return sites.filter { $0.keyword != engineKeyword }
     }
 
     /// Matches "keyword rest of the query" against known sites. Returns nil

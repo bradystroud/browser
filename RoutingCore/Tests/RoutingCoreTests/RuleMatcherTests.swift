@@ -27,6 +27,32 @@ struct DomainGlobTests {
         #expect(RuleMatcher.matchesDomainGlob("*.Example.com", host: "WWW.example.COM"))
     }
 
+    @Test("an internationalized glob matches the punycode host a URL parses to")
+    func internationalizedDomain() {
+        let rule = RoutingRule.Match(domainGlob: "bücher.de")
+        #expect(RuleMatcher.matches(rule, context: RoutingContext(url: "https://bücher.de/x", sourceBundleId: nil)))
+        #expect(RuleMatcher.matches(rule, context: RoutingContext(url: "https://xn--bcher-kva.de/x", sourceBundleId: nil)))
+        #expect(RuleMatcher.matchesDomainGlob("xn--bcher-kva.de", host: "bücher.de"))
+        #expect(!RuleMatcher.matchesDomainGlob("bucher.de", host: "xn--bcher-kva.de"))
+    }
+
+    @Test("a single trailing dot on either side is ignored")
+    func trailingDot() {
+        #expect(RuleMatcher.matchesDomainGlob("example.com", host: "example.com."))
+        #expect(RuleMatcher.matchesDomainGlob("example.com.", host: "example.com"))
+        let rule = RoutingRule.Match(domainGlob: "example.com")
+        #expect(RuleMatcher.matches(rule, context: RoutingContext(url: "https://example.com./path", sourceBundleId: nil)))
+    }
+
+    @Test("the *. wildcard composes with internationalized names and trailing dots")
+    func wildcardWithIdnAndTrailingDot() {
+        #expect(RuleMatcher.matchesDomainGlob("*.bücher.de", host: "xn--bcher-kva.de"))
+        #expect(RuleMatcher.matchesDomainGlob("*.bücher.de", host: "shop.xn--bcher-kva.de."))
+        #expect(RuleMatcher.matchesDomainGlob("*.BÜCHER.de", host: "shop.bücher.de"))
+        #expect(RuleMatcher.matchesDomainGlob("*.example.com.", host: "www.example.com."))
+        #expect(!RuleMatcher.matchesDomainGlob("*.bücher.de", host: "xn--bcher-kva.de.evil.com"))
+    }
+
     @Test("host extraction from a URL string")
     func hostExtraction() {
         #expect(RuleMatcher.host(of: "https://sub.example.com/path?q=1") == "sub.example.com")
@@ -286,5 +312,18 @@ struct RuleEvaluationTests {
 
         #expect(evaluated.profileId == resolved)
         #expect(resolved == "work")
+    }
+
+    @Test("a matched rule whose profile is gone falls back to the configured default, not a named one")
+    func existingProfileFallsBackToConfiguredDefault() {
+        let matched = RuleEvaluation.matched(
+            rule: RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "deleted")),
+            profileId: "deleted"
+        )
+        let existing: Set<String> = ["configured-default", "work"]
+
+        #expect(matched.existingProfileId(configuredDefaultId: "configured-default") { existing.contains($0) } == "configured-default")
+        #expect(RuleEvaluation.noMatch(defaultProfileId: "work").existingProfileId(configuredDefaultId: "work") { existing.contains($0) } == "work")
+        #expect(matched.existingProfileId(configuredDefaultId: "also-deleted") { existing.contains($0) } == nil)
     }
 }

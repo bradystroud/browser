@@ -70,6 +70,28 @@ final class RouteTestEngineTests: XCTestCase {
         XCTAssertEqual(result.matchedRuleIndex, 1)
     }
 
+    /// Must agree with `RoutingCoordinator`: a matched rule whose profile
+    /// was deleted opens in the configured default profile, even when that
+    /// profile is not the one named "default".
+    func testMatchedRuleWithDeletedProfileFallsBackToConfiguredDefault() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "deleted-id"))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "work-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
+        XCTAssertEqual(result.matchedRuleIndex, 1)
+        XCTAssertEqual(result.profileId, "work-id")
+        XCTAssertEqual(result.profileName, "work")
+    }
+
+    func testDeletedRuleAndDefaultProfilesFallBackToProfileNamedDefault() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "deleted-id"))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "also-deleted-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
+        XCTAssertEqual(result.profileId, "default-id")
+        XCTAssertEqual(result.profileName, "default")
+    }
+
     func testRoutingConfigurationStoreFallsBackWhenFileMissing() {
         let configuration = RoutingConfigurationStore.load(directory: "/tmp/browser-cli-tests-nonexistent-\(UUID().uuidString)", profiles: profiles)
         XCTAssertTrue(configuration.rules.isEmpty)
