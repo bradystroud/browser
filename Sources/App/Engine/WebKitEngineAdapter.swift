@@ -358,13 +358,14 @@ final class WebKitTab: NSObject, EngineTab {
         webView.removeFromSuperview()
     }
 
-    /// No public API opens Web Inspector from inside the app -- Apple's
-    /// programmatic inspector API (_showInspector etc.) is private SPI.
-    /// isInspectable (set on every tab at creation) is the whole public
-    /// surface: the tab can be attached to from Safari's Develop menu. So
-    /// "Developer Tools" explains where to find it and offers to open Safari,
-    /// rather than doing nothing visible.
+    /// Opens WebKit's own Web Inspector in the app through the private
+    /// _WKInspector SPI (see WebKitInspector.swift). When that SPI is missing
+    /// on this macOS, falls back to the public route: isInspectable (set on
+    /// every tab at creation) lets Safari's Develop menu attach to the tab,
+    /// so a sheet explains where to find it and offers to open Safari.
     func showDevTools() {
+        if WebKitInspector.show(for: webView) { return }
+        NSLog("Browser: WebKit in-app Web Inspector unavailable -- showing the Safari Develop-menu hand-off instead")
         guard #available(macOS 13.3, *) else {
             unsupported("DevTools (Safari Web Inspector attachment needs macOS 13.3+)")
             return
@@ -393,9 +394,10 @@ final class WebKitTab: NSObject, EngineTab {
             openSafari()
         }
     }
+    /// Closes the in-app inspector. With the Safari fallback there is
+    /// nothing to close: Safari's inspector window belongs to Safari.
     func closeDevTools() {
-        // Can't force-close a separate app's (Safari's) inspector window
-        // from here -- no-op, matching -showDevTools's own limitation above.
+        WebKitInspector.close(for: webView)
     }
 
     func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
