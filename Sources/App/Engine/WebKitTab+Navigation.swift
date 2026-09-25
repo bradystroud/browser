@@ -50,11 +50,7 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        if navigationResponse.isForMainFrame, !navigationResponse.canShowMIMEType {
-            decisionHandler(.download)
-        } else {
-            decisionHandler(.allow)
-        }
+        decisionHandler(WebKitDownloadPolicy.shouldDownload(navigationResponse) ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
