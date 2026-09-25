@@ -83,27 +83,16 @@ struct SiteSettingsRecord: Codable, Equatable {
 /// origin, and both of the neighbouring host-keyed stores (the content
 /// blocker allowlist, CEF's zoom map) already draw the line in that place.
 final class SiteSettingsStore {
-    private let fileURL: URL
-    private var records: [String: SiteSettingsRecord] = [:]
+    private let file: JSONFile<[String: SiteSettingsRecord]>
+    private var records: [String: SiteSettingsRecord]
 
     init(profileDirectory: URL) {
-        fileURL = profileDirectory.appendingPathComponent("site-settings.json")
-        load()
-    }
-
-    private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([String: SiteSettingsRecord].self, from: data)
-        else {
-            records = [:]
-            return
-        }
-        records = decoded
+        file = JSONFile(url: profileDirectory.appendingPathComponent("site-settings.json"))
+        records = file.load(default: [:])
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(records) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        file.save(records)
     }
 
     /// This host's settings, or an all-defaults record for a host that has
@@ -134,23 +123,6 @@ final class SiteSettingsStore {
     }
 }
 
-/// Lazily opens and caches one `SiteSettingsStore` per profile, keyed by
-/// `Profile.id`, mirroring PermissionStoreManager's pattern.
-final class SiteSettingsStoreManager {
-    static let shared = SiteSettingsStoreManager()
-
-    private var cache: [String: SiteSettingsStore] = [:]
-
-    private init() {}
-
-    func store(for profile: Profile) -> SiteSettingsStore {
-        if let existing = cache[profile.id] {
-            return existing
-        }
-        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profile.id))
-        try? FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
-        let store = SiteSettingsStore(profileDirectory: profileDirectory)
-        cache[profile.id] = store
-        return store
-    }
+enum SiteSettingsStoreManager {
+    static let shared = ProfileStoreCache(SiteSettingsStore.init(profileDirectory:))
 }

@@ -39,22 +39,15 @@ struct StartPageSettings: Codable, Equatable {
 /// singleton like ProfileManager/RoutingRulesStore).
 enum StartPageSettingsStore {
     static func load(forProfileId profileId: String) -> StartPageSettings {
-        guard let data = try? Data(contentsOf: fileURL(forProfileId: profileId)),
-              let decoded = try? JSONDecoder().decode(StartPageSettings.self, from: data) else {
-            return StartPageSettings()
-        }
-        return decoded
+        file(forProfileId: profileId).load(default: StartPageSettings())
     }
 
     static func save(_ settings: StartPageSettings, forProfileId profileId: String) {
-        guard let data = try? JSONEncoder().encode(settings) else { return }
-        let url = fileURL(forProfileId: profileId)
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        file(forProfileId: profileId).save(settings)
     }
 
-    private static func fileURL(forProfileId profileId: String) -> URL {
-        URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId))
-            .appendingPathComponent("startpage.json")
+    private static func file(forProfileId profileId: String) -> JSONFile<StartPageSettings> {
+        JSONFile(url: URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId))
+            .appendingPathComponent("startpage.json"))
     }
 }

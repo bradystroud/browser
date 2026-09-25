@@ -30,20 +30,7 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     func reload() {
-        let profiles = ProfileManager.shared.profiles
-        profilePopup.removeAllItems()
-        for profile in profiles {
-            let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
-            item.representedObject = profile
-            profilePopup.menu?.addItem(item)
-        }
-
-        let stillExists = selectedProfile.flatMap { current in profiles.first { $0.id == current.id } }
-        let toSelect = stillExists ?? profiles.first
-        if let toSelect, let index = profiles.firstIndex(where: { $0.id == toSelect.id }) {
-            profilePopup.selectItem(at: index)
-        }
-        selectedProfile = toSelect
+        selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadAddressesForSelectedProfile()
     }
 
@@ -159,13 +146,11 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         guard let profile = selectedProfile, addresses.indices.contains(row) else { return }
         let address = addresses[row]
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Delete Saved Address?"
-        alert.informativeText = "The saved address for \(address.fullName.isEmpty ? "this entry" : address.fullName) will be removed."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: "Delete Saved Address?",
+            informativeText: "The saved address for \(address.fullName.isEmpty ? "this entry" : address.fullName) will be removed.",
+            confirmTitle: "Delete"
+        ) else { return }
 
         AddressStoreManager.shared.store(forProfileId: profile.id).delete(id: address.id)
         loadAddressesForSelectedProfile()
@@ -179,18 +164,16 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard addresses.indices.contains(row), let columnIdentifier = tableColumn?.identifier else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("addressCell.\(columnIdentifier.rawValue)")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
         let address = addresses[row]
+        let text: String
         switch columnIdentifier.rawValue {
         case "fullName":
-            cell.stringValue = address.fullName
+            text = address.fullName
         case "address":
-            cell.stringValue = [address.streetAddress, address.city, address.postalCode].filter { !$0.isEmpty }.joined(separator: ", ")
+            text = [address.streetAddress, address.city, address.postalCode].filter { !$0.isEmpty }.joined(separator: ", ")
         default:
-            cell.stringValue = ""
+            text = ""
         }
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "addressCell.\(columnIdentifier.rawValue)", text: text)
     }
 }

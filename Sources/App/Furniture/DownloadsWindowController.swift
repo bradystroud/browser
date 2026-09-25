@@ -31,7 +31,7 @@ private final class DownloadStatusView: NSView {
 /// DownloadStore and refreshed live via DownloadCoordinator's
 /// .downloadsDidChange notification (posted from CefDownloadHandler
 /// callbacks, see BRWClientHandler.mm's OnBeforeDownload/OnDownloadUpdated).
-final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class DownloadsWindowController: NSWindowController, ProfileWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private let profile: Profile
     private let tableView = NSTableView()
     private var downloads: [DownloadItem] = []
@@ -146,13 +146,9 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
         let download = downloads[row]
         switch tableColumn?.identifier.rawValue {
         case "name":
-            let identifier = NSUserInterfaceItemIdentifier("nameCell")
-            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-                ?? NSTextField(labelWithString: "")
-            cell.identifier = identifier
-            cell.stringValue = download.suggestedName
-            cell.lineBreakMode = .byTruncatingMiddle
-            return cell
+            return ListAppearance.textCell(
+                in: tableView, identifier: "nameCell", text: download.suggestedName, lineBreakMode: .byTruncatingMiddle
+            )
         case "status":
             return statusView(for: download)
         default:
@@ -203,18 +199,6 @@ final class DownloadsWindowController: NSWindowController, NSWindowDelegate, NST
     }
 }
 
-final class DownloadsWindowManager {
-    static let shared = DownloadsWindowManager()
-    private var controllers: [String: DownloadsWindowController] = [:]
-
-    private init() {}
-
-    func show(for profile: Profile) {
-        let controller = controllers[profile.id] ?? {
-            let created = DownloadsWindowController(profile: profile)
-            controllers[profile.id] = created
-            return created
-        }()
-        controller.show()
-    }
+enum DownloadsWindowManager {
+    static let shared = ProfileWindowRegistry<DownloadsWindowController>()
 }

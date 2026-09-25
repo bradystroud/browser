@@ -87,20 +87,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         stripTrackingParamsCheckbox.state = LinkHandlingPreferences.stripTrackingParams ? .on : .off
         unshortenLinksCheckbox.state = LinkHandlingPreferences.unshortenLinks ? .on : .off
 
-        let profiles = ProfileManager.shared.profiles
-        profilePopup.removeAllItems()
-        for profile in profiles {
-            let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
-            item.representedObject = profile
-            profilePopup.menu?.addItem(item)
-        }
-
-        let stillExists = selectedProfile.flatMap { current in profiles.first { $0.id == current.id } }
-        let toSelect = stillExists ?? profiles.first
-        if let toSelect, let index = profiles.firstIndex(where: { $0.id == toSelect.id }) {
-            profilePopup.selectItem(at: index)
-        }
-        selectedProfile = toSelect
+        selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadSettingsForSelectedProfile()
     }
 
@@ -382,13 +369,11 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     @objc private func resetAllPermissions() {
         guard let profile = selectedProfile, !permissionEntries.isEmpty else { return }
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Reset All Site Permissions?"
-        alert.informativeText = "Every remembered camera/microphone/location/notification decision for \u{201C}\(profile.name)\u{201D} will be forgotten. Sites will ask again next time."
-        alert.addButton(withTitle: "Reset All")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: "Reset All Site Permissions?",
+            informativeText: "Every remembered camera/microphone/location/notification decision for \u{201C}\(profile.name)\u{201D} will be forgotten. Sites will ask again next time.",
+            confirmTitle: "Reset All"
+        ) else { return }
 
         PermissionStoreManager.shared.store(for: profile).resetAll()
         loadPermissionsForSelectedProfile()
@@ -444,29 +429,21 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         if tableView === permissionsTableView {
             guard permissionEntries.indices.contains(row), let columnIdentifier = tableColumn?.identifier else { return nil }
             let entry = permissionEntries[row]
-            let identifier = NSUserInterfaceItemIdentifier("permissionCell.\(columnIdentifier.rawValue)")
-            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-                ?? NSTextField(labelWithString: "")
-            cell.identifier = identifier
+            let text: String
             switch columnIdentifier.rawValue {
             case "origin":
-                cell.stringValue = entry.origin
+                text = entry.origin
             case "kind":
-                cell.stringValue = Self.displayName(forKind: entry.kind)
+                text = Self.displayName(forKind: entry.kind)
             case "decision":
-                cell.stringValue = entry.allowed ? "Allowed" : "Denied"
+                text = entry.allowed ? "Allowed" : "Denied"
             default:
-                cell.stringValue = ""
+                text = ""
             }
-            return cell
+            return ListAppearance.textCell(in: tableView, identifier: "permissionCell.\(columnIdentifier.rawValue)", text: text)
         }
 
         guard allowlistedHosts.indices.contains(row) else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("hostCell")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
-        cell.stringValue = allowlistedHosts[row]
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "hostCell", text: allowlistedHosts[row])
     }
 }

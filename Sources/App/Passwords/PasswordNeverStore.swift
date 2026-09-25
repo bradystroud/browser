@@ -8,27 +8,16 @@ import Foundation
 /// here that needs Keychain-level protection the way PasswordStore's
 /// actual saved passwords do.
 final class PasswordNeverStore {
-    private let fileURL: URL
-    private var neverOrigins: Set<String> = []
+    private let file: JSONFile<Set<String>>
+    private var neverOrigins: Set<String>
 
     init(profileDirectory: URL) {
-        fileURL = profileDirectory.appendingPathComponent("password-never-list.json")
-        load()
-    }
-
-    private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode(Set<String>.self, from: data)
-        else {
-            neverOrigins = []
-            return
-        }
-        neverOrigins = decoded
+        file = JSONFile(url: profileDirectory.appendingPathComponent("password-never-list.json"))
+        neverOrigins = file.load(default: [])
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(neverOrigins) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        file.save(neverOrigins)
     }
 
     /// `origin` is matched exactly as passed by the save-prompt flow (the
@@ -57,23 +46,6 @@ final class PasswordNeverStore {
     }
 }
 
-/// Lazily opens and caches one PasswordNeverStore per profile id (browser-
-/// ojw), mirroring PermissionStoreManager's pattern.
-final class PasswordNeverStoreManager {
-    static let shared = PasswordNeverStoreManager()
-
-    private var cache: [String: PasswordNeverStore] = [:]
-
-    private init() {}
-
-    func store(forProfileId profileId: String) -> PasswordNeverStore {
-        if let existing = cache[profileId] {
-            return existing
-        }
-        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId))
-        try? FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
-        let store = PasswordNeverStore(profileDirectory: profileDirectory)
-        cache[profileId] = store
-        return store
-    }
+enum PasswordNeverStoreManager {
+    static let shared = ProfileStoreCache(PasswordNeverStore.init(profileDirectory:))
 }

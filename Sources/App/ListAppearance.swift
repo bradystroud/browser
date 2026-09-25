@@ -45,4 +45,24 @@ enum ListAppearance {
         tableView.gridStyleMask = []
         tableView.rowHeight = rowHeight ?? Self.rowHeight
     }
+
+    /// A plain label cell for `tableView`, reused from its queue when one
+    /// with `identifier` is free. `lineBreakMode` is applied only when
+    /// given, so a call site that never set one keeps the label default.
+    static func textCell(
+        in tableView: NSTableView,
+        identifier: String,
+        text: String,
+        lineBreakMode: NSLineBreakMode? = nil
+    ) -> NSTextField {
+        let identifier = NSUserInterfaceItemIdentifier(identifier)
+        let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTextField
+            ?? NSTextField(labelWithString: "")
+        cell.identifier = identifier
+        cell.stringValue = text
+        if let lineBreakMode {
+            cell.lineBreakMode = lineBreakMode
+        }
+        return cell
+    }
 }

@@ -113,11 +113,11 @@ final class PrivacyReportWindowController: NSObject, NSWindowDelegate, NSMenuIte
     /// control here only reads.
     private func confirmClear() {
         guard let profile, let window else { return }
-        let alert = NSAlert()
-        alert.messageText = "Clear the Privacy Report for \u{201C}\(profile.name)\u{201D}?"
-        alert.informativeText = "The record of which trackers were blocked, and where, will be deleted. Blocking itself is unaffected and carries on exactly as before."
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
+        let alert = NSAlert.destructiveConfirmation(
+            message: "Clear the Privacy Report for \u{201C}\(profile.name)\u{201D}?",
+            informativeText: "The record of which trackers were blocked, and where, will be deleted. Blocking itself is unaffected and carries on exactly as before.",
+            confirmTitle: "Clear"
+        )
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, let profile = self.profile else { return }
             TrackerReportCoordinator.shared.clearReport(for: profile)

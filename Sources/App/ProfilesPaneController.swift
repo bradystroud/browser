@@ -140,8 +140,7 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         let selectedIDs = Set(selectedProfiles.map(\.id))
         let openWindowCount = WindowManager.shared.windowControllers.filter { selectedIDs.contains($0.profile.id) }.count
         let count = selectedProfiles.count
-        let confirm = NSAlert()
-        confirm.messageText = count == 1
+        let message = count == 1
             ? "Delete profile \"\(selectedProfiles[0].name)\"?"
             : "Delete \(count) profiles?"
         let dataOwner = count == 1 ? "this profile's" : "these profiles'"
@@ -152,11 +151,11 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         let selectedNames = count > 1
             ? selectedProfiles.map { "\"\($0.name)\"" }.joined(separator: ", ") + "\n\n"
             : ""
-        confirm.informativeText = "\(selectedNames)This permanently deletes \(dataOwner) browsing data (cookies, history, cache)\(windowClause). This can't be undone."
-        confirm.addButton(withTitle: count == 1 ? "Delete" : "Delete Profiles")
-        confirm.addButton(withTitle: "Cancel")
-        confirm.buttons.first?.hasDestructiveAction = true
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: message,
+            informativeText: "\(selectedNames)This permanently deletes \(dataOwner) browsing data (cookies, history, cache)\(windowClause). This can't be undone.",
+            confirmTitle: count == 1 ? "Delete" : "Delete Profiles"
+        ) else { return }
 
         for profile in selectedProfiles {
             WindowManager.shared.closeAllWindows(forProfileId: profile.id)
@@ -204,12 +203,7 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
             container.addSubview(dot)
             return container
         case "name":
-            let identifier = NSUserInterfaceItemIdentifier("nameCell")
-            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-                ?? NSTextField(labelWithString: "")
-            cell.identifier = identifier
-            cell.stringValue = profile.name
-            return cell
+            return ListAppearance.textCell(in: tableView, identifier: "nameCell", text: profile.name)
         default:
             return nil
         }

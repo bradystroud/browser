@@ -21,21 +21,17 @@ struct PermissionDecisionEntry: Equatable {
 /// matching RoutingRulesStore/ProfileManager's existing JSON-file pattern
 /// rather than HistoryStore/BookmarkStore/DownloadStore's SQLite one.
 final class PermissionStore {
-    private let fileURL: URL
+    private let file: JSONFile<[String: [String: Bool]]>
     /// origin -> kind raw value -> allowed.
     private var decisions: [String: [String: Bool]] = [:]
 
     init(profileDirectory: URL) {
-        fileURL = profileDirectory.appendingPathComponent("permissions.json")
+        file = JSONFile(url: profileDirectory.appendingPathComponent("permissions.json"))
         load()
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([String: [String: Bool]].self, from: data) else {
-            decisions = [:]
-            return
-        }
+        let decoded = file.load(default: [:])
         // Normalized on the way in as well as on the way through, so a file
         // written before this normalization existed keeps working: its keys
         // are folded to the same shape here, and the next save writes them
@@ -60,8 +56,7 @@ final class PermissionStore {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(decisions) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        file.save(decisions)
     }
 
     private static func keys(for kinds: EnginePermissionKind) -> [String] {
@@ -143,27 +138,6 @@ final class PermissionStore {
     }
 }
 
-/// Lazily opens and caches one `PermissionStore` per profile, keyed by
-/// `Profile.id`, mirroring ProfileDataStoreManager's pattern.
-final class PermissionStoreManager {
-    static let shared = PermissionStoreManager()
-
-    private var cache: [String: PermissionStore] = [:]
-
-    private init() {}
-
-    func store(for profile: Profile) -> PermissionStore {
-        if let existing = cache[profile.id] {
-            return existing
-        }
-        let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profile.id))
-        // Usually already created by BrowserCore's Database or CEF's own
-        // cache_path by the time this runs, but not guaranteed to run after
-        // either -- ensured here too so a fresh profile with no history/
-        // bookmarks activity yet still gets a writable directory.
-        try? FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
-        let store = PermissionStore(profileDirectory: profileDirectory)
-        cache[profile.id] = store
-        return store
-    }
+enum PermissionStoreManager {
+    static let shared = ProfileStoreCache(PermissionStore.init(profileDirectory:))
 }

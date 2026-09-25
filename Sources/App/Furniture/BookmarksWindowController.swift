@@ -5,7 +5,7 @@ import AppKit
 /// reordering in this window (see docs/ai-tasks/m3-furniture-notes.md for
 /// that scope cut); items land at the end of their parent via addFolder/
 /// addBookmark's own append-at-end behavior.
-final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
+final class BookmarksWindowController: NSWindowController, ProfileWindowController, NSWindowDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate {
     private let profile: Profile
     private let outlineView = NSOutlineView()
 
@@ -175,13 +175,12 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let bookmarkItem = item as? BookmarkItem else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("cell")
-        let cell = outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
-        cell.stringValue = bookmarkItem.kind == .folder ? "\u{1F4C1} \(bookmarkItem.title)" : bookmarkItem.title
-        cell.lineBreakMode = .byTruncatingTail
-        return cell
+        return ListAppearance.textCell(
+            in: outlineView,
+            identifier: "cell",
+            text: bookmarkItem.kind == .folder ? "\u{1F4C1} \(bookmarkItem.title)" : bookmarkItem.title,
+            lineBreakMode: .byTruncatingTail
+        )
     }
 
     // MARK: - NSWindowDelegate
@@ -192,18 +191,6 @@ final class BookmarksWindowController: NSWindowController, NSWindowDelegate, NSO
     }
 }
 
-final class BookmarksWindowManager {
-    static let shared = BookmarksWindowManager()
-    private var controllers: [String: BookmarksWindowController] = [:]
-
-    private init() {}
-
-    func show(for profile: Profile) {
-        let controller = controllers[profile.id] ?? {
-            let created = BookmarksWindowController(profile: profile)
-            controllers[profile.id] = created
-            return created
-        }()
-        controller.show()
-    }
+enum BookmarksWindowManager {
+    static let shared = ProfileWindowRegistry<BookmarksWindowController>()
 }

@@ -2,7 +2,7 @@ import AppKit
 
 /// "Show All History…" (⌘Y) -- a simple per-profile search + delete window,
 /// backed by HistoryStore.
-final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class HistoryWindowController: NSWindowController, ProfileWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     private let profile: Profile
     private let searchField = NSSearchField()
     private let tableView = NSTableView()
@@ -115,13 +115,11 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
     }
 
     @objc private func clearAll() {
-        let alert = NSAlert()
-        alert.messageText = "Clear All History?"
-        alert.informativeText = "This removes every history entry for the \"\(profile.name)\" profile. This cannot be undone."
-        alert.addButton(withTitle: "Clear History")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: "Clear All History?",
+            informativeText: "This removes every history entry for the \"\(profile.name)\" profile. This cannot be undone.",
+            confirmTitle: "Clear History"
+        ) else { return }
         try? ProfileDataStoreManager.shared.stores(for: profile).history.deleteAll()
         reload()
     }
@@ -164,13 +162,7 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
         case "date": text = Self.dateFormatter.string(from: entry.lastVisitTime)
         default: text = ""
         }
-        let identifier = NSUserInterfaceItemIdentifier("cell")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
-        cell.stringValue = text
-        cell.lineBreakMode = .byTruncatingTail
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "cell", text: text, lineBreakMode: .byTruncatingTail)
     }
 
     private static let dateFormatter: DateFormatter = {
@@ -189,21 +181,6 @@ final class HistoryWindowController: NSWindowController, NSWindowDelegate, NSTab
     }
 }
 
-/// One HistoryWindowController per profile, reused across `show(for:)` calls
-/// rather than spawning a duplicate window every time the shortcut/menu item
-/// fires again for the same profile.
-final class HistoryWindowManager {
-    static let shared = HistoryWindowManager()
-    private var controllers: [String: HistoryWindowController] = [:]
-
-    private init() {}
-
-    func show(for profile: Profile) {
-        let controller = controllers[profile.id] ?? {
-            let created = HistoryWindowController(profile: profile)
-            controllers[profile.id] = created
-            return created
-        }()
-        controller.show()
-    }
+enum HistoryWindowManager {
+    static let shared = ProfileWindowRegistry<HistoryWindowController>()
 }

@@ -1,5 +1,4 @@
 import AppKit
-import LocalAuthentication
 
 /// The "Cards" section of the Autofill Settings pane (browser-ojh.2) --
 /// same profile-picker-then-table layout as PasswordsPaneController, and
@@ -29,20 +28,7 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     func reload() {
-        let profiles = ProfileManager.shared.profiles
-        profilePopup.removeAllItems()
-        for profile in profiles {
-            let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
-            item.representedObject = profile
-            profilePopup.menu?.addItem(item)
-        }
-
-        let stillExists = selectedProfile.flatMap { current in profiles.first { $0.id == current.id } }
-        let toSelect = stillExists ?? profiles.first
-        if let toSelect, let index = profiles.firstIndex(where: { $0.id == toSelect.id }) {
-            profilePopup.selectItem(at: index)
-        }
-        selectedProfile = toSelect
+        selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadCardsForSelectedProfile()
     }
 
@@ -140,41 +126,13 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
         guard let profile = selectedProfile, cards.indices.contains(row) else { return }
         let card = cards[row]
 
-        let context = LAContext()
-        var evaluationError: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Can't Verify Identity"
-            alert.informativeText = "Touch ID or your account password isn't available for verification on this Mac, so this card can't be revealed."
-            alert.runModal()
-            return
-        }
-
-        context.evaluatePolicy(
-            .deviceOwnerAuthentication,
-            localizedReason: "reveal the saved card ending \(card.last4)"
-        ) { [weak self] success, _ in
-            DispatchQueue.main.async {
-                guard success, let self,
-                      let number = CardStore.cardNumber(profileName: profile.name, id: card.id)
-                else {
-                    return
-                }
-                self.showRevealedCard(number, for: card)
-            }
-        }
-    }
-
-    private func showRevealedCard(_ number: String, for card: StoredCardSummary) {
-        let alert = NSAlert()
-        alert.messageText = "\(card.cardholderName) -- expires \(String(format: "%02d", card.expMonth))/\(card.expYear)"
-        alert.informativeText = number
-        alert.addButton(withTitle: "Copy Number")
-        alert.addButton(withTitle: "Close")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(number, forType: .string)
+        SecretReveal.authenticate(toReveal: "card", reason: "reveal the saved card ending \(card.last4)") {
+            guard let number = CardStore.cardNumber(profileName: profile.name, id: card.id) else { return }
+            SecretReveal.present(
+                number,
+                title: "\(card.cardholderName) -- expires \(String(format: "%02d", card.expMonth))/\(card.expYear)",
+                copyButtonTitle: "Copy Number"
+            )
         }
     }
 
@@ -183,13 +141,11 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
         guard let profile = selectedProfile, cards.indices.contains(row) else { return }
         let card = cards[row]
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Delete Saved Card?"
-        alert.informativeText = "The saved card for \(card.cardholderName) ending \(card.last4) will be removed."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: "Delete Saved Card?",
+            informativeText: "The saved card for \(card.cardholderName) ending \(card.last4) will be removed.",
+            confirmTitle: "Delete"
+        ) else { return }
 
         CardStore.delete(profileName: profile.name, id: card.id)
         loadCardsForSelectedProfile()
@@ -203,20 +159,18 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard cards.indices.contains(row), let columnIdentifier = tableColumn?.identifier else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("cardCell.\(columnIdentifier.rawValue)")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
         let card = cards[row]
+        let text: String
         switch columnIdentifier.rawValue {
         case "cardholderName":
-            cell.stringValue = card.cardholderName
+            text = card.cardholderName
         case "last4":
-            cell.stringValue = "····\(card.last4)"
+            text = "····\(card.last4)"
         case "expiry":
-            cell.stringValue = String(format: "%02d/%d", card.expMonth, card.expYear)
+            text = String(format: "%02d/%d", card.expMonth, card.expYear)
         default:
-            cell.stringValue = ""
+            text = ""
         }
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "cardCell.\(columnIdentifier.rawValue)", text: text)
     }
 }

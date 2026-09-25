@@ -1,5 +1,4 @@
 import AppKit
-import LocalAuthentication
 
 /// The "Passwords" pane of the Settings window (browser-ojh.1; see
 /// SettingsWindowController, which hosts this alongside the other panes in
@@ -41,20 +40,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     /// saved credentials into the table -- same pattern as
     /// PrivacyPaneController.reload().
     func reload() {
-        let profiles = ProfileManager.shared.profiles
-        profilePopup.removeAllItems()
-        for profile in profiles {
-            let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
-            item.representedObject = profile
-            profilePopup.menu?.addItem(item)
-        }
-
-        let stillExists = selectedProfile.flatMap { current in profiles.first { $0.id == current.id } }
-        let toSelect = stillExists ?? profiles.first
-        if let toSelect, let index = profiles.firstIndex(where: { $0.id == toSelect.id }) {
-            profilePopup.selectItem(at: index)
-        }
-        selectedProfile = toSelect
+        selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadCredentialsForSelectedProfile()
     }
 
@@ -175,41 +161,15 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         guard let profile = selectedProfile, credentials.indices.contains(row) else { return }
         let credential = credentials[row]
 
-        let context = LAContext()
-        var evaluationError: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &evaluationError) else {
-            let alert = NSAlert()
-            alert.alertStyle = .warning
-            alert.messageText = "Can't Verify Identity"
-            alert.informativeText = "Touch ID or your account password isn't available for verification on this Mac, so this password can't be revealed."
-            alert.runModal()
-            return
-        }
-
-        context.evaluatePolicy(
-            .deviceOwnerAuthentication,
-            localizedReason: "reveal the saved password for \(credential.username) at \(credential.origin)"
-        ) { [weak self] success, _ in
-            DispatchQueue.main.async {
-                guard success, let self,
-                      let password = PasswordStore.password(profileName: profile.name, origin: credential.origin, username: credential.username)
-                else {
-                    return
-                }
-                self.showRevealedPassword(password, for: credential)
+        SecretReveal.authenticate(
+            toReveal: "password",
+            reason: "reveal the saved password for \(credential.username) at \(credential.origin)"
+        ) {
+            guard let password = PasswordStore.password(profileName: profile.name, origin: credential.origin, username: credential.username)
+            else {
+                return
             }
-        }
-    }
-
-    private func showRevealedPassword(_ password: String, for credential: SavedCredential) {
-        let alert = NSAlert()
-        alert.messageText = "\(credential.username) at \(credential.origin)"
-        alert.informativeText = password
-        alert.addButton(withTitle: "Copy Password")
-        alert.addButton(withTitle: "Close")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(password, forType: .string)
+            SecretReveal.present(password, title: "\(credential.username) at \(credential.origin)", copyButtonTitle: "Copy Password")
         }
     }
 
@@ -218,13 +178,11 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         guard let profile = selectedProfile, credentials.indices.contains(row) else { return }
         let credential = credentials[row]
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Delete Saved Password?"
-        alert.informativeText = "The saved password for \(credential.username) at \(credential.origin) will be removed."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: "Delete Saved Password?",
+            informativeText: "The saved password for \(credential.username) at \(credential.origin) will be removed.",
+            confirmTitle: "Delete"
+        ) else { return }
 
         PasswordStore.delete(profileName: profile.name, origin: credential.origin, username: credential.username)
         loadCredentialsForSelectedProfile()
@@ -238,18 +196,15 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard credentials.indices.contains(row), let columnIdentifier = tableColumn?.identifier else { return nil }
-        let identifier = NSUserInterfaceItemIdentifier("passwordCell.\(columnIdentifier.rawValue)")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
+        let text: String
         switch columnIdentifier.rawValue {
         case "site":
-            cell.stringValue = credentials[row].origin
+            text = credentials[row].origin
         case "username":
-            cell.stringValue = credentials[row].username
+            text = credentials[row].username
         default:
-            cell.stringValue = ""
+            text = ""
         }
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "passwordCell.\(columnIdentifier.rawValue)", text: text)
     }
 }

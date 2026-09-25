@@ -362,12 +362,6 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
             text = ""
         }
 
-        let identifier = NSUserInterfaceItemIdentifier("cell")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
-        cell.stringValue = text
-        cell.lineBreakMode = .byTruncatingTail
-        return cell
+        return ListAppearance.textCell(in: tableView, identifier: "cell", text: text, lineBreakMode: .byTruncatingTail)
     }
 }

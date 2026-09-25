@@ -7,7 +7,7 @@ import AppKit
 /// The one thing here that is not in those windows is the "Unread Only"
 /// filter, which is the whole point of a reading list: it is a queue to be
 /// worked through, not an archive to be searched.
-final class ReadingListWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class ReadingListWindowController: NSWindowController, ProfileWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private let profile: Profile
     private let unreadOnlyCheckbox = NSButton()
     private let tableView = NSTableView()
@@ -203,13 +203,11 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
             NSSound.beep()
             return
         }
-        let alert = NSAlert()
-        alert.messageText = readCount == 1 ? "Remove 1 read item?" : "Remove \(readCount) read items?"
-        alert.informativeText = "Their offline copies are deleted too. This cannot be undone."
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard NSAlert.confirmDestructive(
+            message: readCount == 1 ? "Remove 1 read item?" : "Remove \(readCount) read items?",
+            informativeText: "Their offline copies are deleted too. This cannot be undone.",
+            confirmTitle: "Remove"
+        ) else { return }
         try? store.removeRead()
     }
 
@@ -247,12 +245,7 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
         case "offline": text = item.hasArticle ? "\u{2713}" : "\u{2014}"
         default: text = ""
         }
-        let identifier = NSUserInterfaceItemIdentifier("cell")
-        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTextField
-            ?? NSTextField(labelWithString: "")
-        cell.identifier = identifier
-        cell.stringValue = text
-        cell.lineBreakMode = .byTruncatingTail
+        let cell = ListAppearance.textCell(in: tableView, identifier: "cell", text: text, lineBreakMode: .byTruncatingTail)
         // Unread is the state that matters at a glance, so it is the one
         // that gets the weight -- read items recede rather than disappear.
         cell.font = item.isRead ? .systemFont(ofSize: 13) : .boldSystemFont(ofSize: 13)
@@ -281,21 +274,6 @@ final class ReadingListWindowController: NSWindowController, NSWindowDelegate, N
     }
 }
 
-/// One ReadingListWindowController per profile, reused across `show(for:)`
-/// calls rather than spawning a duplicate window every time the menu item
-/// fires again -- the same shape as HistoryWindowManager.
-final class ReadingListWindowManager {
-    static let shared = ReadingListWindowManager()
-    private var controllers: [String: ReadingListWindowController] = [:]
-
-    private init() {}
-
-    func show(for profile: Profile) {
-        let controller = controllers[profile.id] ?? {
-            let created = ReadingListWindowController(profile: profile)
-            controllers[profile.id] = created
-            return created
-        }()
-        controller.show()
-    }
+enum ReadingListWindowManager {
+    static let shared = ProfileWindowRegistry<ReadingListWindowController>()
 }

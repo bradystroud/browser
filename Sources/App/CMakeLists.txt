@@ -41,6 +41,11 @@ set(BROWSER_SWIFT_SRCS
   GeneralPaneController.swift
   GlassBackgroundView.swift
   ListAppearance.swift
+  JSONFile.swift
+  PerProfileRegistry.swift
+  NSAlert+Confirmation.swift
+  NSPopUpButton+Profiles.swift
+  SecretReveal.swift
   MainMenuBuilder.swift
   NewProfilePrompt.swift
   OmniboxField.swift

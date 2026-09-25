@@ -63,20 +63,7 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
     /// current selection if it still exists, then reloads that profile's
     /// settings.
     func reload() {
-        let profiles = ProfileManager.shared.profiles
-        profilePopup.removeAllItems()
-        for profile in profiles {
-            let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
-            item.representedObject = profile
-            profilePopup.menu?.addItem(item)
-        }
-
-        let stillExists = selectedProfile.flatMap { current in profiles.first { $0.id == current.id } }
-        let toSelect = stillExists ?? profiles.first
-        if let toSelect, let index = profiles.firstIndex(where: { $0.id == toSelect.id }) {
-            profilePopup.selectItem(at: index)
-        }
-        selectedProfile = toSelect
+        selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadSettingsForSelectedProfile()
     }
 
