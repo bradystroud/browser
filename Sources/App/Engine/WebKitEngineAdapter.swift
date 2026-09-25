@@ -99,6 +99,16 @@ enum WebKitEngine: BrowserEngine {
         return tab
     }
 
+    /// A page-opened popup's tab, built from the configuration WebKit hands
+    /// WKUIDelegate's createWebView -- see WebKitTab+UIDelegate.swift. It
+    /// shares the opener's profile, and for a private tab its non-persistent
+    /// data store, which is what a popup in the same browsing session needs.
+    static func createPopupTab(configuration: WKWebViewConfiguration, openerProfileName: String) -> WebKitTab {
+        let tab = WebKitTab(popupConfiguration: configuration, profileName: openerProfileName)
+        register(tab, profileName: openerProfileName)
+        return tab
+    }
+
     private static func register(_ tab: WebKitTab, profileName: String) {
         let table = liveTabsByProfile[profileName] ?? NSHashTable<WebKitTab>.weakObjects()
         table.add(tab)
@@ -220,7 +230,7 @@ enum WebKitEngine: BrowserEngine {
 /// constraint); still not exported from this file's actual API surface --
 /// nothing outside WebKitEngine ever sees a WebKitTab, only the EngineTab
 /// protocol WebKitEngine.createTab(s) return.
-final class WebKitTab: NSObject, EngineTab {
+final class WebKitTab: NSObject, EnginePopupTab {
     weak var delegate: EngineTabDelegate?
 
     let webView: WKWebView
@@ -274,7 +284,28 @@ final class WebKitTab: NSObject, EngineTab {
         finishInit(hostView: hostView, initialURL: initialURL, config: config)
     }
 
-    private func finishInit(hostView: NSView, initialURL: String, config: WKWebViewConfiguration) {
+    /// WebKit requires the returned web view to be built from exactly this
+    /// configuration -- that is what links it to its opener. The copy it
+    /// passes still shares the opener's WKUserContentController, though, and
+    /// every tab installs its own named message handler there (a duplicate
+    /// name throws) and removes it again on close (which would cut the
+    /// opener off). So the popup gets a controller of its own.
+    init(popupConfiguration config: WKWebViewConfiguration, profileName: String) {
+        self.profileName = profileName
+        config.userContentController = WKUserContentController()
+        webView = WKWebView(frame: .zero, configuration: config)
+        super.init()
+        finishInit(hostView: nil, initialURL: nil, config: config)
+    }
+
+    func attach(to hostView: NSView) {
+        webView.frame = hostView.bounds
+        hostView.addSubview(webView)
+    }
+
+    /// `hostView`/`initialURL` are nil for a popup: it is attached later by
+    /// whoever adopts it, and WebKit loads its first page itself.
+    private func finishInit(hostView: NSView?, initialURL: String?, config: WKWebViewConfiguration) {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
@@ -296,7 +327,7 @@ final class WebKitTab: NSObject, EngineTab {
             webView.isInspectable = true
         }
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
-        hostView.addSubview(webView)
+        hostView?.addSubview(webView)
 
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, change in
             guard let title = change.newValue.flatMap({ $0 }) else { return }
@@ -325,7 +356,7 @@ final class WebKitTab: NSObject, EngineTab {
             applyContentRuleList(ruleList)
         }
 
-        loadURL(initialURL)
+        if let initialURL { loadURL(initialURL) }
     }
 
     fileprivate func applyContentRuleList(_ ruleList: WKContentRuleList) {

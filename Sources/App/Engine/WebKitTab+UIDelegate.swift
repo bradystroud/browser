@@ -4,18 +4,26 @@ import WebKit
 extension WebKitTab: WKUIDelegate {
     // MARK: - WKUIDelegate
 
+    /// Only invoked when navigationAction.targetFrame is nil -- a page asking
+    /// for a new browsing context (target="_blank" or window.open()). The
+    /// web view returned here is the popup, linked to this one, so it gets a
+    /// real `window.opener` and WebKit treats it as script-opened (which is
+    /// what lets its own window.close() through). A ⌘/⇧-click never reaches
+    /// here: decidePolicyFor navigationAction already turned it into a
+    /// URL-only new tab.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        // Only invoked when navigationAction.targetFrame is nil -- i.e.
-        // exactly the "wants a new browsing context" signal
-        // (target="_blank"/window.open()) BRWClientHandler's own
-        // OnOpenURLFromTab reports via -browserDidRequestNewTabForURL:disposition:.
-        // Returning nil (rather than a real WKWebView) means WebKit does not
-        // create its own child web view for it -- our own UI creates a real
-        // tab instead, the same reason CEFTab's translation exists.
-        delegate?.engineTabDidRequestNewTab(
-            url: navigationAction.request.url?.absoluteString ?? "",
-            disposition: Self.clickDisposition(for: navigationAction) ?? .foregroundTab)
-        return nil
+        guard let delegate else { return nil }
+        let disposition = Self.clickDisposition(for: navigationAction)
+            ?? Self.popupDisposition(for: windowFeatures)
+        let popup = WebKitEngine.createPopupTab(configuration: configuration, openerProfileName: profileName)
+        delegate.engineTabDidCreatePopup(popup, disposition: disposition)
+        return popup.webView
+    }
+
+    /// Chrome's rule: window.open() with an explicit size is a popup window
+    /// (OAuth and payment flows ask for one); anything else is a new tab.
+    static func popupDisposition(for windowFeatures: WKWindowFeatures) -> EngineWindowOpenDisposition {
+        windowFeatures.width != nil || windowFeatures.height != nil ? .newPopup : .foregroundTab
     }
 
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -57,16 +65,10 @@ extension WebKitTab: WKUIDelegate {
     // WKScriptMessageHandlerWithReply channel unchanged -- it just hasn't been.
 
     /// The page called window.close(). WebKit only calls this when it would
-    /// let the page close itself (a DOM-opened window, or one with a single
-    /// back/forward entry).
-    ///
-    /// Deliberately not acted on yet. EngineTabDelegate has no "close this
-    /// tab" callback, and the CEF engine's equivalent (DoClose left at its
-    /// default) closes the whole host NSWindow -- which here would take every
-    /// other tab in the window with it, because window.open() becomes a tab
-    /// on this engine, not a window.
+    /// let the page close itself (a script-opened window, or one with a
+    /// single back/forward entry). Closes just this tab.
     func webViewDidClose(_ webView: WKWebView) {
-        NSLog("Browser: WebKit page requested window.close(); not honoured (no per-tab close path on EngineTabDelegate yet)")
+        delegate?.engineTabDidRequestClose()
     }
 
     // MARK: - JavaScript dialogs

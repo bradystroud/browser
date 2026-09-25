@@ -30,6 +30,15 @@ final class WindowManager {
         return controller
     }
 
+    /// A window whose only tab is an engine-created popup (window.open() with
+    /// a size, or a ⇧-click), already loading and linked to its opener.
+    @discardableResult
+    func openNewWindow(profile: Profile, adoptingPopup popup: Tab, isPrivate: Bool) -> BrowserWindowController {
+        let controller = BrowserWindowController(profile: profile, adoptingPopup: popup, isPrivate: isPrivate)
+        registerAndShow(controller)
+        return controller
+    }
+
     /// ⇧⌘N (browser-12m.1). `profile` is a fresh, throwaway value with its
     /// own random `id` -- constructed here, never passed to
     /// ProfileManager.shared.addProfile/saved anywhere, purely so

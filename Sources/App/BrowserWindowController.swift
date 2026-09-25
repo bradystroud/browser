@@ -307,6 +307,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         fatalError("init(coder:) is not supported")
     }
 
+    /// A window opened for an engine-created popup: show() adopts this tab
+    /// as the window's only tab instead of loading `initialURL`.
+    private var pendingPopupTab: Tab?
+
+    convenience init(profile: Profile, adoptingPopup popup: Tab, isPrivate: Bool) {
+        self.init(profile: profile, initialURL: "about:blank", isPrivate: isPrivate)
+        pendingPopupTab = popup
+    }
+
     /// Orders the window on screen and creates the first tab's CEF browser.
     /// Mirrors the M0 spike's ordering (window on screen, then CreateBrowser)
     /// deliberately -- SetAsChild needs the host view's real frame.
@@ -337,6 +346,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             window?.makeKeyAndOrderFront(nil)
         }
         guard tabs.isEmpty else { return }
+
+        if let popup = pendingPopupTab {
+            pendingPopupTab = nil
+            insert(popup, makeActive: true, at: 0, focusOmnibox: false)
+            return
+        }
 
         guard !restoreTabs.isEmpty else {
             addTab(url: initialURL, makeActive: true)
@@ -1052,13 +1067,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     @discardableResult
     private func insertTab(url: String, makeActive: Bool, at index: Int, focusOmnibox: Bool) -> Tab {
+        let tab = Tab(profileName: profile.name, profileId: profile.id, initialURL: url, isPrivate: isPrivate)
+        insert(tab, makeActive: makeActive, at: index, focusOmnibox: focusOmnibox)
+        return tab
+    }
+
+    /// Inserts an already-built Tab -- a new one from insertTab(url:...) or
+    /// an engine-created popup (see tab(_:didOpenPopup:inNewWindow:foreground:)).
+    private func insert(_ tab: Tab, makeActive: Bool, at index: Int, focusOmnibox: Bool) {
         // Captured before inserting: an insertion at or before the current
         // active index (possible when a background tab -- not the visible
         // one -- is the opener) would otherwise silently shift which tab
         // activeTabIndex points at. Recomputing by object identity afterward
         // is the same guard reloadAfterReorder uses for the same reason.
         let activeTabObject = activeTab
-        let tab = Tab(profileName: profile.name, profileId: profile.id, initialURL: url, isPrivate: isPrivate)
         tab.delegate = self
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
@@ -1099,7 +1121,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             }
         }
         WindowManager.shared.scheduleSessionSave()
-        return tab
     }
 
     func selectTab(at index: Int) {
@@ -2263,6 +2284,24 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// sequencing integration).
     func tab(_ tab: Tab, didRequestNewWindowForURL url: String) {
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url, isPrivate: isPrivate)
+    }
+
+    /// An engine-created popup, already loading and linked to `tab` as its
+    /// opener. Placed exactly where a URL-only request would have put it.
+    func tab(_ tab: Tab, didOpenPopup popup: Tab, inNewWindow: Bool, foreground: Bool) {
+        if inNewWindow {
+            WindowManager.shared.openNewWindow(profile: profile, adoptingPopup: popup, isPrivate: isPrivate)
+            return
+        }
+        let index = tabs.firstIndex(where: { $0 === tab }).map { insertionIndex(afterOpenerAt: $0) } ?? tabs.count
+        insert(popup, makeActive: foreground, at: index, focusOmnibox: false)
+    }
+
+    /// window.close() from the page. Closes only that tab; the window goes
+    /// too only when it was the last one, as with any other tab close.
+    func tabDidRequestClose(_ tab: Tab) {
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+        closeTab(at: index)
     }
 
     private func dismissPermissionPromptIfShowing() {

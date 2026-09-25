@@ -222,6 +222,12 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// deliberate window.open()-with-features popup (OAuth sign-in flows, etc.).
 - (void)browserDidRequestNewTabForURL:(NSString *)url disposition:(BRWWindowOpenDisposition)disposition;
 
+/// The page called window.close() and Chromium allowed it (a script-opened
+/// window, or one with a single history entry). The delegate should close
+/// this one tab via -close; see BRWClientHandler::DoClose for why the page's
+/// request never closes the whole host window. Delivered on the main thread.
+- (void)browserDidRequestClose;
+
 /// The content blocker (browser-12m.5.1) cancelled a resource request to an
 /// ad/tracker domain -- see BRWClientHandler::OnBeforeResourceLoad, which
 /// fires this once per blocked request. Delivered on the main thread even

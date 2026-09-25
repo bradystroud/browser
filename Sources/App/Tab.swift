@@ -45,6 +45,15 @@ protocol TabDelegate: AnyObject {
     /// NEW_POPUP disposition -- e.g. an OAuth sign-in flow's window.open()
     /// with explicit size features).
     func tab(_ tab: Tab, didRequestNewWindowForURL url: String)
+
+    /// The engine created `popup` itself for a page-opened window, already
+    /// linked to `tab` as its opener -- see EngineTabDelegate.
+    /// engineTabDidCreatePopup. Must be adopted synchronously: as a tab in
+    /// this window, or as the first tab of a new window when `inNewWindow`.
+    func tab(_ tab: Tab, didOpenPopup popup: Tab, inNewWindow: Bool, foreground: Bool)
+
+    /// The page called window.close() -- close exactly this tab.
+    func tabDidRequestClose(_ tab: Tab)
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -371,6 +380,23 @@ final class Tab: NSObject, EngineTabDelegate {
         self.title = resolved.isStartPage ? StartPageRenderer.tabTitle : initialURL
         super.init()
         hostView.wantsLayer = true
+    }
+
+    /// A tab around a popup the engine already created and is loading --
+    /// see TabDelegate.tab(_:didOpenPopup:inNewWindow:foreground:). It
+    /// belongs to its opener's profile and privacy mode.
+    init(adoptingPopup popup: EnginePopupTab, openedBy opener: Tab) {
+        self.profileName = opener.profileName
+        self.profileId = opener.profileId
+        self.isPrivate = opener.isPrivate
+        self.isShowingStartPage = false
+        self.engineURLString = ""
+        self.title = ""
+        super.init()
+        hostView.wantsLayer = true
+        popup.attach(to: hostView)
+        popup.delegate = self
+        browser = popup
     }
 
     private static func resolveInitialLoad(_ requestedURL: String, profileId: String, isPrivate: Bool) -> (url: String, isStartPage: Bool) {
@@ -911,5 +937,22 @@ final class Tab: NSObject, EngineTabDelegate {
         case .newWindow, .newPopup:
             delegate?.tab(self, didRequestNewWindowForURL: url)
         }
+    }
+
+    func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition) {
+        let child = Tab(adoptingPopup: popup, openedBy: self)
+        child.needsInitialOmniboxFocus = false
+        switch disposition {
+        case .foregroundTab:
+            delegate?.tab(self, didOpenPopup: child, inNewWindow: false, foreground: true)
+        case .backgroundTab:
+            delegate?.tab(self, didOpenPopup: child, inNewWindow: false, foreground: false)
+        case .newWindow, .newPopup:
+            delegate?.tab(self, didOpenPopup: child, inNewWindow: true, foreground: true)
+        }
+    }
+
+    func engineTabDidRequestClose() {
+        delegate?.tabDidRequestClose(self)
     }
 }

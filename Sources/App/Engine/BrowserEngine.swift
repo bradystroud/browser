@@ -131,6 +131,21 @@ protocol EngineTabDelegate: AnyObject {
     /// full contract and the two distinct CEF callbacks behind it.
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition)
 
+    /// The page opened a new browsing context (window.open() or a
+    /// target="_blank" link) and the engine created the new tab itself,
+    /// already linked to this one -- so the popup's `window.opener` is set
+    /// and it can postMessage back, which OAuth sign-in flows depend on.
+    /// The receiver must adopt `popup` synchronously (keep a strong
+    /// reference and attach it to a host view) or it is lost. Engines that
+    /// can only reopen a popup by URL use engineTabDidRequestNewTab instead.
+    func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition)
+
+    /// The page called window.close() and the engine allowed it (engines
+    /// only allow it for a script-opened window, or one with a single
+    /// history entry). Closes this one tab -- never its whole window, which
+    /// may hold other tabs.
+    func engineTabDidRequestClose()
+
     /// The content blocker cancelled a resource request to an ad/tracker
     /// domain -- see BRWBrowser.h's
     /// -browserDidBlockRequestToTracker:onPageHost: for the exact CEF-side
@@ -256,6 +271,14 @@ protocol EngineTab: AnyObject {
     /// (in particular, that `requestId` is global across every tab, not
     /// scoped to whichever EngineTab this is called on).
     func respondToPageMessage(requestId: Int64, success: Bool, response: String)
+}
+
+/// A tab the engine created on its own for a page-opened popup, before it
+/// has anywhere to draw -- see EngineTabDelegate.engineTabDidCreatePopup.
+protocol EnginePopupTab: EngineTab {
+    /// Puts the tab's view into `hostView`, sized to fill it and tracking
+    /// its size from then on. Called once, by whoever adopts the popup.
+    func attach(to hostView: NSView)
 }
 
 /// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
