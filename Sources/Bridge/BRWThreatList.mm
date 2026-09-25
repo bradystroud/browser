@@ -24,6 +24,9 @@
 // into this file's IO-thread-only state is already serialized by CEF
 // itself before it ever reaches here.
 //
+// The shown-interstitial table (BRWThreatListNoteInterstitial /
+// BRWThreatListConsumeContinue) is IO-thread-only for the same reason.
+//
 // The registered interstitial-page-builder block is main-thread-set-once
 // (ThreatListCoordinator.start(), before any browser can navigate),
 // UI-thread-read thereafter -- and CEF's UI thread *is* this app's main
@@ -47,6 +50,18 @@ std::atomic<const ThreatSnapshot *> g_snapshot{nullptr};
 std::unordered_map<std::string, std::unordered_set<std::string>> &SessionBypasses() {
   static std::unordered_map<std::string, std::unordered_set<std::string>> bypasses;
   return bypasses;
+}
+
+// IO-thread-only -- see this file's top-of-file comment. One entry per
+// browser currently showing (or about to show) an interstitial: the exact
+// page URL that was loaded, and the URL it is guarding.
+struct ShownInterstitial {
+  std::string interstitial_url;
+  std::string original_url;
+};
+std::unordered_map<int, ShownInterstitial> &ShownInterstitials() {
+  static std::unordered_map<int, ShownInterstitial> shown;
+  return shown;
 }
 
 // Main-thread-set-once, UI-thread-read (same thread in this app) -- mirrors
@@ -98,12 +113,10 @@ void BRWThreatListAddSessionBypass(const std::string &profile_name, const std::s
 
 bool BRWThreatListParseContinueMarker(const std::string &url, std::string *out_original_url) {
   // A hand-rolled, deliberately narrow parse -- this only ever needs to
-  // recognize a URL *we* generated (see ThreatWarningLink.swift), never an
-  // arbitrary attacker-controlled one. A page can link to this exact
-  // host/path itself, but that only ever "bypasses" a threat finding for
-  // whatever *it* put in `url=` -- there's no way to use this marker to
-  // bypass the warning for a different, unrelated site than the one
-  // already embedded in the link.
+  // recognize a URL *we* generated (see ThreatWarningLink.swift). Parsing is
+  // not authorization: any page can link to this host/path, so the caller
+  // must also confirm the request came from our own interstitial (see
+  // BRWThreatListConsumeContinue) before honouring it.
   if (url.rfind(kContinueMarkerPrefix, 0) != 0) {
     return false;
   }
@@ -120,6 +133,32 @@ bool BRWThreatListParseContinueMarker(const std::string &url, std::string *out_o
   if (out_original_url) {
     *out_original_url = decoded.ToString();
   }
+  return true;
+}
+
+void BRWThreatListNoteInterstitial(int browser_id, const std::string &interstitial_url,
+                                   const std::string &original_url) {
+  ShownInterstitials()[browser_id] = ShownInterstitial{interstitial_url, original_url};
+}
+
+bool BRWThreatListConsumeContinue(int browser_id, const std::string &current_frame_url,
+                                  const std::string &original_url) {
+  auto it = ShownInterstitials().find(browser_id);
+  if (it == ShownInterstitials().end()) {
+    return false;
+  }
+  if (it->second.interstitial_url != current_frame_url || it->second.original_url != original_url) {
+    return false;
+  }
+  CefURLParts parts;
+  if (!CefParseURL(original_url, parts)) {
+    return false;
+  }
+  const std::string scheme = ToLowerASCII(CefString(&parts.scheme).ToString());
+  if (scheme != "http" && scheme != "https") {
+    return false;
+  }
+  ShownInterstitials().erase(it);
   return true;
 }
 

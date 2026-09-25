@@ -664,6 +664,18 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
   // plumbing to get "the user clicked continue" back to native code.
   std::string original_url;
   if (BRWThreatListParseContinueMarker(raw_url, &original_url)) {
+    // Honoured only as a top-level navigation away from the exact warning
+    // page this browser was shown -- anything else (a subresource, an
+    // iframe, a marker link on some other page) could otherwise grant
+    // itself a bypass. A refused marker is still cancelled: its host is
+    // reserved and never resolves anyway.
+    const bool is_genuine_continue =
+        browser && frame && frame->IsMain() &&
+        request->GetResourceType() == RT_MAIN_FRAME &&
+        BRWThreatListConsumeContinue(browser->GetIdentifier(), frame->GetURL().ToString(), original_url);
+    if (!is_genuine_continue) {
+      return RV_CANCEL;
+    }
     CefURLParts original_parts;
     std::string original_host;
     if (CefParseURL(original_url, original_parts)) {
@@ -741,12 +753,18 @@ BRWClientHandler::ReturnValue BRWClientHandler::OnBeforeResourceLoad(
       CefRefPtr<CefFrame> target_frame = frame;
       const std::string target_host = host;
       const std::string blocked_url = raw_url;
+      const int browser_id = browser ? browser->GetIdentifier() : 0;
       CefPostTask(TID_UI, new BRWBlockTask(^{
         if (!target_frame || !target_frame->IsValid()) {
           return;
         }
         const std::string interstitial_url = BRWThreatListBuildInterstitialURL(target_host, blocked_url);
         if (!interstitial_url.empty()) {
+          // Recorded on the IO thread, where the continue marker is checked,
+          // and queued ahead of the load so it is always in place first.
+          CefPostTask(TID_IO, new BRWBlockTask(^{
+            BRWThreatListNoteInterstitial(browser_id, interstitial_url, blocked_url);
+          }));
           target_frame->LoadURL(interstitial_url);
         }
       }));

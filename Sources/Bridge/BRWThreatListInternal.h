@@ -36,6 +36,22 @@ void BRWThreatListAddSessionBypass(const std::string &profile_name, const std::s
 /// real URL it was guarding.
 bool BRWThreatListParseContinueMarker(const std::string &url, std::string *out_original_url);
 
+/// Records that `browser_id`'s main frame is being sent to
+/// `interstitial_url`, the warning page guarding `original_url`. IO thread
+/// only (see BRWThreatList.mm's class-level comment). Replaces any earlier
+/// entry for that browser.
+void BRWThreatListNoteInterstitial(int browser_id, const std::string &interstitial_url,
+                                   const std::string &original_url);
+
+/// True, and forgets the entry, only when `browser_id`'s main frame is
+/// still showing the exact interstitial recorded by
+/// BRWThreatListNoteInterstitial for this same `original_url`, and
+/// `original_url` is http(s). This is what makes a "Continue anyway" marker
+/// genuine: the link exists only on our own warning page, and a marker
+/// request from any other page, frame or target is refused. IO thread only.
+bool BRWThreatListConsumeContinue(int browser_id, const std::string &current_frame_url,
+                                  const std::string &original_url);
+
 /// Builds the interstitial page to show for a blocked top-level navigation
 /// to `host` (the original, now-cancelled navigation was to
 /// `original_url`) -- delegates to the Swift-provided builder registered
