@@ -275,6 +275,23 @@ final class WebKitTab: NSObject, EngineTab {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
+        webView.allowsBackForwardNavigationGestures = true
+        // Pinch is WebKit's visual magnification, on top of (not instead of)
+        // the pageZoom the zoom menu drives -- the same split Safari has.
+        // setZoomLevel(_:) resets it, so a zoom command always leaves the page
+        // at exactly the level the UI reports.
+        webView.allowsMagnification = true
+        // `config` shares its WKPreferences object with the web view, so this
+        // still takes effect after creation. Without it a video's fullscreen
+        // button does nothing.
+        if #available(macOS 12.3, *) {
+            config.preferences.isElementFullscreenEnabled = true
+        }
+        // Every tab is listed in Safari's Develop menu from the start, not
+        // only once "Developer Tools" has been chosen for it.
+        if #available(macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: WebKitTab.pageMessageHandlerName)
         hostView.addSubview(webView)
 
@@ -337,19 +354,39 @@ final class WebKitTab: NSObject, EngineTab {
         webView.removeFromSuperview()
     }
 
+    /// No public API opens Web Inspector from inside the app -- Apple's
+    /// programmatic inspector API (_showInspector etc.) is private SPI.
+    /// isInspectable (set on every tab at creation) is the whole public
+    /// surface: the tab can be attached to from Safari's Develop menu. So
+    /// "Developer Tools" explains where to find it and offers to open Safari,
+    /// rather than doing nothing visible.
     func showDevTools() {
-        // No public API to *open* Web Inspector at all -- Apple's
-        // programmatic inspector API (_showInspector etc.) is private SPI,
-        // Safari-only. isInspectable (macOS 13.3+) is the entire public
-        // surface: it makes the tab available to attach to *externally*,
-        // via Safari's Develop menu or the separate Web Inspector app, not
-        // something this app can pop open itself the way CEF's -showDevTools
-        // does with its own native window.
-        if #available(macOS 13.3, *) {
-            webView.isInspectable = true
-            NSLog("Browser: WebKit engine has no in-app DevTools window -- attach via Safari's Develop menu (isInspectable = true is now set for this tab).")
-        } else {
-            NSLog("Browser: unsupported on WebKit engine: DevTools (isInspectable needs macOS 13.3+)")
+        guard #available(macOS 13.3, *) else {
+            unsupported("DevTools (Safari Web Inspector attachment needs macOS 13.3+)")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Inspect this page from Safari"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Browser"
+        alert.informativeText = """
+        The WebKit engine has no built-in developer tools window. In Safari, choose \
+        Develop > \(Host.current().localizedName ?? "this Mac") > \(appName), then pick this page.
+
+        If Safari has no Develop menu, turn on "Show features for web developers" \
+        in Safari Settings > Advanced.
+        """
+        alert.addButton(withTitle: "Open Safari")
+        alert.addButton(withTitle: "OK")
+        let openSafari = {
+            guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") else { return }
+            NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
+        }
+        if let window = webView.window {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { openSafari() }
+            }
+        } else if alert.runModal() == .alertFirstButtonReturn {
+            openSafari()
         }
     }
     func closeDevTools() {
@@ -384,6 +421,7 @@ final class WebKitTab: NSObject, EngineTab {
     /// per profile (see EngineTab.setZoomLevel(_:)). Reading zoomLevel() back
     /// -- which the UI does on every access -- is correct under either.
     func setZoomLevel(_ level: Double) {
+        webView.magnification = 1
         webView.pageZoom = CGFloat(PageZoom.factor(forLevel: level))
     }
 
