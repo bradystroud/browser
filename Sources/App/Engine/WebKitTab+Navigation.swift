@@ -204,7 +204,7 @@ extension WebKitTab: WKNavigationDelegate {
     func retryFailedNavigationIfShowingErrorPage() -> Bool {
         guard let failedURL = navigationState.failedURL, webView.url == failedURL else { return false }
         navigationState.failedURL = nil
-        webView.load(URLRequest(url: failedURL))
+        loadURL(failedURL.absoluteString)
         return true
     }
 

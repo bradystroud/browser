@@ -339,10 +339,62 @@ final class WebKitTab: NSObject, EngineTab {
 
     // MARK: - EngineTab
 
+    /// A file URL only renders through loadFileURL(_:allowingReadAccessTo:),
+    /// which hands the web content process a sandbox extension for the
+    /// read-access directory; a plain load of one fails.
     func loadURL(_ url: String) {
         guard let parsed = URL(string: url) else { return }
-        webView.load(URLRequest(url: parsed))
+        if parsed.isFileURL {
+            let fileURL = Self.resolvedFileURL(parsed)
+            webView.loadFileURL(fileURL, allowingReadAccessTo: Self.fileReadAccessDirectory(for: fileURL))
+        } else {
+            webView.load(URLRequest(url: parsed))
+        }
     }
+
+    /// The directory a local page may read from. The grant has to be decided
+    /// up front: when a file page links to a file outside it, WebKit refuses
+    /// the navigation ("outside the sandbox") before the navigation delegate
+    /// is consulted, so it cannot be caught and re-issued with a wider one.
+    /// Chromium lets a file page embed and link to any other local file, so
+    /// for a file under the user's home the grant is the whole home
+    /// directory: relative links, `../` images and hops between the user's
+    /// own documents all work, as they do on CEF. Outside home (/tmp, another
+    /// volume) it is only the file's own directory -- granting the whole
+    /// disk to a web content process is more than a local page needs, and a
+    /// link from there to elsewhere on disk is the one case that fails.
+    /// The wider grant does not let a page read files through script:
+    /// fetch/XHR of file URLs stays off (allowFileAccessFromFileURLs is
+    /// never set), exactly as in Chromium.
+    static func fileReadAccessDirectory(for fileURL: URL) -> URL {
+        let file = resolvedFileURL(fileURL)
+        let home = resolvedFileURL(URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true))
+        if isFile(file, inside: home) { return home }
+        return file.hasDirectoryPath ? file : file.deletingLastPathComponent()
+    }
+
+    /// WebKit records the read-access directory after resolving it the way
+    /// NSString's resolvingSymlinksInPath does, which strips a leading
+    /// /private, and then requires the file's path to start with it
+    /// verbatim. A file URL spelled /private/tmp/... is therefore refused as
+    /// "outside the sandbox" unless it is resolved the same way first, so
+    /// every file URL is loaded in its resolved spelling (file:///tmp/...).
+    /// The query and fragment survive; only the path changes.
+    static func resolvedFileURL(_ url: URL) -> URL {
+        let path = (url.path as NSString).resolvingSymlinksInPath
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return URL(fileURLWithPath: path, isDirectory: url.hasDirectoryPath)
+        }
+        components.path = url.hasDirectoryPath && !path.hasSuffix("/") ? path + "/" : path
+        return components.url ?? url
+    }
+
+    private static func isFile(_ file: URL, inside directory: URL) -> Bool {
+        let directoryPath = resolvedFileURL(directory).path
+        let prefix = directoryPath.hasSuffix("/") ? directoryPath : directoryPath + "/"
+        return resolvedFileURL(file).path.hasPrefix(prefix)
+    }
+
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
     func reload() {
