@@ -93,4 +93,14 @@ final class RecordingTabDelegate: EngineTabDelegate {
     func engineTabDidRequestDownloadImage(imageURL: String) {}
     func engineTabDidRequestNewTab(url: String, disposition: EngineWindowOpenDisposition) { events.append("newTab:\(url)") }
     func engineTabDidBlockRequest(trackerDomain: String, pageHost: String) { events.append("blocked:\(trackerDomain)") }
+
+    /// Run inside engineTabDevToolsDidOpen, as the app's dock controller
+    /// claims an open it did not ask for.
+    var onDevToolsOpen: (() -> Void)?
+    func engineTabDevToolsDidOpen() {
+        events.append("devToolsOpen")
+        onDevToolsOpen?()
+    }
+    func engineTabDevToolsDidClose() { events.append("devToolsClose") }
+    func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide) { events.append("devToolsDockSide:\(side.rawValue)") }
 }
