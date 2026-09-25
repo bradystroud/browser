@@ -35,22 +35,10 @@ enum WebKitEngine: BrowserEngine {
         // wait-for-every-browser-to-close shutdown handshake before AppKit's
         // normal -terminate: proceeds. WKWebView needs neither: it's an
         // ordinary in-process NSView with synchronous, ARC-managed teardown,
-        // so a stock NSApplication is sufficient here.
-        //
-        // Real gap this leaves: CEF's shutdown
-        // handshake is exactly what makes AppDelegate's registered close
-        // handler (see setWindowCloseHandler below) actually get invoked at
-        // quit time, via -[BRWApplication terminate:] calling it before
-        // deferring to super. Nothing plays that role here, so under this
-        // engine WindowManager.closeAllWindowsForShutdown() -- and whatever
-        // session-save-on-quit behavior it implements -- never runs unless
-        // AppDelegate itself is changed to call it directly rather than
-        // relying on the engine to. Flagged rather than worked around: fixing
-        // it means moving that responsibility up a layer (AppDelegate always
-        // owns quit sequencing; an engine only gets to *delay* it if it needs
-        // to, which WebKit doesn't), which is a decision for
-        // browser-n50.5's decision checkpoint, not something this adapter
-        // should quietly paper over.
+        // so a stock NSApplication is sufficient here. The one thing that
+        // handshake also does -- running the app's window close handler at
+        // quit -- is done from willTerminateNotification instead; see
+        // setWindowCloseHandler.
     }
 
     private static var contentRuleListStore: WKContentRuleListStore?
@@ -120,9 +108,28 @@ enum WebKitEngine: BrowserEngine {
         }
     }
 
+    /// On CEF, -[BRWApplication terminate:] calls this handler before the
+    /// engine shuts down, which is what saves the session at quit without
+    /// waiting out its one-second debounce. WebKit has no terminate override,
+    /// so the same handler runs from willTerminateNotification: every
+    /// orderly quit posts it, and it arrives before the process exits with
+    /// every window still open. isTerminating is raised first so closing the
+    /// last window doesn't ask AppKit to terminate a second time.
     static func setWindowCloseHandler(_ handler: @escaping () -> Void) {
         windowCloseHandler = handler
+        guard terminationObserver == nil else { return }
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            guard !isTerminating else { return }
+            isTerminating = true
+            windowCloseHandler?()
+        }
     }
+
+    private static var terminationObserver: NSObjectProtocol?
 
     static func setVisualLookUpAvailable(_ available: Bool) {
         // No macOS WKWebView hook to wire this to at all: WKUIDelegate's
