@@ -57,7 +57,18 @@ final class BrowserWindow: NSWindow {
     private static let consideredModifiers: NSEvent.ModifierFlags =
         NSEvent.ModifierFlags.deviceIndependentFlagsMask.subtracting(.capsLock)
 
+    /// Whether keyboard focus is inside the active tab's docked developer
+    /// tools, on either engine.
+    var isDevToolsFocused: Bool {
+        guard let view = firstResponder as? NSView,
+              let tab = (windowController as? BrowserWindowController)?.activeTab else { return false }
+        return tab.devTools.toolsPaneContains(view)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if isDevToolsFocused {
+            return performDevToolsKeyEquivalent(with: event)
+        }
         if event.modifierFlags.intersection(Self.consideredModifiers) == [.command],
            let characters = event.charactersIgnoringModifiers,
            let controller = windowController as? BrowserWindowController {
@@ -115,6 +126,36 @@ final class BrowserWindow: NSWindow {
         return super.performKeyEquivalent(with: event)
     }
 
+    /// Docked developer tools get ⌘[ / ⌘] (previous/next panel), ⌘1-9
+    /// (panel N) and ⌘= (zoom the tools) themselves, as in Chrome: the chords
+    /// above are skipped, and the tools' own web view, which takes every ⌘
+    /// chord before the menu does, sees them first. Chords the tools leave
+    /// unhandled come back to the main menu -- except ⌘F and ⌘P, which
+    /// printPage(_:) and toggleFindBar(_:) refuse while the tools have focus.
+    /// ⌘W is taken here and closes the tab, which is what Chrome does from
+    /// docked tools, so it cannot depend on whether the engine's tools happen
+    /// to bind it.
+    private func performDevToolsKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection(Self.consideredModifiers) == [.command],
+           event.charactersIgnoringModifiers == "w",
+           let controller = windowController as? BrowserWindowController {
+            controller.closeTab(self)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// A browser command bound to a chord the developer tools also use
+    /// (⌘F search, ⌘P open file) stays out of their way while they have
+    /// focus. Choosing the menu item with the mouse still works.
+    private var isDevToolsChord: Bool {
+        guard isDevToolsFocused else { return false }
+        switch NSApp.currentEvent?.type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseUp: return false
+        default: return true
+        }
+    }
+
     /// ⌘P -- print/export live here on the window itself (rather than on
     /// BrowserWindowController, mirroring ⌘1-9 above) so their menu items can
     /// use a nil target and still resolve through the responder chain
@@ -124,6 +165,7 @@ final class BrowserWindow: NSWindow {
     /// concurrent edits in when this was written (see
     /// docs/ai-tasks/print-export-notes.md).
     @objc func printPage(_ sender: Any?) {
+        if isDevToolsChord { return }
         (windowController as? BrowserWindowController)?.activeTab?.print()
     }
 
@@ -174,6 +216,7 @@ final class BrowserWindow: NSWindow {
     /// bar (creating it lazily) and focuses it; if already showing, just
     /// refocuses -- see FindBarController.show(in:).
     @objc func toggleFindBar(_ sender: Any?) {
+        if isDevToolsChord { return }
         findBar.show(in: self)
     }
 
