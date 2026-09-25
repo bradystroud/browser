@@ -361,14 +361,14 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// Says plainly that the change is restart-only, and -- for WebKit --
     /// what stops working. Both matter: the engine is chosen on the first
     /// line of main.swift (see EnginePreference), and a WebKit session
-    /// silently loses a real list of features, including passkeys entirely.
+    /// silently loses a real list of features.
     private func updateEngineHelpText(for engine: EngineChoice) {
         let restartNote = "Takes effect the next time you open Browser. Your windows and tabs are reopened on restart."
         switch engine {
         case .cef:
             engineHelpLabel.stringValue = "Chromium, via CEF \u{2014} the full-featured engine, and the one this browser is built around. \(restartNote)"
         case .webkit:
-            engineHelpLabel.stringValue = "WebKit is experimental. Passkeys and security keys don\u{2019}t work at all, and neither do per-tab mute, DevTools, Inspect Element, View Page Source or Responsive Design Mode. Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
+            engineHelpLabel.stringValue = "WebKit is experimental. Per-tab mute, DevTools, Inspect Element, View Page Source and Responsive Design Mode don\u{2019}t work. Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
         }
     }
 
