@@ -89,6 +89,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitMuteScript.swift
   Engine/WebKitPageSheetGuard.swift
   Engine/WebKitInspector.swift
+  Engine/WebKitTab+DevTools.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
@@ -169,6 +170,7 @@ set(BROWSER_SWIFT_SRCS
   TabOverview/TabOverviewView.swift
   TabOverview/TabOverviewController.swift
   DevTools/ResponsiveDesignMode.swift
+  DevTools/DevToolsDockController.swift
   VisualLookUp/VisualLookUpController.swift
   VisualLookUp/VisualLookUpPanelController.swift
   ImageCopy/ImageCopyController.swift

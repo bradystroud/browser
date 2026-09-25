@@ -163,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let tabIdentifier = CommandLineArgs.showSettingsTabIdentifier() {
             SettingsWindowController.shared.showTab(identifier: tabIdentifier)
         }
+        DevToolsLaunchOption.applyIfRequested()
 
         // Last in the launch sequence deliberately (browser-wc7): Sparkle's
         // first scheduled check can put UI on screen, and it should never do

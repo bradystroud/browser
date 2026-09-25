@@ -1921,6 +1921,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case #selector(toggleTabSidebar(_:)):
             menuItem.title = tabStripOrientation == .vertical ? "Hide Tab Sidebar" : "Show Tab Sidebar"
             return true
+        case #selector(toggleDevTools(_:)):
+            if ActiveEngine.capabilities.inAppDevTools {
+                menuItem.title = activeTab?.devTools.isOpen == true ? "Close Developer Tools" : "Open Developer Tools"
+            }
+            return activeTab != nil
+        case #selector(setDevToolsDockSide(_:)):
+            let side = activeTab?.devTools.dockSide ?? DevToolsPreferences.dockSide
+            menuItem.state = (menuItem.representedObject as? String) == side.rawValue ? .on : .off
+            return activeTab != nil
+        case #selector(showJavaScriptConsole(_:)), #selector(inspectElements(_:)):
+            return activeTab != nil
         default:
             return true
         }
@@ -2155,13 +2166,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         DownloadsWindowManager.shared.show(for: profile)
     }
 
-    /// ⌥⌘I -- matches Chrome/Safari's DevTools shortcut. "JavaScript
-    /// Console" in the Developer menu aliases this same action for now (see
-    /// docs/ai-tasks/m3-furniture-notes.md's DevTools section) -- CEF's
-    /// ShowDevTools always opens the full inspector, there's no separate
-    /// "console-only" entry point to route to instead.
-    @objc func showDevTools(_ sender: Any?) {
-        activeTab?.showDevTools()
+    /// ⌥⌘I (and F12) -- Chrome's Developer Tools toggle, for the active tab.
+    @objc func toggleDevTools(_ sender: Any?) {
+        activeTab?.devTools.toggle()
+    }
+
+    /// ⌥⌘J -- Chrome's JavaScript Console: opens the tools on Console.
+    @objc func showJavaScriptConsole(_ sender: Any?) {
+        activeTab?.devTools.open(panel: .console)
+    }
+
+    /// ⌥⌘C -- Chrome's Inspect Elements: the element picker.
+    @objc func inspectElements(_ sender: Any?) {
+        activeTab?.devTools.startElementPicker()
+    }
+
+    /// Developer > Dock Side items carry their DevToolsDockSide raw value.
+    @objc func setDevToolsDockSide(_ sender: Any?) {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String,
+              let side = DevToolsDockSide(rawValue: raw) else { return }
+        activeTab?.devTools.setDockSide(side)
     }
 
     /// Both of these exist purely to republish a Tab-level signal as a

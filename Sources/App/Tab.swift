@@ -98,6 +98,10 @@ final class Tab: NSObject, EngineTabDelegate {
     let profileId: String
     let hostView = NSView()
 
+    /// Splits `hostView` between the page and this tab's developer tools;
+    /// the engine draws the page into `devTools.pageView`, not `hostView`.
+    private(set) lazy var devTools = DevToolsDockController(hostView: hostView)
+
     /// True for a Private Browsing tab (browser-12m.1). `profileName` above
     /// is still set (to whatever throwaway profile the owning window uses
     /// cosmetically -- see WindowManager.openNewPrivateWindow) but is never
@@ -395,7 +399,8 @@ final class Tab: NSObject, EngineTabDelegate {
         self.title = ""
         super.init()
         hostView.wantsLayer = true
-        popup.attach(to: hostView)
+        popup.attach(to: devTools.pageView)
+        devTools.attach(to: popup)
         popup.delegate = self
         browser = popup
     }
@@ -417,9 +422,10 @@ final class Tab: NSObject, EngineTabDelegate {
         // createPrivateTab is the only path that gets CEF's actual empty-
         // cache_path incognito context (browser-12m.1).
         let browser = isPrivate
-            ? ActiveEngine.createPrivateTab(hostView: hostView, initialURL: engineURLString)
-            : ActiveEngine.createTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: engineURLString)
+            ? ActiveEngine.createPrivateTab(hostView: devTools.pageView, initialURL: engineURLString)
+            : ActiveEngine.createTab(profileName: profileName, profileId: profileId, hostView: devTools.pageView, initialURL: engineURLString)
         browser.delegate = self
+        devTools.attach(to: browser)
         self.browser = browser
     }
 
@@ -457,8 +463,6 @@ final class Tab: NSObject, EngineTabDelegate {
     func goForward() { browser?.goForward() }
     func reload() { browser?.reload() }
 
-    func showDevTools() { browser?.showDevTools() }
-    func closeDevTools() { browser?.closeDevTools() }
 
     /// Responsive Design Mode (browser-6hi.2) -- see EngineTab's own doc
     /// comment for why this doesn't need DevTools' own UI open at all.
@@ -640,6 +644,7 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func close() {
+        devTools.tabWillClose()
         browser?.close()
         browser = nil
     }
@@ -956,4 +961,8 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDidRequestClose() {
         delegate?.tabDidRequestClose(self)
     }
+
+    func engineTabDevToolsDidOpen() { devTools.engineDidOpen() }
+    func engineTabDevToolsDidClose() { devTools.engineDidClose() }
+    func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide) { devTools.engineDidRequestDockSide(side) }
 }

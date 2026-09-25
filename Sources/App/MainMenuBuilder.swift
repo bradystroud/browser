@@ -20,8 +20,13 @@ final class MainMenuBuilder {
     /// Items whose presence or title depends on what the running engine can
     /// do -- see refreshEngineDependentItems().
     private let responsiveDesignModeItem = NSMenuItem(title: "Responsive Design Mode", action: nil, keyEquivalent: "")
-    private let devToolsItem = NSMenuItem(title: "Open Developer Tools", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "i")
-    private let javaScriptConsoleItem = NSMenuItem(title: "JavaScript Console", action: #selector(BrowserWindowController.showDevTools(_:)), keyEquivalent: "j")
+    private let devToolsItem = NSMenuItem(title: "Open Developer Tools", action: #selector(BrowserWindowController.toggleDevTools(_:)), keyEquivalent: "i")
+    private let devToolsF12Item = NSMenuItem(
+        title: "Developer Tools", action: #selector(BrowserWindowController.toggleDevTools(_:)),
+        keyEquivalent: String(UnicodeScalar(UInt16(NSF12FunctionKey))!))
+    private let javaScriptConsoleItem = NSMenuItem(title: "JavaScript Console", action: #selector(BrowserWindowController.showJavaScriptConsole(_:)), keyEquivalent: "j")
+    private let inspectElementsItem = NSMenuItem(title: "Inspect Elements", action: #selector(BrowserWindowController.inspectElements(_:)), keyEquivalent: "c")
+    private let devToolsDockSideItem = NSMenuItem(title: "Dock Side", action: nil, keyEquivalent: "")
     private lazy var engineDependentItemsUpdater = MenuUpdater { [weak self] in
         self?.refreshEngineDependentItems()
     }
@@ -527,17 +532,38 @@ final class MainMenuBuilder {
         return menu
     }
 
-    /// "JavaScript Console" aliases the same action as "Open Developer
-    /// Tools" for now (browser-6hi.1) -- CEF's ShowDevTools always opens the
-    /// full inspector, there's no separate console-only entry point to
-    /// route to instead. Placement matches Safari's own top-level "Develop"
-    /// menu (History, Bookmarks, Develop, then Window/Help).
+    /// Chrome's developer-tools commands and shortcuts. Placement matches
+    /// Safari's own top-level "Develop" menu (History, Bookmarks, Develop,
+    /// then Window/Help).
     private func developerMenu() -> NSMenu {
         let menu = NSMenu(title: "Developer")
         devToolsItem.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(devToolsItem)
+        // F12 toggles too, as in Chrome on every platform. A hidden alternate
+        // keeps the menu to one visible entry; it takes F12 from pages only
+        // while this app is frontmost, which Chrome does as well.
+        devToolsF12Item.keyEquivalentModifierMask = []
+        devToolsF12Item.isHidden = true
+        if #available(macOS 13.0, *) {
+            devToolsF12Item.allowsKeyEquivalentWhenHidden = true
+        }
+        menu.addItem(devToolsF12Item)
         javaScriptConsoleItem.keyEquivalentModifierMask = [.command, .option]
         menu.addItem(javaScriptConsoleItem)
+        inspectElementsItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(inspectElementsItem)
+
+        let dockMenu = NSMenu(title: "Dock Side")
+        let dockTitles: [(DevToolsDockSide, String)] = [
+            (.bottom, "Dock to Bottom"), (.right, "Dock to Right"), (.left, "Dock to Left"), (.window, "Separate Window"),
+        ]
+        for (side, title) in dockTitles {
+            let item = NSMenuItem(title: title, action: #selector(BrowserWindowController.setDevToolsDockSide(_:)), keyEquivalent: "")
+            item.representedObject = side.rawValue
+            dockMenu.addItem(item)
+        }
+        devToolsDockSideItem.submenu = dockMenu
+        menu.addItem(devToolsDockSideItem)
         menu.delegate = engineDependentItemsUpdater
         refreshEngineDependentItems()
         return menu
@@ -551,8 +577,12 @@ final class MainMenuBuilder {
     private func refreshEngineDependentItems() {
         let capabilities = ActiveEngine.capabilities
         responsiveDesignModeItem.isHidden = !capabilities.responsiveDesignMode
-        devToolsItem.title = capabilities.inAppDevTools ? "Open Developer Tools" : "Inspect Page in Safari…"
+        // With in-app tools, BrowserWindowController.validateMenuItem toggles
+        // this between Open and Close for the active tab.
+        if !capabilities.inAppDevTools { devToolsItem.title = "Inspect Page in Safari…" }
         javaScriptConsoleItem.isHidden = !capabilities.inAppDevTools
+        inspectElementsItem.isHidden = !capabilities.inAppDevTools
+        devToolsDockSideItem.isHidden = !capabilities.inAppDevTools || !capabilities.devToolsDocking
     }
 
     private func buildWindowMenuStaticItems() {
