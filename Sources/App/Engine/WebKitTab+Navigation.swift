@@ -22,6 +22,14 @@ final class WebKitNavigationState {
     /// happened. A second crash soon after shows the crash page instead of
     /// looping.
     var lastCrashReload: Date?
+
+    /// The navigation loading the threat interstitial, until it commits.
+    var pendingThreatInterstitial: WKNavigation?
+
+    /// History entries showing the threat interstitial. Keyed by entry
+    /// rather than by URL, because a page can put any URL it likes on
+    /// screen but cannot make its own entry one we loaded as a warning.
+    let threatInterstitialItems = NSHashTable<WKBackForwardListItem>.weakObjects()
 }
 
 extension WebKitTab: WKNavigationDelegate {
@@ -44,7 +52,7 @@ extension WebKitTab: WKNavigationDelegate {
            let dataURLString = WebKitEngine.interstitialDataURL(host: host, originalURL: url.absoluteString),
            let dataURL = URL(string: dataURLString) {
             decisionHandler(.cancel)
-            webView.load(URLRequest(url: dataURL))
+            navigationState.pendingThreatInterstitial = webView.load(URLRequest(url: dataURL))
             return
         }
         // Cmd/Cmd+Shift/Shift/middle-click on an ordinary <a href> -- the
@@ -60,7 +68,36 @@ extension WebKitTab: WKNavigationDelegate {
             delegate?.engineTabDidRequestNewTab(url: url.absoluteString, disposition: disposition)
             return
         }
+        if let url = navigationAction.request.url,
+           let originalURL = ThreatWarningLink.originalURL(fromContinueLink: url.absoluteString) {
+            decisionHandler(.cancel)
+            continueToThreatenedSite(originalURL, navigationAction: navigationAction)
+            return
+        }
         decisionHandler(.allow)
+    }
+
+    /// The interstitial's "Continue anyway" link, the WebKit counterpart of
+    /// BRWClientHandler::OnBeforeResourceLoad's interception of the same
+    /// marker URL. Any page can link to the marker, so a bypass is recorded
+    /// only for a main-frame navigation away from a page this tab loaded as
+    /// the interstitial, and only for an http(s) target. Anything else --
+    /// an iframe, a link on an ordinary page -- is cancelled and records
+    /// nothing, so no site can switch off the warning for itself or another.
+    /// The bypass lasts for the rest of the session, per profile, and covers
+    /// the host and its subdomains, as on CEF.
+    private func continueToThreatenedSite(_ originalURL: String, navigationAction: WKNavigationAction) {
+        guard navigationAction.targetFrame?.isMainFrame == true,
+              let currentItem = webView.backForwardList.currentItem,
+              navigationState.threatInterstitialItems.contains(currentItem),
+              let target = URL(string: originalURL),
+              let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = target.host, !host.isEmpty else {
+            NSLog("Browser: ignored a threat-warning continue link outside the warning page")
+            return
+        }
+        WebKitEngine.addThreatSessionBypass(host: host, profileName: profileName)
+        loadURL(originalURL)
     }
 
     /// The standard macOS link-click modifier overrides, or nil for an
@@ -107,6 +144,12 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if navigation === navigationState.pendingThreatInterstitial {
+            navigationState.pendingThreatInterstitial = nil
+            if let item = webView.backForwardList.currentItem {
+                navigationState.threatInterstitialItems.add(item)
+            }
+        }
         if navigation !== navigationState.errorPageNavigation {
             navigationState.failedURL = nil
         }
@@ -204,7 +247,7 @@ extension WebKitTab: WKNavigationDelegate {
     func retryFailedNavigationIfShowingErrorPage() -> Bool {
         guard let failedURL = navigationState.failedURL, webView.url == failedURL else { return false }
         navigationState.failedURL = nil
-        webView.load(URLRequest(url: failedURL))
+        loadURL(failedURL.absoluteString)
         return true
     }
 
@@ -456,5 +499,27 @@ enum WebKitErrorPage {
             .replacingOccurrences(of: ">", with: "&gt;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
+/// Threat warnings the user has clicked through this session. In memory
+/// only, like BRWThreatList.mm's own set: quitting brings every warning back.
+extension WebKitEngine {
+    private static var threatSessionBypasses: [String: Set<String>] = [:]
+
+    static func addThreatSessionBypass(host: String, profileName: String) {
+        threatSessionBypasses[profileName, default: []].insert(host.lowercased())
+    }
+
+    /// True when `host`, or any domain it is under, was bypassed in this
+    /// profile -- the same host-or-ancestor match as the threat list itself.
+    static func hasThreatSessionBypass(host: String, profileName: String) -> Bool {
+        guard let bypassed = threatSessionBypasses[profileName], !bypassed.isEmpty else { return false }
+        var candidate = Substring(host.lowercased())
+        while true {
+            if bypassed.contains(String(candidate)) { return true }
+            guard let dot = candidate.firstIndex(of: ".") else { return false }
+            candidate = candidate[candidate.index(after: dot)...]
+        }
     }
 }
