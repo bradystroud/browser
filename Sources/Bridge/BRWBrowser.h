@@ -34,6 +34,17 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
     BRWWindowOpenDispositionNewPopup,
 };
 
+/// Which DevTools panel to bring forward when opening it. Default leaves the
+/// front-end on whatever it shows at startup: the panel last used in this
+/// profile, which DevTools itself persists.
+typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
+    BRWDevToolsPanelDefault = 0,
+    BRWDevToolsPanelElements,
+    BRWDevToolsPanelConsole,
+    BRWDevToolsPanelSources,
+    BRWDevToolsPanelNetwork,
+};
+
 /// Per-tab navigation/state callbacks, all delivered on the main thread (CEF's
 /// UI thread is the main thread in this architecture -- see BRWMessagePump).
 /// One BRWBrowser has at most one delegate; the Swift-side tab model owns
@@ -260,6 +271,29 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// process (cef_browser.h, cef_frame.h), so capturing it early is legal as
 /// well as correct. Empty for a frame with no parseable host.
 - (void)browserDidBlockRequestToTracker:(NSString *)trackerDomain onPageHost:(NSString *)pageHost;
+
+/// This tab's DevTools was opened, by a -showDevTools..., -inspectElement...
+/// or -startElementPicker... call, or by the context menu's "Inspect Element"
+/// when the delegate doesn't implement -browserDidRequestInspectElementAtPoint:.
+/// Delivered asynchronously on the main thread, and once per DevTools
+/// instance -- showing DevTools again while it is open doesn't repeat it.
+- (void)browserDevToolsDidOpen;
+
+/// This tab's DevTools is gone, whatever closed it: -closeDevTools, the
+/// user closing CEF's separate DevTools window, the front-end's renderer crashing, the
+/// tab closing, or the app quitting. Delivered asynchronously on the main
+/// thread, once per -browserDevToolsDidOpen. A crash of the *inspected* page
+/// does not close DevTools: like Chrome, it stays open and disconnected.
+- (void)browserDevToolsDidClose;
+
+/// The user chose "Inspect Element" from the page's context menu. `point` is
+/// where they right-clicked, in the host view's own coordinate system (the
+/// `hostView` this browser was created with). The delegate is expected to
+/// answer with -inspectElementAtPoint:inView: on the same browser,
+/// passing `point` unchanged. Without this method, the bridge opens DevTools
+/// itself, in the last container it was embedded in, or CEF's own separate
+/// window if it never was.
+- (void)browserDidRequestInspectElementAtPoint:(NSPoint)point;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -306,16 +340,58 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// call multiple times.
 - (void)close;
 
-/// Opens Chromium DevTools for this tab. CEF pops its own separate native
-/// window for it (see BRWBrowser.mm's -showDevTools for why that's the
-/// right default here, rather than docking it into a view we own). Safe to
-/// call while already open -- CEF just focuses the existing DevTools window
-/// instead of opening a second one.
+/// Same as -showDevToolsInView:nil panel:BRWDevToolsPanelDefault -- CEF's
+/// own separate DevTools window.
 - (void)showDevTools;
 
-/// Closes this tab's associated DevTools window, if one is open. Safe to
-/// call when none is open.
+/// Opens Chromium DevTools for this tab, or focuses it if already open.
+///
+/// With a `container`: the real Chrome DevTools front-end, running in an
+/// Alloy-style child browser of `container` -- the same embedding as the
+/// page itself -- that fills the container's bounds and follows its resizes
+/// by autoresizing. Where the container sits (below, beside the page) is
+/// entirely the app's layout; the front-end is laid out as an undocked
+/// DevTools window would be, so it has no dock-side menu or close button of
+/// its own, and the app's pane chrome provides those. The container must be
+/// dedicated to this tab's DevTools; hiding it or moving it between windows
+/// is fine, and passing a different container while open moves the live
+/// DevTools into it.
+///
+/// With nil: CEF's own separate native DevTools window.
+///
+/// Switching between the two while open closes DevTools and reopens it in
+/// the new place (-browserDevToolsDidClose, then -browserDevToolsDidOpen).
+///
+/// `panel` is brought forward once the front-end has loaded (embedded only;
+/// CEF's window opens on whatever it last showed).
+- (void)showDevToolsInView:(nullable NSView *)container
+                     panel:(BRWDevToolsPanel)panel
+    NS_SWIFT_NAME(showDevTools(in:panel:));
+
+/// Opens DevTools as -showDevToolsInView:panel: would, with the element at
+/// `point` selected in the Elements panel. `point` is in the host view's own
+/// coordinate system -- exactly what -browserDidRequestInspectElementAtPoint:
+/// reports.
+- (void)inspectElementAtPoint:(NSPoint)point
+                       inView:(nullable NSView *)container
+    NS_SWIFT_NAME(inspectElement(at:in:));
+
+/// Opens DevTools as -showDevToolsInView:panel: would if it isn't open, then
+/// toggles the front-end's element picker -- the same toggle as its own
+/// "Select an element" toolbar button and Chrome's ⌘⇧C, so that button's
+/// state stays right, and a second call turns picking off again. Embedded
+/// only; CEF's window just opens.
+- (void)startElementPickerInView:(nullable NSView *)container
+    NS_SWIFT_NAME(startElementPicker(in:));
+
+/// Closes this tab's DevTools, wherever it is. Safe to call when none is
+/// open. -browserDevToolsDidClose follows once it has actually gone.
 - (void)closeDevTools;
+
+/// YES from a -showDevTools... call until DevTools is closed or asked to
+/// close; NO as soon as -closeDevTools returns, before the asynchronous
+/// -browserDevToolsDidClose arrives.
+@property (nonatomic, readonly) BOOL isDevToolsOpen;
 
 /// Overrides this tab's viewport to a fixed size/scale, the same effect as
 /// DevTools' own device toolbar / Responsive Design Mode (browser-6hi.2) --

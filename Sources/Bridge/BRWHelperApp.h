@@ -5,6 +5,8 @@
 #include "include/cef_render_process_handler.h"
 #include "include/wrapper/cef_message_router.h"
 
+#import "BRWDevToolsFrontendRenderer.h"
+
 // CefApp for the Helper.app subprocesses (renderer/GPU/plugin/alerts --
 // process_helper_mac.mm is one entry point shared by all of them; CEF
 // determines the actual role from the command line at runtime and only
@@ -36,6 +38,12 @@ class BRWHelperApp : public CefApp, public CefRenderProcessHandler {
   // why it has to be, specifically so this file doesn't need to link
   // BRWPageMessageRouter.mm/BRWClientHandler.mm) so both halves of the
   // channel agree on the query/cancel function names.
+  // Both only feed BRWDevToolsFrontendRenderer's record of which browsers
+  // are bridge-created DevTools front-ends.
+  void OnBrowserCreated(CefRefPtr<CefBrowser> browser,
+                        CefRefPtr<CefDictionaryValue> extra_info) override;
+  void OnBrowserDestroyed(CefRefPtr<CefBrowser> browser) override;
+
   void OnContextCreated(CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override;
@@ -49,6 +57,7 @@ class BRWHelperApp : public CefApp, public CefRenderProcessHandler {
 
  private:
   CefRefPtr<CefMessageRouterRendererSide> renderer_side_router_;
+  BRWDevToolsFrontendRenderer devtools_frontend_;
 
   IMPLEMENT_REFCOUNTING(BRWHelperApp);
 };

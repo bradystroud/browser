@@ -17,6 +17,7 @@
 #include "include/cef_resource_request_handler.h"
 
 #import "BRWBrowser.h"  // for the BRWBrowserDelegate protocol only.
+#import "BRWDevToolsHandler.h"
 
 // Per-browser callbacks. One instance per BRWBrowser. Owns a reference to the
 // NSView the browser is parented into so it can make the CEF-created native
@@ -265,6 +266,7 @@ class BRWClientHandler : public CefClient,
                                     CefRefPtr<CefCallback> callback) override;
 
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
+  NSView* GetHostView() const { return host_view_; }
   bool IsClosed() const { return closed_; }
 
   // Requests that this handler's browser close -- force-closing (skipping
@@ -318,6 +320,9 @@ class BRWClientHandler : public CefClient,
   static void SetDownloadDirectory(const std::string& directory) { download_directory_ = directory; }
 
  private:
+  // Owns this tab's DevTools state below; see BRWDevToolsHandler.h.
+  friend class BRWDevToolsHandler;
+
   NSView* host_view_;
   // Which profile's BlockingSettings apply to this browser's requests --
   // see OnBeforeResourceLoad. Set once at construction, never changes for
@@ -343,6 +348,13 @@ class BRWClientHandler : public CefClient,
   // spaces flow through the same BRWBrowserDelegate methods on the Swift
   // side.
   uint64_t next_media_prompt_id_ = 1;
+
+  // This tab's DevTools browser while one exists (created by
+  // BRWDevToolsHandler::Show, cleared by its OnBeforeClose).
+  CefRefPtr<BRWDevToolsHandler> devtools_;
+  // The last container DevTools was embedded in, reused by the context
+  // menu's "Inspect Element" when the delegate doesn't pick one itself.
+  __weak NSView* last_devtools_container_ = nil;
 
   // See SetVisualLookUpAvailable's own doc comment for why this is static.
   static bool visual_look_up_available_;

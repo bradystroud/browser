@@ -12,6 +12,9 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWCefApp.mm
   ../Bridge/BRWClientHandler.h
   ../Bridge/BRWClientHandler.mm
+  ../Bridge/BRWDevToolsHandler.h
+  ../Bridge/BRWDevToolsHandler.mm
+  ../Bridge/BRWDevToolsShared.h
   ../Bridge/BRWEngine.h
   ../Bridge/BRWEngine.mm
   ../Bridge/BRWEngineInternal.h
@@ -367,6 +370,9 @@ set(BROWSER_HELPER_SRCS
   ../Bridge/process_helper_mac.mm
   ../Bridge/BRWHelperApp.h
   ../Bridge/BRWHelperApp.mm
+  ../Bridge/BRWDevToolsFrontendRenderer.h
+  ../Bridge/BRWDevToolsFrontendRenderer.mm
+  ../Bridge/BRWDevToolsShared.h
   )
 source_group(Bridge FILES ${BROWSER_HELPER_SRCS})
 

@@ -207,28 +207,44 @@ class DownloadImageCallback : public CefDownloadImageCallback {
 }
 
 - (void)showDevTools {
-  if (_handler && _handler->GetBrowser()) {
-    // Default-constructed CefWindowInfo/CefBrowserSettings and a nullptr
-    // client all mean "let CEF manage this itself" -- ShowDevTools then
-    // pops its own separate native DevTools window, which is CEF's
-    // documented behavior for this call and the simplest thing that works
-    // for a v1 (a version docked into a view we own would need its own
-    // CefClient and SetAsChild plumbing, tracked as a later enhancement if
-    // ever needed). An empty CefPoint() for inspect_element_at means "no
-    // specific element" -- see BRWBrowser.h's -showDevTools for the
-    // right-click "Inspect Element" path, which passes a real point instead
-    // (that wiring lives in BRWClientHandler's context-menu handler once
-    // added; this method alone only covers the menu/shortcut entry point).
-    CefWindowInfo window_info;
-    CefBrowserSettings settings;
-    _handler->GetBrowser()->GetHost()->ShowDevTools(window_info, nullptr, settings, CefPoint());
+  [self showDevToolsInView:nil panel:BRWDevToolsPanelDefault];
+}
+
+- (void)showDevToolsInView:(NSView *)container panel:(BRWDevToolsPanel)panel {
+  BRWDevToolsHandler::Request request;
+  request.container = container;
+  request.panel = panel;
+  BRWDevToolsHandler::Show(_handler.get(), request);
+}
+
+- (void)inspectElementAtPoint:(NSPoint)point inView:(NSView *)container {
+  if (!_handler) {
+    return;
   }
+  // CEF wants the inspected view's own coordinates with a top-left origin.
+  NSView *hostView = _handler->GetHostView();
+  const CGFloat y = (hostView && !hostView.isFlipped) ? hostView.bounds.size.height - point.y : point.y;
+  BRWDevToolsHandler::Request request;
+  request.container = container;
+  request.has_point = true;
+  request.x = (int)lround(point.x);
+  request.y = (int)lround(y);
+  BRWDevToolsHandler::Show(_handler.get(), request);
+}
+
+- (void)startElementPickerInView:(NSView *)container {
+  BRWDevToolsHandler::Request request;
+  request.container = container;
+  request.start_picker = true;
+  BRWDevToolsHandler::Show(_handler.get(), request);
 }
 
 - (void)closeDevTools {
-  if (_handler && _handler->GetBrowser()) {
-    _handler->GetBrowser()->GetHost()->CloseDevTools();
-  }
+  BRWDevToolsHandler::Close(_handler.get());
+}
+
+- (BOOL)isDevToolsOpen {
+  return BRWDevToolsHandler::IsOpen(_handler.get());
 }
 
 - (void)setResponsiveDesignModeWithWidth:(int)width

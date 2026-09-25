@@ -156,6 +156,7 @@ void BRWClientHandler::LoadURLWhenReady(const std::string& url) {
 void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
   BRWPageMessageRouter::Get().OnBeforeClose(browser);
+  BRWDevToolsHandler::Close(this);
   closed_ = true;
   browser_ = nullptr;
   Registry().erase(this);
@@ -290,6 +291,9 @@ void BRWClientHandler::RequestClose() {
   if (closed_ || close_requested_) {
     return;
   }
+  // DevTools first, while this browser can still close it through CEF's own
+  // DevTools manager (see BRWDevToolsHandler::RequestClose).
+  BRWDevToolsHandler::Close(this);
   if (!browser_) {
     // OnAfterCreated hasn't fired yet -- flag it so it closes immediately
     // once CEF finishes creating the browser instead of loading a page.
@@ -321,11 +325,13 @@ void BRWClientHandler::CloseAll() {
   for (BRWClientHandler* handler : handlers) {
     handler->RequestClose();
   }
+  // DevTools browsers whose inspected page has already gone.
+  BRWDevToolsHandler::CloseAll();
 }
 
 // static
 size_t BRWClientHandler::LiveCount() {
-  return Registry().size();
+  return Registry().size() + BRWDevToolsHandler::LiveCount();
 }
 
 // static
@@ -718,14 +724,23 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       return true;
     case kInspectElementCommandId: {
       // The point the user right-clicked, so DevTools opens with that element
-      // already selected -- the whole difference between "Inspect Element" and
-      // the plain "Show DevTools" menu entry, which passes an empty CefPoint.
-      // See BRWBrowser.mm's -showDevTools for why the window info/client are
-      // left default (CEF manages its own DevTools window).
-      CefWindowInfo window_info;
-      CefBrowserSettings settings;
-      browser->GetHost()->ShowDevTools(window_info, nullptr, settings,
-                                       CefPoint(params->GetXCoord(), params->GetYCoord()));
+      // already selected. The delegate decides where DevTools goes (it owns
+      // the dock container) and answers with -inspectElementAtPoint:inView:;
+      // without one, DevTools reuses its last container, or CEF's own window.
+      const int x = params->GetXCoord();
+      const int y = params->GetYCoord();
+      if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestInspectElementAtPoint:)]) {
+        const CGFloat height = host_view_ ? host_view_.bounds.size.height : 0;
+        const CGFloat view_y = (host_view_ && !host_view_.isFlipped) ? height - y : y;
+        [delegate_ browserDidRequestInspectElementAtPoint:NSMakePoint(x, view_y)];
+        return true;
+      }
+      BRWDevToolsHandler::Request request;
+      request.container = last_devtools_container_;
+      request.has_point = true;
+      request.x = x;
+      request.y = y;
+      BRWDevToolsHandler::Show(this, request);
       return true;
     }
     default:
@@ -881,6 +896,13 @@ bool BRWClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefRequest> request,
                                        bool user_gesture,
                                        bool is_redirect) {
+  // The DevTools front-end only ever runs in a browser BRWDevToolsHandler
+  // created for it. Chromium already keeps web content from navigating to
+  // devtools://; this also refuses it when typed or loaded directly, so an
+  // ordinary tab never hosts a front-end at all.
+  if (request->GetURL().ToString().rfind("devtools:", 0) == 0) {
+    return true;
+  }
   // Must be called "only if the navigation is allowed to proceed" per
   // CefMessageRouterBrowserSide::OnBeforeBrowse's own doc comment -- this
   // override never itself blocks navigation (always returns false, "allow"),
