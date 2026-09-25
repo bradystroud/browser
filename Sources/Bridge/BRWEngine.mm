@@ -12,6 +12,7 @@
 #import "BRWCefApp.h"
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
+#import "BRWStringUtil.h"
 
 namespace {
 
@@ -22,10 +23,6 @@ namespace {
 CefScopedLibraryLoader &LibraryLoader() {
   static CefScopedLibraryLoader loader;
   return loader;
-}
-
-std::string ToStdString(NSString *s) {
-  return s ? std::string([s UTF8String]) : std::string();
 }
 
 // One CefRequestContext per profile id, reused across every BRWBrowser
@@ -47,10 +44,8 @@ std::string &ProfilesRootPath() {
 
 // Non-nil while +requestShutdownWithCompletion: is waiting for every open
 // browser's OnBeforeClose. Checked (via +[BRWEngine checkShutdownCompletion])
-// after every real CefDoMessageLoopWork() tick -- BRWMessagePump::DoWork(),
-// not +[BRWEngine doMessageLoopWork] (nothing calls that method; CEF's actual
-// external-pump ticks all run through BRWMessagePump, which calls
-// CefDoMessageLoopWork() directly) -- and fired, exactly once, as soon as
+// after every real CefDoMessageLoopWork() tick in BRWMessagePump::DoWork(),
+// the only place CEF's external-pump ticks run -- and fired, exactly once, as soon as
 // BRWClientHandler::LiveCount() reaches 0.
 using ShutdownCompletionBlock = void (^)(void);
 ShutdownCompletionBlock __strong &PendingShutdownCompletion() {
@@ -122,7 +117,7 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   CefMainArgs main_args(*_NSGetArgc(), *_NSGetArgv());
 
   CefSettings settings;
-  settings.no_sandbox = true;  // See docs/ai-tasks/m0-spike-notes.md for rationale.
+  settings.no_sandbox = true;
   settings.multi_threaded_message_loop = false;
   settings.external_message_pump = true;
   settings.windowless_rendering_enabled = false;
@@ -130,11 +125,6 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
 
   CefRefPtr<BRWCefApp> app(new BRWCefApp());
   return CefInitialize(main_args, settings, app.get(), nullptr) ? YES : NO;
-}
-
-+ (void)doMessageLoopWork {
-  CefDoMessageLoopWork();
-  CheckShutdownCompletion();
 }
 
 + (void)checkShutdownCompletion {
@@ -170,7 +160,7 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   }
   BRWClientHandler::CloseAll();
   // CloseAll() may not have needed to touch CEF at all (no open browsers),
-  // in which case doMessageLoopWork's next tick could be arbitrarily far
+  // in which case the message pump's next tick could be arbitrarily far
   // off (or never come, if the caller relies on this to signal quitting) --
   // check right away rather than waiting on that pump.
   CheckShutdownCompletion();

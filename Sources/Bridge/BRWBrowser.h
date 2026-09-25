@@ -342,12 +342,6 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// AudioStateScript.swift), since CEF exposes no audible-state callback.
 - (void)setAudioMuted:(BOOL)muted NS_SWIFT_NAME(setAudioMuted(_:));
 
-/// Mirrors CefBrowserHost::IsAudioMuted -- CEF's own doc comment says this
-/// can only be called on the UI thread, which is always the main thread in
-/// this app's architecture (see BRWMessagePump), so no special dispatch is
-/// needed here.
-- (BOOL)isAudioMuted;
-
 /// Sets this tab's page zoom (browser-5kq.15) -- wraps
 /// CefBrowserHost::SetZoomLevel, a real CEF API that (unlike
 /// CefBrowserHost::ExecuteChromeCommand, see the Reader mode notes) is not
@@ -411,7 +405,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// the current user: it injects Mozilla's Readability.js and lets the
 /// injected script perform the entire extraction-and-render transformation
 /// itself via `document.write`, specifically so nothing ever needs a result
-/// back from this call. See docs/ai-tasks/reader-mode-notes.md.
+/// back from this call.
 - (void)executeJavaScript:(NSString *)code;
 
 /// Retrieves the current page's serialized HTML source asynchronously via
@@ -421,7 +415,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 /// there's no ready browser/frame). Used by Reader mode to read back a
 /// marker attribute injected JS sets on `<html>`, as a lightweight
 /// alternative to a full CefMessageRouter round-trip for a single boolean
-/// signal -- see docs/ai-tasks/reader-mode-notes.md.
+/// signal.
 - (void)getPageSourceWithCompletion:(void (^)(NSString *_Nullable source))completion;
 
 /// Answers a page message previously delivered via
@@ -452,9 +446,7 @@ typedef NS_ENUM(NSInteger, BRWWindowOpenDisposition) {
 ///
 /// The result is a decoded bitmap re-encoded to PNG, not the original bytes:
 /// an animated GIF yields a single still frame, and any format the engine
-/// can't decode into a bitmap yields nil rather than passthrough bytes. See
-/// docs/ai-tasks/copy-image-notes.md for which real-world image cases were
-/// actually exercised.
+/// can't decode into a bitmap yields nil rather than passthrough bytes.
 - (void)downloadImageAtURL:(NSString *)imageURL
                  completion:(void (^)(NSData *_Nullable pngData, NSInteger httpStatusCode))completion;
 

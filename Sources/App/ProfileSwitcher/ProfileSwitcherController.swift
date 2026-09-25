@@ -3,9 +3,7 @@ import AppKit
 /// Borderless panels don't take key status by default, and this one has to --
 /// arrow keys, Return, Escape and type-to-filter all arrive as ordinary
 /// keyDowns to its first responder (the list view). Same reasoning as
-/// ShortcutsOverlayController's panel, which is also key while it's up; the
-/// *opposite* of OmniboxStartPanelController's, which deliberately never
-/// takes key so the omnibox keeps editing focus.
+/// ShortcutsOverlayController's panel, which is also key while it's up.
 private final class ProfileSwitcherPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
@@ -21,8 +19,7 @@ private final class ProfileSwitcherPanel: NSPanel {
 /// a child window. `NSWindow.addChildWindow` rebuilds the anchor window's
 /// whole ordering group and walks every window already in it, which took an
 /// out-of-process `NSRemoteView` (and the entire browser) down with it once
-/// already; see docs/ai-tasks/omnibox-start-panel-notes.md and
-/// Sources/App/Omnibox/AnchoredPanelTracker.swift (browser-5kq.10).
+/// already (browser-5kq.10; see CLAUDE.md's engine facts).
 ///
 /// Opened from a real menu item (Profiles > Switch Profile…) rather than an
 /// NSEvent monitor: the shortcut carries Command, so AppKit's ordinary

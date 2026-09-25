@@ -278,8 +278,7 @@ class BRWClientHandler : public CefClient,
   // mid-close never delivers OnBeforeClose at all -- confirmed by hanging
   // shutdown forever (CheckShutdownCompletion ticking correctly, LiveCount()
   // stuck above 0) when a normal per-tab close and CloseAll()'s own pass
-  // both requested the same browser's close moments apart. See
-  // docs/ai-tasks/quit-crash-notes.md.
+  // both requested the same browser's close moments apart.
   void RequestClose();
 
   // Force-closes every handler with a live browser (i.e. constructed but not
@@ -325,7 +324,7 @@ class BRWClientHandler : public CefClient,
   // Which profile's BlockingSettings apply to this browser's requests --
   // see OnBeforeResourceLoad. Set once at construction, never changes for
   // this handler's lifetime (matches BRWBrowser: a tab's profile is fixed
-  // at creation, see docs/plans's per-window/per-tab profile identity).
+  // at creation).
   std::string profile_name_;
   CefRefPtr<CefBrowser> browser_;
   bool closed_ = false;

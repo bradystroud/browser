@@ -1,5 +1,4 @@
-// Entry point for the four (well, five -- see m0-spike-notes.md) Helper.app
-// bundles. Chrome-bootstrap CEF requires renderer/GPU/etc. subprocesses to
+// Entry point for every Helper.app bundle. Chrome-bootstrap CEF requires renderer/GPU/etc. subprocesses to
 // run from separate signed helper bundles rather than re-executing the main
 // app; this is that separate binary. Copied in spirit from CEF's own
 // tests/cefsimple/process_helper_mac.cc sample.

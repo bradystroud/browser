@@ -13,18 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Runs CefInitialize. `profilesRootPath` becomes CefSettings.root_cache_path;
 /// every profile's cache_path is a child directory of this path, as required
-/// by CEF (see docs/research/2026-07-27-cef-swift-architecture.md).
+/// by CEF (it crashes otherwise).
 + (BOOL)initializeWithProfilesRootPath:(NSString *)profilesRootPath;
-
-/// Pumps the CEF message loop. The caller integrates this with its own run
-/// loop (e.g. an NSTimer firing in common run loop modes); CEF is configured
-/// with external_message_pump so it never spins its own loop. Currently
-/// unused -- BRWMessagePump.mm calls CefDoMessageLoopWork() directly rather
-/// than through this method; kept for whatever future integration wants a
-/// single Obj-C entry point for it, but +checkShutdownCompletion below (the
-/// thing that actually needs to run on every real tick) is called from
-/// BRWMessagePump instead, not from here.
-+ (void)doMessageLoopWork;
 
 /// Checked by BRWMessagePump after every real CefDoMessageLoopWork() tick
 /// (the only place CEF's close/OnBeforeClose callbacks actually get
@@ -58,7 +48,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// per-tab close path; see BRWClientHandler::CloseAll()'s pending_close_
 /// handling for that case specifically. Then waits for CEF's required
 /// OnBeforeClose callback from every browser (delivered via the ongoing
-/// +doMessageLoopWork pump), runs CefShutdown, and invokes `completion` on
+/// BRWMessagePump ticks), runs CefShutdown, and invokes `completion` on
 /// the main thread. Safe to call with zero open browsers, and safe to call
 /// with no window-close handler registered. This is the only supported way
 /// to shut CEF down.
@@ -67,7 +57,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// immediately after calling this (rather than blocking, or handing control
 /// to any nested/private AppKit event-loop mode such as the one
 /// -applicationShouldTerminate:'s NSTerminateLater triggers) so that
-/// +doMessageLoopWork keeps getting ticked -- see -[BRWApplication
+/// BRWMessagePump keeps getting ticked -- see -[BRWApplication
 /// terminate:], the only supported caller.
 + (void)requestShutdownWithCompletion:(void (^)(void))completion;
 

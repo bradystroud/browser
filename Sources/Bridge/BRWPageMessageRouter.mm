@@ -3,12 +3,7 @@
 #include <map>
 
 #import "BRWClientHandler.h"
-
-namespace {
-NSString* ToNSString(const CefString& s) {
-  return [NSString stringWithUTF8String:s.ToString().c_str()];
-}
-}  // namespace
+#import "BRWStringUtil.h"
 
 // Implements CefMessageRouterBrowserSide::Handler. Not CefBaseRefCounted --
 // Handler is a plain interface class per its own header -- so this is owned
@@ -63,9 +58,8 @@ BRWPageMessageRouter& BRWPageMessageRouter::Get() {
   // CefRefPtr<CefMessageRouterBrowserSide>, and a normal function-local
   // static's destructor would run at process exit via the C++ runtime's
   // atexit machinery -- which is *after* +[BRWEngine shutdown]'s explicit
-  // CefShutdown() call earlier in the same quit sequence (see
-  // docs/ai-tasks/quit-crash-notes.md), by which point releasing a
-  // CefRefPtr touches already-torn-down CEF internals. A leaked raw pointer
+  // CefShutdown() call earlier in the same quit sequence, by which point
+  // releasing a CefRefPtr touches already-torn-down CEF internals. A leaked raw pointer
   // is never destructed at all, sidestepping that ordering hazard entirely.
   static BRWPageMessageRouter* instance = new BRWPageMessageRouter();
   return *instance;

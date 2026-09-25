@@ -29,13 +29,8 @@ struct StartPageSection: Equatable {
 }
 
 /// The single place the start page's content is assembled from a profile's
-/// BookmarkStore/HistoryStore. Two presentations consume it: the HTML start
-/// page (StartPageRenderer) and the native panel the omnibox drops down on
-/// focus (OmniboxStartPanelController, browser-5kq.9). Same "one copy of the
-/// logic, two ways to build it" instinct the RoutingCore/BrowserCore packages
-/// already follow -- the panel deliberately shares the *data path*, not the
-/// HTML, because a floating AppKit panel can't host an engine surface at all
-/// (see docs/ai-tasks/visual-look-up-notes.md).
+/// BookmarkStore/HistoryStore, kept apart from the HTML that StartPageRenderer
+/// builds from it so any other presentation can share the data path.
 enum StartPageSections {
     static let favoritesTitle = "Favorites"
     static let favoritesEmptyMessage = "No favourites yet — press ⌘D on any page to add one."

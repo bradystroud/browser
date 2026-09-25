@@ -1,4 +1,5 @@
 import AppKit
+import VisionKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not private: BrowserWindowController reaches this via `NSApp.delegate
@@ -59,24 +60,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // sheet had been opened, so a setting saved in an earlier session
         // wouldn't apply until you opened the sheet again.
         _ = SiteSettingsEnforcer.shared
-        // Observers for browser-2ji ("keyboard focus stays here when another
-        // app activates"). Installed unconditionally and this early because
-        // the bug's own reproduction is app *deactivation* -- which can
-        // happen before any window exists -- and because the diagnostics are
-        // designed to be switched on mid-session, by a marker file, without
-        // relaunching; that only works if the observers are already live.
-        FocusDiagnostics.install()
-        // DISABLED (browser-5kq.10). The omnibox start panel crashes the whole
-        // browser on omnibox focus and neither attempt at a fix survived real
-        // use. Ordering *any* window on screen while the omnibox holds focus
-        // walks the window ordering group, which notifies macOS's own
-        // out-of-process completion-list view (attached to the focused
-        // NSTextField) about a window that isn't its own; it asserts, and the
-        // uncaught exception is fatal. addChildWindow was blamed first; a
-        // standalone panel ordered front by window level crashed identically,
-        // which is what rules out the whole "show a window on focus" approach
-        // rather than one API within it. The code is left in place, and
-        // deliberately unreferenced, for whoever solves this properly.
 
         // History/Bookmarks menus are single global NSMenus (the menu bar
         // isn't per-window) but their dynamic sections are per-profile --
@@ -115,6 +98,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)
             NSApp.terminate(nil)
             return
+        }
+        // Must start only once the engine is up: the very first snapshot
+        // push (loading the starter list + every existing profile's
+        // BlockingSettings) needs ProfileManager and the engine ready, and
+        // every tab created from here on needs a snapshot already published
+        // before its first request -- see ContentBlockerCoordinator's doc
+        // comment (browser-12m.5.1).
+        ContentBlockerCoordinator.shared.start()
+        // Same requirement, independent feature (browser-12m.6) -- see
+        // ThreatListCoordinator's doc comment.
+        ThreatListCoordinator.shared.start()
+        // browser-7jz.3 -- registers with PageMessageDispatcher and
+        // UNUserNotificationCenter before any tab can navigate.
+        WebPushCoordinator.shared.activate()
+        // browser-5kq.2 -- a Mac hardware/OS capability check, done once
+        // here rather than per tab because the engine keeps it as one
+        // process-wide flag; see BrowserEngine.setVisualLookUpAvailable(_:).
+        // VisionKit's ImageAnalyzer needs macOS 13+ -- this app's deployment
+        // target is 12.0, so on an older Mac the flag is never set to true
+        // and no "Look Up Image" menu item ever appears.
+        if #available(macOS 13.0, *) {
+            ActiveEngine.setVisualLookUpAvailable(ImageAnalyzer.isSupported)
         }
 
         // See -[BRWApplication terminate:] and WindowManager.closeAllWindowsForShutdown:

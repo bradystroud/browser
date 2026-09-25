@@ -1,4 +1,5 @@
 #import "BRWThreatList.h"
+#import "BRWStringUtil.h"
 #import "BRWThreatListInternal.h"
 
 #include <atomic>
@@ -30,19 +31,6 @@
 // note on that), so no lock is needed there either.
 namespace {
 
-std::string ToStdString(NSString *s) {
-  return s ? std::string([s UTF8String]) : std::string();
-}
-
-std::string ToLowerASCII(std::string s) {
-  for (char &c : s) {
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
-    }
-  }
-  return s;
-}
-
 struct ProfileThreatSettings {
   bool enabled = true;
 };
@@ -67,25 +55,6 @@ using InterstitialBuilderBlock = NSString * _Nullable (^)(NSString *host, NSStri
 InterstitialBuilderBlock __strong &InterstitialBuilder() {
   static InterstitialBuilderBlock builder = nil;
   return builder;
-}
-
-// Mirrors BRWContentBlocker.mm's IsHostOrAncestorInSet exactly -- see that
-// function's doc comment for the walk this performs (subdomain-inclusive,
-// same semantics as DomainTrie).
-bool IsHostOrAncestorInSet(const std::string &host, const std::unordered_set<std::string> &domains) {
-  const std::string lower = ToLowerASCII(host);
-  size_t start = 0;
-  while (true) {
-    if (domains.count(lower.substr(start)) > 0) {
-      return true;
-    }
-    size_t dot = lower.find('.', start);
-    if (dot == std::string::npos) {
-      break;
-    }
-    start = dot + 1;
-  }
-  return false;
 }
 
 // This app's own "Continue anyway" marker link -- an IANA-reserved

@@ -1,6 +1,7 @@
 #import "BRWClientHandler.h"
 #import "BRWContentBlockerInternal.h"
 #import "BRWPageMessageRouter.h"
+#import "BRWStringUtil.h"
 #import "BRWThreatListInternal.h"
 
 #include <vector>
@@ -10,10 +11,6 @@
 #include "include/wrapper/cef_helpers.h"
 
 namespace {
-NSString* ToNSString(const CefString& s) {
-  return [NSString stringWithUTF8String:s.ToString().c_str()];
-}
-
 // Wraps an Obj-C block as a CefTask -- CefPostTask needs a CefRefPtr<CefTask>,
 // not a lambda/block directly. Same wrap-a-block pattern as BRWBrowser.mm's
 // StringVisitorBlock/PdfPrintCallback, just for CefTask instead of those

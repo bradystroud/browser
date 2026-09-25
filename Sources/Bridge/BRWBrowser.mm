@@ -12,12 +12,9 @@
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
 #import "BRWPageMessageRouter.h"
+#import "BRWStringUtil.h"
 
 namespace {
-std::string ToStdString(NSString *s) {
-  return s ? std::string([s UTF8String]) : std::string();
-}
-
 // CefStringVisitor is source=client (we implement it, not CEF) -- wraps the
 // Swift-facing completion block for -getPageSourceWithCompletion:, same
 // pattern as PdfPrintCallback below for -printToPDFWithPath:completion:.
@@ -284,13 +281,6 @@ class DownloadImageCallback : public CefDownloadImageCallback {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->SetAudioMuted(muted);
   }
-}
-
-- (BOOL)isAudioMuted {
-  if (!_handler || !_handler->GetBrowser()) {
-    return NO;
-  }
-  return _handler->GetBrowser()->GetHost()->IsAudioMuted();
 }
 
 - (void)setZoomLevel:(double)zoomLevel {

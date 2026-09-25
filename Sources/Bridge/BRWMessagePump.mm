@@ -63,9 +63,8 @@ BRWMessagePump::~BRWMessagePump() {
 // load-bearing, not a thread-hop convenience: OnScheduleMessagePumpWork can
 // be invoked by CEF synchronously from other CEF entry points that are still
 // executing on the calling thread's own stack and haven't returned yet --
-// CefFrame::LoadURL is a confirmed example (see docs/ai-tasks/
-// m1-shell-notes.md): calling it from an omnibox action triggers this
-// callback before LoadURL itself returns. This port's first version
+// CefFrame::LoadURL is a confirmed example: calling it from an omnibox
+// action triggers this callback before LoadURL itself returns. This port's first version
 // special-cased "already on the main thread" to call HandleScheduleWork
 // (and thus potentially CefDoMessageLoopWork()) inline -- skipping exactly
 // the deferral the reference always performs -- which reenters CEF's
@@ -151,9 +150,8 @@ bool BRWMessagePump::PerformMessageLoopWork() {
   CefDoMessageLoopWork();
   is_active_ = false;
 
-  // This -- not +[BRWEngine doMessageLoopWork], which nothing calls -- is the
-  // one place every real CefDoMessageLoopWork() tick lands, so it's the only
-  // place +[BRWEngine requestShutdownWithCompletion:]'s "every browser closed
+  // This is the one place every real CefDoMessageLoopWork() tick lands, so
+  // it's the only place +[BRWEngine requestShutdownWithCompletion:]'s "every browser closed
   // yet?" poll can actually observe an OnBeforeClose that just arrived.
   [BRWEngine checkShutdownCompletion];
 

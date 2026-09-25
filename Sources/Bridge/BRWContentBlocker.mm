@@ -1,5 +1,6 @@
 #import "BRWContentBlocker.h"
 #import "BRWContentBlockerInternal.h"
+#import "BRWStringUtil.h"
 
 #include <atomic>
 #include <memory>
@@ -32,19 +33,6 @@
 // choice.
 namespace {
 
-std::string ToStdString(NSString *s) {
-  return s ? std::string([s UTF8String]) : std::string();
-}
-
-std::string ToLowerASCII(std::string s) {
-  for (char &c : s) {
-    if (c >= 'A' && c <= 'Z') {
-      c = static_cast<char>(c - 'A' + 'a');
-    }
-  }
-  return s;
-}
-
 struct ProfileBlockingSettings {
   bool enabled = true;
   std::unordered_set<std::string> allowlisted_hosts;
@@ -58,33 +46,6 @@ struct BlockerSnapshot {
 };
 
 std::atomic<const BlockerSnapshot *> g_snapshot{nullptr};
-
-// Mirrors BlockListCore's DomainTrie.contains(host:) semantics exactly: a
-// domain in `domains` blocks/allows itself and every subdomain of it, but
-// never its own parent. Walks from the full host up through each ancestor
-// domain (dropping one leftmost label at a time) down to the bare TLD,
-// returning true as soon as any level is found in the set.
-bool IsHostOrAncestorInSet(const std::string &host,
-                           const std::unordered_set<std::string> &domains,
-                           std::string *matched = nullptr) {
-  const std::string lower = ToLowerASCII(host);
-  size_t start = 0;
-  while (true) {
-    const std::string candidate = lower.substr(start);
-    if (domains.count(candidate) > 0) {
-      if (matched) {
-        *matched = candidate;
-      }
-      return true;
-    }
-    size_t dot = lower.find('.', start);
-    if (dot == std::string::npos) {
-      break;
-    }
-    start = dot + 1;
-  }
-  return false;
-}
 
 }  // namespace
 

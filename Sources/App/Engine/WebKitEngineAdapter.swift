@@ -12,13 +12,10 @@ import WebKit
 
 /// A second, WKWebView-backed `BrowserEngine` conformer alongside
 /// `CEFEngineAdapter.swift`'s `CEFEngine` -- exploratory/spike-quality
-/// (browser-n50), not a shipped daily-driver engine. See
-/// `docs/research/2026-07-30-webkit-engine-feasibility.md` for the full
-/// capability matrix this was built from (every EngineTab/BrowserEngine
-/// member, its WKWebView equivalent, and a verdict verified against this
-/// machine's actual WebKit.framework headers) and
-/// `docs/ai-tasks/webkit-engine-adapter-notes.md` for what's genuinely
-/// wired up here vs. a logged, safe no-op.
+/// (browser-n50), not a shipped daily-driver engine. Every EngineTab/
+/// BrowserEngine member was checked against the WebKit.framework headers:
+/// what has a real WKWebView equivalent is wired up here, and what doesn't
+/// is a logged, safe no-op whose comment says why.
 ///
 /// Selected via `--engine webkit` (default `cef`) -- see
 /// `CommandLineArgs.engineChoice()` and `main.swift`'s `ActiveEngine`.
@@ -40,8 +37,7 @@ enum WebKitEngine: BrowserEngine {
         // ordinary in-process NSView with synchronous, ARC-managed teardown,
         // so a stock NSApplication is sufficient here.
         //
-        // Real gap this leaves (see the capability matrix's
-        // setWindowCloseHandler/isTerminating entry): CEF's shutdown
+        // Real gap this leaves: CEF's shutdown
         // handshake is exactly what makes AppDelegate's registered close
         // handler (see setWindowCloseHandler below) actually get invoked at
         // quit time, via -[BRWApplication terminate:] calling it before
@@ -99,14 +95,12 @@ enum WebKitEngine: BrowserEngine {
         return true
     }
 
-    // profileId (browser-ojw) isn't threaded any further into WebKitTab
-    // here -- see docs/ai-tasks/profile-id-cache-directory-notes.md for why
-    // this engine's own per-profile WKWebsiteDataStore lookup
-    // (ProfileDataStoreKey.identifier(forProfileId:) below, macOS 14+ only)
-    // is still fed `profileName` rather than this now-available `profileId`,
-    // a related but separate gap left for whoever owns this file next.
+    // The tab's WKWebsiteDataStore is keyed by `profileId`, so renaming a
+    // profile never orphans its cookies/storage. Content-blocking and
+    // threat-warning state stay keyed by `profileName`, because that is how
+    // ContentBlockerCoordinator/ThreatListCoordinator hand them over.
     static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
-        let tab = WebKitTab(profileName: profileName, hostView: hostView, initialURL: initialURL)
+        let tab = WebKitTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
         register(tab, profileName: profileName)
         return tab
     }
@@ -290,7 +284,7 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
-    init(profileName: String, hostView: NSView, initialURL: String) {
+    init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
         self.profileName = profileName
         let config = WKWebViewConfiguration()
         // WKWebsiteDataStore(forIdentifier:) is macOS 14.0+ (see
@@ -299,9 +293,9 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
         // per-profile-identity data store at all, and every profile
         // silently shares WebKit's single default store instead (a real
         // profile-isolation regression on those OS versions specifically,
-        // not just a missing nice-to-have -- see the capability matrix).
+        // not just a missing nice-to-have).
         if #available(macOS 14.0, *) {
-            let uuid = ProfileDataStoreKey.identifier(forProfileId: profileName)
+            let uuid = ProfileDataStoreKey.identifier(forProfileId: profileId)
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
         }
         webView = WKWebView(frame: hostView.bounds, configuration: config)
@@ -426,10 +420,6 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
     func setAudioMuted(_ muted: Bool) {
         unsupported("per-tab audio mute (confirmed: no public WKWebView API mutes page audio output -- WKWebExtensionTab's setMuted:forWebExtensionContext: is extension-API-only, not a general WKWebView property)")
     }
-    func isAudioMuted() -> Bool {
-        unsupported("per-tab audio mute (see setAudioMuted(_:))")
-        return false
-    }
 
     /// Full parity on the mechanism, no workaround needed (browser-5kq.15):
     /// WKWebView.pageZoom is a real, public linear scale factor, so the only
@@ -525,8 +515,7 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
     /// carries the page's cookies -- `credentials: "include"` on a fetch
     /// issued by the document itself -- but it is subject to CORS, unlike
     /// the CEF path: a cross-origin image whose host sends no
-    /// `Access-Control-Allow-Origin` fails here and succeeds there. Recorded
-    /// in docs/ai-tasks/copy-image-notes.md rather than papered over.
+    /// `Access-Control-Allow-Origin` fails here and succeeds there.
     ///
     /// `httpStatusCode` is the real response status when the fetch got far
     /// enough to have one, and 0 otherwise.
@@ -777,12 +766,15 @@ final class WebKitTab: NSObject, EngineTab, WKNavigationDelegate, WKUIDelegate, 
     }
 
     // No engineTabDidChangeFaviconURL or engineTabDidRequestVisualLookUp --
-    // see this file's other doc comments and the capability matrix for why
-    // each is missing.
+    // see this file's other doc comments for why each is missing.
+
+    /// Features already logged this session, so a repeatedly-called gap (a
+    /// polled CPU reading, a mute toggle) logs once rather than every time.
+    private static var loggedUnsupportedFeatures: Set<String> = []
 
     private func unsupported(_ what: String) {
+        guard Self.loggedUnsupportedFeatures.insert(what).inserted else { return }
         NSLog("Browser: unsupported on WebKit engine: %@", what)
-        assertionFailure("unsupported on WebKit engine: \(what)")
     }
 }
 

@@ -1,48 +1,18 @@
 import AppKit
-import VisionKit
 
-/// The only concrete BrowserEngine today, and the only file in Sources/App
-/// (besides BrowserEngine.swift's doc comments, and the necessarily
-/// target-wide Swift bridging header / Info.plist / CMakeLists.txt build
-/// config -- see docs/ai-tasks/browser-n50-notes.md) that references any
-/// BRW* bridge symbol. Everything CEF-specific is confined to this file:
-/// CEFEngine adapts BRWEngine + BRWApplication, CEFTab adapts BRWBrowser.
-/// Zero behavior change from the pre-refactor direct BRW* usage -- this is
-/// a straight pass-through.
+/// The CEF-backed BrowserEngine, and the only file in Sources/App (besides
+/// doc comments, and the necessarily target-wide Swift bridging header /
+/// Info.plist / CMakeLists.txt build config) that references any BRW*
+/// bridge symbol. Everything CEF-specific is confined to this file:
+/// CEFEngine adapts BRWEngine + BRWApplication, CEFTab adapts BRWBrowser,
+/// each as a straight pass-through.
 enum CEFEngine: BrowserEngine {
     static func bootstrapApplication() {
         BRWApplication.bootstrap()
     }
 
     static func initialize(profilesRootPath: String) -> Bool {
-        let ok = BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
-        if ok {
-            // Must start only once the engine is up: the very first
-            // snapshot push (loading the starter list + every existing
-            // profile's BlockingSettings) needs ProfileManager/CEF ready,
-            // and every browser created from here on needs a snapshot
-            // already published before its first request -- see
-            // ContentBlockerCoordinator's doc comment (browser-12m.5.1).
-            ContentBlockerCoordinator.shared.start()
-            // Same requirement, independent feature (browser-12m.6) -- see
-            // ThreatListCoordinator's doc comment.
-            ThreatListCoordinator.shared.start()
-            // browser-7jz.3 -- registers with PageMessageDispatcher and
-            // UNUserNotificationCenter before any tab can navigate.
-            WebPushCoordinator.shared.activate()
-            // browser-5kq.2 -- a Mac hardware/OS capability check, done
-            // once here (rather than per-browser) since every
-            // BRWClientHandler shares the same process-wide flag; see
-            // BRWBrowser.h's +setVisualLookUpAvailable: for why. VisionKit's
-            // ImageAnalyzer needs macOS 13+ -- this app's deployment target
-            // is 12.0, so on an older Mac the flag is just never set to
-            // true, and no "Look Up Image" menu item ever appears (the
-            // graceful degradation this whole feature is built around).
-            if #available(macOS 13.0, *) {
-                setVisualLookUpAvailable(ImageAnalyzer.isSupported)
-            }
-        }
-        return ok
+        BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
     }
 
     static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
@@ -127,7 +97,6 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func clearResponsiveDesignMode() { browser.clearResponsiveDesignMode() }
     func cpuUsagePercent() -> Double { browser.cpuUsagePercent() }
     func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
-    func isAudioMuted() -> Bool { browser.isAudioMuted() }
     func setZoomLevel(_ level: Double) { browser.setZoomLevel(level) }
     func zoomLevel() -> Double { browser.zoomLevel() }
     func print() { browser.print() }
@@ -263,8 +232,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
 // `ActiveEngine` -- what the rest of Sources/App actually calls
 // (`ActiveEngine.initialize(...)`, `ActiveEngine.createTab(...)`, etc.) --
-// now lives in WebKitEngineAdapter.swift as a runtime-selected
-// `BrowserEngine.Type` rather than a compile-time typealias fixed to
-// CEFEngine, so `--engine cef|webkit` can pick between this file's CEFEngine
-// and that file's WebKitEngine at launch. See that declaration's own doc
-// comment.
+// lives in WebKitEngineAdapter.swift as a runtime-selected
+// `BrowserEngine.Type`, so `--engine cef|webkit` can pick between this
+// file's CEFEngine and that file's WebKitEngine at launch. See that
+// declaration's own doc comment.

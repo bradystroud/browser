@@ -151,8 +151,9 @@ protocol EngineTabDelegate: AnyObject {
 /// of whatever concrete rendering engine backs it. UI code (Tab.swift and
 /// everything above it) programs against this protocol only, never against
 /// an engine-specific type, per AGENTS.md's engine-agnostic-UI principle.
-/// Today's only conformer is CEFTab (Sources/App/Engine/CEFEngineAdapter.swift),
-/// a thin wrapper around the bridge's BRWBrowser.
+/// Conformers: CEFTab (Sources/App/Engine/CEFEngineAdapter.swift), a thin
+/// wrapper around the bridge's BRWBrowser, and WebKitTab
+/// (Sources/App/Engine/WebKitEngineAdapter.swift), a WKWebView wrapper.
 protocol EngineTab: AnyObject {
     var delegate: EngineTabDelegate? { get set }
     func loadURL(_ url: String)
@@ -182,10 +183,6 @@ protocol EngineTab: AnyObject {
     /// BRWBrowser.h's -setAudioMuted: for why this is a real, direct CEF
     /// call rather than a JS workaround.
     func setAudioMuted(_ muted: Bool)
-
-    /// Mirrors the engine's own current mute state -- see BRWBrowser.h's
-    /// -isAudioMuted.
-    func isAudioMuted() -> Bool
 
     /// Sets this tab's page zoom (browser-5kq.15). `level` is Chromium's
     /// *logarithmic* zoom level, not a percentage: the on-screen scale factor
@@ -293,12 +290,11 @@ struct EngineProfileThreatSettings {
 /// static/class-level -- one engine process per app, not a per-window or
 /// per-tab instance.
 ///
-/// Today's only conformer is CEFEngine
-/// (Sources/App/Engine/CEFEngineAdapter.swift), a thin wrapper around the
-/// bridge's BRWEngine/BRWApplication. Swapping engines (e.g. a future WebKit
-/// backend, see AGENTS.md) means adding a new conformer there and changing
-/// `ActiveEngine`'s typealias target -- nothing in Sources/App outside that
-/// one file should need to change.
+/// Conformers: CEFEngine (Sources/App/Engine/CEFEngineAdapter.swift), a thin
+/// wrapper around the bridge's BRWEngine/BRWApplication, and WebKitEngine
+/// (Sources/App/Engine/WebKitEngineAdapter.swift). `ActiveEngine` picks one
+/// at launch from `--engine cef|webkit` -- nothing in Sources/App outside
+/// Engine/ should need to know which.
 protocol BrowserEngine {
     /// Must run before anything touches NSApplication.shared -- see
     /// main.swift and the CEF adapter's own doc comment for why.

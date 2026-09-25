@@ -1,7 +1,7 @@
 # Adapted from third_party/cef/*/tests/cefsimple/CMakeLists.txt, replacing
 # cefsimple's C++ sources with our Swift/AppKit UI + Obj-C++ bridge, and
 # generalized to the CEF_HELPER_APP_SUFFIXES list CEF itself defines (five
-# helpers in this CEF version -- see docs/ai-tasks/m0-spike-notes.md).
+# helpers in this CEF version).
 
 set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWApplication.h
@@ -19,6 +19,7 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWBrowser.mm
   ../Bridge/BRWPageMessageRouter.h
   ../Bridge/BRWPageMessageRouter.mm
+  ../Bridge/BRWStringUtil.h
   ../Bridge/BRWContentBlocker.h
   ../Bridge/BRWContentBlocker.mm
   ../Bridge/BRWContentBlockerInternal.h
@@ -57,7 +58,6 @@ set(BROWSER_SWIFT_SRCS
   TabLifecycleCenter.swift
   TabButtonView.swift
   TabDragDiagnostics.swift
-  FocusDiagnostics.swift
   TabStripView.swift
   TabGroup.swift
   TabGroupHeaderView.swift
@@ -141,9 +141,6 @@ set(BROWSER_SWIFT_SRCS
   StartPage/StartPageSections.swift
   StartPage/StartPageRenderer.swift
   StartPage/FavoritesFolder.swift
-  Omnibox/AnchoredPanelTracker.swift
-  Omnibox/OmniboxStartPanelView.swift
-  Omnibox/OmniboxStartPanelController.swift
   Omnibox/OmniboxSubmission.swift
   Omnibox/QuickSiteSearchCatalog.swift
   Omnibox/SearchSuggestionFetcher.swift
