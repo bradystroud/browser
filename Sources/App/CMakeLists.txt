@@ -86,6 +86,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitTab+Scripts.swift
   Engine/WebKitFindScript.swift
   Engine/WebKitPageSheetGuard.swift
+  Engine/WebKitInspector.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
