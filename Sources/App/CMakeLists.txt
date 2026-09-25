@@ -89,6 +89,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitMuteScript.swift
   Engine/WebKitPageSheetGuard.swift
   Engine/WebKitInspector.swift
+  Engine/WebKitResponsiveDesign.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift

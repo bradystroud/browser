@@ -245,6 +245,8 @@ final class WebKitTab: NSObject, EnginePopupTab {
     private let findFrames = WebKitFindFrameRegistry()
     let navigationState = WebKitNavigationState()
     let audioMute = WebKitAudioMute()
+    /// Non-nil only while Responsive Design Mode is on.
+    private(set) var responsiveDesign: WebKitResponsiveDesign?
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
@@ -481,11 +483,20 @@ final class WebKitTab: NSObject, EnginePopupTab {
         WebKitInspector.close(for: webView)
     }
 
+    /// Built from private WKWebView SPI -- see WebKitResponsiveDesign.swift
+    /// for what it reproduces of CEF's device-metrics override and what it
+    /// cannot. Switching presets keeps the state captured on first entry.
     func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
-        unsupported("Responsive Design Mode (no public device-emulation/DevTools-protocol API on WKWebView)")
+        if responsiveDesign == nil { responsiveDesign = WebKitResponsiveDesign(webView: webView) }
+        guard let responsiveDesign else {
+            unsupported("Responsive Design Mode (WKWebView layout/scale SPI missing on this macOS)")
+            return
+        }
+        responsiveDesign.apply(width: width, height: height, deviceScaleFactor: deviceScaleFactor, mobile: mobile)
     }
     func clearResponsiveDesignMode() {
-        unsupported("Responsive Design Mode (no public device-emulation/DevTools-protocol API on WKWebView)")
+        responsiveDesign?.restore()
+        responsiveDesign = nil
     }
 
     func cpuUsagePercent() -> Double {
