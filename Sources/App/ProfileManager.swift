@@ -124,18 +124,16 @@ final class ProfileManager {
         }
     }
 
+    // A profiles.json that no longer decodes is moved aside by JSONFile
+    // rather than overwritten: init then creates a fresh default profile,
+    // and without the preserved copy every id-keyed profile directory would
+    // be orphaned for good.
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([Profile].self, from: data) else {
-            profiles = []
-            return
-        }
-        profiles = decoded
+        profiles = JSONFile<[Profile]>(url: fileURL).load(default: [])
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(profiles) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        JSONFile<[Profile]>(url: fileURL).save(profiles)
         // See isBootstrapping's own doc comment (browser-2bj) -- never
         // skipped outside of init() itself, so every real create/rename/
         // recolor/delete after launch still notifies exactly as before.

@@ -41,7 +41,6 @@ set(BROWSER_SWIFT_SRCS
   GeneralPaneController.swift
   GlassBackgroundView.swift
   ListAppearance.swift
-  JSONFile.swift
   PerProfileRegistry.swift
   NSAlert+Confirmation.swift
   NSPopUpButton+Profiles.swift
@@ -208,6 +207,7 @@ source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 # copy of the logic, two ways to build it.
 set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Database.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/JSONFile.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ProfilesRootResolver.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Migrations.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift

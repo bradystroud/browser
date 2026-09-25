@@ -27,12 +27,7 @@ final class ClosedItemStore {
         // yet. A file damaged beyond one bad entry is treated the same way --
         // see ClosedItemStack's own decoding, which already skips individual
         // entries it cannot read rather than losing the rest.
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode(ClosedItemStack.self, from: data) {
-            stack = decoded
-        } else {
-            stack = ClosedItemStack()
-        }
+        stack = JSONFile<ClosedItemStack>(url: fileURL).load(default: ClosedItemStack())
     }
 
     /// Records a closed tab or window. The context is passed straight
@@ -95,7 +90,6 @@ final class ClosedItemStore {
     func saveNow() {
         pendingSaveWorkItem?.cancel()
         pendingSaveWorkItem = nil
-        guard let data = try? JSONEncoder().encode(stack) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        JSONFile<ClosedItemStack>(url: fileURL).save(stack)
     }
 }

@@ -34,8 +34,7 @@ final class SessionStore {
     }
 
     func load() -> SessionSnapshot? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(SessionSnapshot.self, from: data)
+        JSONFile<SessionSnapshot?>(url: fileURL).load(default: nil)
     }
 
     /// Debounced: `snapshotProvider` is evaluated once the debounce window
@@ -59,7 +58,6 @@ final class SessionStore {
     func saveNow(_ snapshot: SessionSnapshot) {
         pendingSaveWorkItem?.cancel()
         pendingSaveWorkItem = nil
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        JSONFile<SessionSnapshot>(url: fileURL).save(snapshot)
     }
 }

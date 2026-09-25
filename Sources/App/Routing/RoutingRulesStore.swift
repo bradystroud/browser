@@ -27,8 +27,7 @@ final class RoutingRulesStore {
         let dir = URL(fileURLWithPath: CommandLineArgs.sessionAndProfilesMetadataDirectory())
         fileURL = dir.appendingPathComponent("routing.json")
 
-        if let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode(RoutingConfiguration.self, from: data) {
+        if let decoded = JSONFile<RoutingConfiguration?>(url: fileURL).load(default: nil) {
             configuration = decoded
         } else {
             // defaultProfileId is a Profile.id (UUID), not a name -- resolve
@@ -74,7 +73,6 @@ final class RoutingRulesStore {
     }
 
     private func save() {
-        guard let data = try? JSONEncoder().encode(configuration) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        JSONFile<RoutingConfiguration>(url: fileURL).save(configuration)
     }
 }

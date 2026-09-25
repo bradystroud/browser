@@ -1,8 +1,9 @@
 import Foundation
 
 /// One Codable value persisted as one JSON file -- the storage behind every
-/// small per-profile settings file (blocking.json, permissions.json,
-/// startpage.json and the rest).
+/// small settings or metadata file (profiles.json, routing.json,
+/// session.json, and each profile's blocking.json, permissions.json and the
+/// rest).
 ///
 /// A file that exists but no longer decodes is moved aside to
 /// `<name>.corrupt` before the default comes back. Returning the default
@@ -10,10 +11,14 @@ import Foundation
 /// user's data, with nothing to show it ever existed. A missing file is the
 /// normal state for a profile that never changed the setting, so it stays
 /// silent.
-struct JSONFile<Value: Codable> {
-    let url: URL
+public struct JSONFile<Value: Codable> {
+    public let url: URL
 
-    func load(default defaultValue: @autoclosure () -> Value) -> Value {
+    public init(url: URL) {
+        self.url = url
+    }
+
+    public func load(default defaultValue: @autoclosure () -> Value) -> Value {
         let data: Data
         do {
             data = try Data(contentsOf: url)
@@ -41,9 +46,15 @@ struct JSONFile<Value: Codable> {
         }
     }
 
-    func save(_ value: Value) {
-        guard let data = try? JSONEncoder().encode(value) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+    /// Failures are logged rather than thrown: no caller can do anything
+    /// more useful with a full disk than keep running on its in-memory copy.
+    public func save(_ value: Value) {
+        do {
+            let data = try JSONEncoder().encode(value)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("JSONFile: could not save %@: %@", url.path, String(describing: error))
+        }
     }
 }
