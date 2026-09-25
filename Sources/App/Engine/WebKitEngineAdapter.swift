@@ -384,9 +384,32 @@ final class WebKitTab: NSObject, EngineTab {
         PageZoom.level(forFactor: Double(webView.pageZoom))
     }
 
+    /// NSPrintOperation(view: webView) prints blank pages -- WKWebView draws
+    /// in a separate process, so only its own printOperation(with:) has
+    /// anything to put on paper. That operation's view also needs a real
+    /// frame before it can paginate, and it has to run as a window-modal
+    /// sheet: a plain run() comes back blank as well.
     func print() {
-        let operation = NSPrintOperation(view: webView)
-        operation.run()
+        let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        // Half-inch margins all round, close to Safari's own defaults.
+        info.topMargin = 36
+        info.bottomMargin = 36
+        info.leftMargin = 36
+        info.rightMargin = 36
+
+        let operation = webView.printOperation(with: info)
+        operation.showsPrintPanel = true
+        operation.showsProgressPanel = true
+        operation.view?.frame = webView.bounds
+        if let window = webView.window {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
     }
 
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
