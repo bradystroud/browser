@@ -583,7 +583,9 @@ final class TabButtonView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(pinToggleTapped), keyEquivalent: "").target = self
-        menu.addItem(withTitle: isMuted ? "Unmute Tab" : "Mute Tab", action: #selector(muteToggleTapped), keyEquivalent: "").target = self
+        if ActiveEngine.capabilities.perTabAudioMute {
+            menu.addItem(withTitle: isMuted ? "Unmute Tab" : "Mute Tab", action: #selector(muteToggleTapped), keyEquivalent: "").target = self
+        }
 
         let moveToGroupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
         let submenu = NSMenu()

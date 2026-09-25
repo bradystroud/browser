@@ -43,7 +43,7 @@ final class TabOverviewView: NSView {
     /// `faviconProvider` are pulled once, up front, per this doc comment's
     /// "no live updates" note.
     func configure(
-        tabs: [(id: UUID, title: String, favicon: NSImage?, cpuUsagePercent: Double)],
+        tabs: [(id: UUID, title: String, favicon: NSImage?, cpuUsagePercent: Double?)],
         selectedTabId: UUID?,
         thumbnailProvider: (UUID) -> NSImage?,
         onSelect: @escaping (UUID) -> Void,

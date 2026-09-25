@@ -368,8 +368,21 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         case .cef:
             engineHelpLabel.stringValue = "Chromium, via CEF \u{2014} the full-featured engine, and the one this browser is built around. \(restartNote)"
         case .webkit:
-            engineHelpLabel.stringValue = "WebKit is experimental. Per-tab mute, DevTools, Inspect Element, View Page Source and Responsive Design Mode don\u{2019}t work. Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
+            engineHelpLabel.stringValue = "WebKit is experimental. \(Self.missingFeaturesSentence(for: engine.engine.capabilities))Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
         }
+    }
+
+    /// "X, Y and Z don't work. " for whatever `capabilities` lacks, or "".
+    private static func missingFeaturesSentence(for capabilities: EngineCapabilities) -> String {
+        var missing: [String] = []
+        if !capabilities.inAppDevTools { missing.append("Built-in developer tools and Inspect Element") }
+        if !capabilities.responsiveDesignMode { missing.append("Responsive Design Mode") }
+        if !capabilities.perTabAudioMute { missing.append("Per-tab mute") }
+        if !capabilities.perTabCPUUsage { missing.append("Per-tab CPU use in Tab Overview") }
+        if !capabilities.customContextMenuItems { missing.append("View Page Source, Look Up Image and the other extra right-click items") }
+        guard let last = missing.popLast() else { return "" }
+        let list = missing.isEmpty ? last : missing.joined(separator: ", ") + " and " + last
+        return "\(list) don\u{2019}t work. "
     }
 
     private func updateHelpText(for mode: OmniboxDisplayMode) {

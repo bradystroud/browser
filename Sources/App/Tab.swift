@@ -339,6 +339,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// what the engine actually has (no separate "read it back to confirm"
     /// step needed).
     func toggleMuted() {
+        guard ActiveEngine.capabilities.perTabAudioMute else { return }
         isMuted.toggle()
         browser?.setAudioMuted(isMuted)
         delegate?.tabDidChangeDisplayState(self)

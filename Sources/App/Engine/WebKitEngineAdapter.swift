@@ -41,6 +41,22 @@ enum WebKitEngine: BrowserEngine {
         // setWindowCloseHandler.
     }
 
+    /// Whether an in-app Web Inspector can be opened on this system. False
+    /// until one is wired up; showDevTools() then points at Safari instead.
+    static var inAppInspectorAvailable: Bool { false }
+
+    /// Per-tab mute is done in page script (every media element muted), not
+    /// by the engine. CPU use and device emulation have no public WKWebView
+    /// API, and macOS WKWebView offers no way to add context-menu items.
+    static var capabilities: EngineCapabilities {
+        EngineCapabilities(
+            inAppDevTools: inAppInspectorAvailable,
+            responsiveDesignMode: false,
+            perTabCPUUsage: false,
+            perTabAudioMute: true,
+            customContextMenuItems: false)
+    }
+
     private static var contentRuleListStore: WKContentRuleListStore?
 
     /// Per-profile compiled content-blocking rule list, keyed by profile
@@ -612,4 +628,15 @@ final class WebKitTab: NSObject, EnginePopupTab {
 /// `BrowserEngine.Type` existential dispatches its static requirements
 /// correctly at runtime -- this is a genuine runtime switch, not a
 /// build-time flag standing in for one.
-let ActiveEngine: BrowserEngine.Type = CommandLineArgs.engineChoice() == .webkit ? WebKitEngine.self : CEFEngine.self
+let ActiveEngine: BrowserEngine.Type = CommandLineArgs.engineChoice().engine
+
+extension EngineChoice {
+    /// The conformer this choice launches -- for describing an engine that
+    /// is not the running one (the Settings engine picker).
+    var engine: BrowserEngine.Type {
+        switch self {
+        case .cef: return CEFEngine.self
+        case .webkit: return WebKitEngine.self
+        }
+    }
+}

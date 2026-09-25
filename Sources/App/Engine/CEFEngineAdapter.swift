@@ -11,6 +11,15 @@ enum CEFEngine: BrowserEngine {
         BRWApplication.bootstrap()
     }
 
+    static var capabilities: EngineCapabilities {
+        EngineCapabilities(
+            inAppDevTools: true,
+            responsiveDesignMode: true,
+            perTabCPUUsage: true,
+            perTabAudioMute: true,
+            customContextMenuItems: true)
+    }
+
     static func initialize(profilesRootPath: String) -> Bool {
         BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
     }

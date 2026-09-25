@@ -281,6 +281,25 @@ protocol EnginePopupTab: EngineTab {
     func attach(to hostView: NSView)
 }
 
+/// What the running engine can actually do, for UI that would otherwise
+/// offer a command the engine cannot carry out. UI reads
+/// `ActiveEngine.capabilities` rather than asking which engine is running.
+struct EngineCapabilities {
+    /// A developer-tools window opened from inside the app, including
+    /// right-click Inspect Element. When false, showDevTools() explains how
+    /// to inspect the page from another app instead.
+    var inAppDevTools: Bool
+    /// setResponsiveDesignMode(...) actually resizes the viewport.
+    var responsiveDesignMode: Bool
+    /// cpuUsagePercent() reports a real per-tab figure rather than 0.
+    var perTabCPUUsage: Bool
+    /// setAudioMuted(_:) silences just that tab.
+    var perTabAudioMute: Bool
+    /// The native context menu carries this app's own items (Look Up Image,
+    /// Copy Image, View Page Source and so on).
+    var customContextMenuItems: Bool
+}
+
 /// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
 /// selects at launch. Exhaustive by design -- adding a third engine means
 /// updating this enum, its one switch in WebKitEngineAdapter.swift's
@@ -322,6 +341,10 @@ protocol BrowserEngine {
     /// Must run before anything touches NSApplication.shared -- see
     /// main.swift and the CEF adapter's own doc comment for why.
     static func bootstrapApplication()
+
+    /// Read at the point of use rather than cached: a capability may only
+    /// become known at runtime.
+    static var capabilities: EngineCapabilities { get }
 
     static func initialize(profilesRootPath: String) -> Bool
 
