@@ -206,7 +206,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         return NSRect(
             x: contentView.bounds.width - trailingInset - size
                 - CGFloat(slot) * (size + Self.trailingToolbarControlGap),
-            y: contentView.bounds.height - (toolbarRowHeight + size) / 2,
+            y: toolbarView.frame.midY - size / 2,
             width: size,
             height: size
         )
@@ -494,7 +494,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func applyChromeLayout() {
         guard let contentView = window?.contentView else { return }
         let width = contentView.bounds.width
-        let height = contentView.bounds.height
+        let height = contentView.bounds.height - DevBuildIndicator.topInset
         let toolbarHeight = Self.toolbarHeight
 
         tabStripView.orientation = tabStripOrientation

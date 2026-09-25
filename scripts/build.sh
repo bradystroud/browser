@@ -100,6 +100,10 @@ if [[ -n "${CODESIGN_IDENTITY:-}" && "${CODESIGN_IDENTITY}" != "-" ]]; then
   /usr/libexec/PlistBuddy -c "Add :BRWDisableMockKeychain bool true" "${INFO_PLIST}"
 fi
 
+# Commit/branch/dirty for the dev-build banner -- before signing, like the
+# key above, since Info.plist is inside the seal.
+"${ROOT_DIR}/scripts/stamp-build-info.sh" "${APP_PATH}"
+
 # browser-82d: the `browser` CLI (browser-cli/, a standalone SwiftPM
 # executable) -- built and dropped
 # into the app bundle's Resources so it travels with it, but deliberately

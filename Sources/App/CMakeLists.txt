@@ -36,6 +36,7 @@ set(BROWSER_SWIFT_SRCS
   FindBarController.swift
   BrowserWindowController.swift
   ColorSwatchPicker.swift
+  DevBuildIndicator.swift
   CommandLineArgs.swift
   AppPreferencesStore.swift
   GeneralPaneController.swift

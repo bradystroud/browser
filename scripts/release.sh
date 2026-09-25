@@ -200,6 +200,9 @@ if [[ "${DO_SIGN}" -eq 1 ]]; then
     /usr/libexec/PlistBuddy -c "Add :BRWDisableMockKeychain bool true" "${INFO_PLIST}"
   fi
 
+  # Same pre-signing stamp scripts/build.sh applies (Info.plist is sealed).
+  "${ROOT_DIR}/scripts/stamp-build-info.sh" "${APP_PATH}"
+
   # A real-identity release must carry the passkey provisioning profile (see
   # sign.sh step 2c): a local build may fall back to signing without it, a
   # shipped one may not.

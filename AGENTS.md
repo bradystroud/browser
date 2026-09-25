@@ -53,6 +53,8 @@ That location is what makes one skill work in every tool: Codex scans `.agents/s
 
 `scripts/build.sh` always builds the Release configuration; pass `Debug` as `$1` to build that instead. Signing auto-detects a real "Developer ID Application:" identity in the keychain (`security find-identity -v -p codesigning`) and uses it when present — falling back to ad-hoc (`CODESIGN_IDENTITY=-`) otherwise, e.g. a from-scratch clone with no cert yet — an explicit `CODESIGN_IDENTITY` always overrides the auto-detection (browser-35t). A real-identity build also gets a `BRWDisableMockKeychain` Info.plist key, so a released install uses genuine Keychain-backed cookie encryption while dev builds keep `--use-mock-keychain`.
 
+**Dev-build banner:** any build not running from exactly `/Applications/Browser.app`, or launched with `--profiles-root`, shows an amber `DEV BUILD` strip atop every window (bundle path, commit/branch from the `BRWBuild*` Info.plist keys `scripts/stamp-build-info.sh` writes before signing, engine, profiles root) and a `DEV` Dock badge. `--dev-banner on|off` forces it either way. See `Sources/App/DevBuildIndicator.swift`.
+
 ## Hard-won engine facts (read before touching the relevant code)
 
 Working notes for individual tasks are deliberately not kept in this repo — they're short-lived, and the beads tracker holds the issue history. What survived from them, because getting it wrong costs a day:
