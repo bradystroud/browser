@@ -53,6 +53,7 @@ enum WebKitEngine: BrowserEngine {
         EngineCapabilities(
             inAppDevTools: inAppInspectorAvailable,
             devToolsDocking: WebKitInspector.canDockIntoContainer,
+            devToolsHasOwnChrome: true,
             responsiveDesignMode: WebKitResponsiveDesign.isAvailable,
             perTabCPUUsage: false,
             perTabAudioMute: true,

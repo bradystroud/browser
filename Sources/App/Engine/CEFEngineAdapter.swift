@@ -15,6 +15,7 @@ enum CEFEngine: BrowserEngine {
         EngineCapabilities(
             inAppDevTools: true,
             devToolsDocking: true,
+            devToolsHasOwnChrome: false,
             responsiveDesignMode: true,
             perTabCPUUsage: true,
             perTabAudioMute: true,

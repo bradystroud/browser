@@ -363,6 +363,10 @@ struct EngineCapabilities {
     /// it is given. When false the engine always uses its own window, so the
     /// app offers no dock sides.
     var devToolsDocking: Bool = false
+    /// Docked tools draw their own dock-side and close controls. When false
+    /// (CEF's embedded front-end runs without any), the app's dock pane adds
+    /// a header bar carrying them.
+    var devToolsHasOwnChrome: Bool = false
     /// setResponsiveDesignMode(...) actually resizes the viewport.
     var responsiveDesignMode: Bool
     /// cpuUsagePercent() reports a real per-tab figure rather than 0.

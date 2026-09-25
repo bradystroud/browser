@@ -60,6 +60,8 @@ final class DevToolsDockController {
         layoutView.frame = hostView.bounds
         layoutView.autoresizingMask = [.width, .height]
         hostView.addSubview(layoutView)
+        layoutView.header.onDockSide = { [weak self] side in self?.setDockSide(side) }
+        layoutView.header.onClose = { [weak self] in self?.close() }
     }
 
     /// The tab's engine side, once it exists.
@@ -156,6 +158,21 @@ final class DevToolsDockController {
         layoutView.isToolsVisible = open
     }
 
+    /// Frames of the pane's parts and the engine's own view of the tools,
+    /// for the debug launch option's log line.
+    var layoutSummary: String {
+        func frame(_ view: NSView) -> String { view.isHidden ? "hidden" : NSStringFromRect(view.frame) }
+        return "open=\(isOpen) engineOpen=\(engineTab?.isDevToolsOpen == true) side=\(dockSide.rawValue) "
+            + "page=\(frame(pageView)) tools=\(frame(layoutView.toolsView)) "
+            + "toolsSubviews=\(layoutView.toolsView.subviews.count) header=\(frame(layoutView.header))"
+    }
+
+    /// Whether the given view is inside this tab's docked tools pane, so
+    /// keyboard handling can let the tools have their own shortcuts.
+    func toolsPaneContains(_ view: NSView) -> Bool {
+        isOpen && view.isDescendant(of: layoutView.toolsView)
+    }
+
     private func place(panel: DevToolsPanel, force: Bool) {
         let side = effectiveSide
         guard force || side != appliedSide else { return }
@@ -170,6 +187,7 @@ final class DevToolsDockController {
 /// frame split keeps the page's view the only thing that resizes.
 private final class DevToolsDockLayoutView: NSView {
     let toolsView = NSView()
+    let header = DevToolsPaneHeaderView()
     private let pageView: NSView
     private let divider = DevToolsDividerView()
 
@@ -179,7 +197,10 @@ private final class DevToolsDockLayoutView: NSView {
     private static let minimumPageLength: CGFloat = 160
 
     var dockSide: DevToolsDockSide = .right {
-        didSet { if dockSide != oldValue { layoutNow() } }
+        didSet {
+            header.dockSide = dockSide
+            if dockSide != oldValue { layoutNow() }
+        }
     }
 
     var isToolsVisible = false {
@@ -195,7 +216,9 @@ private final class DevToolsDockLayoutView: NSView {
         toolsView.autoresizingMask = []
         addSubview(pageView)
         addSubview(toolsView)
+        addSubview(header)
         addSubview(divider)
+        header.dockSide = dockSide
         divider.onDrag = { [weak self] point in self?.dividerDragged(to: point) }
         divider.onDragEnd = { [weak self] in self?.rememberToolsLength() }
         layoutNow()
@@ -218,6 +241,17 @@ private final class DevToolsDockLayoutView: NSView {
         let bounds = self.bounds
         toolsView.isHidden = !isDocked
         divider.isHidden = !isDocked
+        // Read live: the header only exists for tools without their own.
+        let showsHeader = isDocked && !ActiveEngine.capabilities.devToolsHasOwnChrome
+        header.isHidden = !showsHeader
+        defer {
+            if showsHeader {
+                let tools = toolsView.frame
+                let height = min(DevToolsPaneHeaderView.height, tools.height)
+                header.frame = NSRect(x: tools.minX, y: tools.maxY - height, width: tools.width, height: height)
+                toolsView.frame = NSRect(x: tools.minX, y: tools.minY, width: tools.width, height: tools.height - height)
+            }
+        }
         guard isDocked else {
             pageView.frame = bounds
             return
@@ -277,6 +311,124 @@ private final class DevToolsDockLayoutView: NSView {
         }
         layoutNow()
     }
+}
+
+/// A slim bar across the top of docked tools whose engine draws no dock
+/// controls of its own: dock-side buttons and a close button, right-aligned
+/// like the ones at the end of Chrome's DevTools toolbar. The buttons never
+/// take focus, so clicking them leaves the keyboard where it was.
+final class DevToolsPaneHeaderView: NSView {
+    static let height: CGFloat = 26
+
+    var onDockSide: ((DevToolsDockSide) -> Void)?
+    var onClose: (() -> Void)?
+
+    /// The side the pane is on, shown as the selected dock button.
+    var dockSide: DevToolsDockSide = .right {
+        didSet { refreshSideStates() }
+    }
+
+    private func refreshSideStates() {
+        for (side, button) in sideButtons { button.state = side == dockSide ? .on : .off }
+    }
+
+    private var sideButtons: [(DevToolsDockSide, NSButton)] = []
+
+    private static let sideItems: [(DevToolsDockSide, String, String)] = [
+        (.bottom, "rectangle.bottomthird.inset.filled", "Dock to Bottom"),
+        (.right, "rectangle.rightthird.inset.filled", "Dock to Right"),
+        (.left, "rectangle.leftthird.inset.filled", "Dock to Left"),
+        (.window, "macwindow.on.rectangle", "Undock into Separate Window"),
+    ]
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        let title = NSTextField(labelWithString: "DevTools")
+        title.font = .systemFont(ofSize: 11, weight: .medium)
+        title.textColor = .secondaryLabelColor
+
+        var buttons: [NSView] = []
+        for (side, symbol, label) in Self.sideItems {
+            let button = Self.iconButton(symbol: symbol, label: label, target: self, action: #selector(sideClicked(_:)))
+            button.setButtonType(.pushOnPushOff)
+            button.tag = sideButtons.count
+            sideButtons.append((side, button))
+            buttons.append(button)
+        }
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        buttons.append(separator)
+        buttons.append(Self.iconButton(symbol: "xmark", label: "Close DevTools", target: self, action: #selector(closeClicked(_:))))
+
+        let controls = NSStackView(views: buttons)
+        controls.spacing = 2
+        controls.alignment = .centerY
+
+        let row = NSStackView(views: [title, NSView(), controls])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 4)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+        dockSide = .right
+        setAccessibilityRole(.toolbar)
+        setAccessibilityLabel("Developer Tools")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    private static func iconButton(symbol: String, label: String, target: AnyObject, action: Selector) -> NSButton {
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
+            ?? NSImage(systemSymbolName: "square", accessibilityDescription: label)!
+        let button = NSButton(image: image, target: target, action: action)
+        button.bezelStyle = .accessoryBarAction
+        button.isBordered = true
+        button.showsBorderOnlyWhileMouseInside = true
+        button.imageScaling = .scaleProportionallyDown
+        button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        button.contentTintColor = .secondaryLabelColor
+        button.toolTip = label
+        button.refusesFirstResponder = true
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        button.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        return button
+    }
+
+    @objc private func sideClicked(_ sender: NSButton) {
+        let side = sideButtons[sender.tag].0
+        // A push-on/push-off button flips itself; the dock state decides.
+        refreshSideStates()
+        onDockSide?(side)
+    }
+
+    @objc private func closeClicked(_ sender: NSButton) {
+        onClose?()
+    }
+
+    /// Chrome's DevTools toolbar grey, with a hairline under it.
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                ? NSColor(srgbRed: 0x28 / 255.0, green: 0x28 / 255.0, blue: 0x28 / 255.0, alpha: 1)
+                : NSColor(srgbRed: 0xf1 / 255.0, green: 0xf3 / 255.0, blue: 0xf4 / 255.0, alpha: 1)
+        }.setFill()
+        bounds.fill()
+        NSColor.separatorColor.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {}
 }
 
 /// The draggable split between page and tools: a one-point line with a
@@ -351,6 +503,11 @@ enum DevToolsLaunchOption {
                 guard parts.count == 2 else { return }
                 devTools.inspectElement(at: NSPoint(x: parts[0], y: parts[1]))
             default: devTools.open(panel: .default)
+            }
+            // Where everything ended up, for checking a launch from its log
+            // alone when no screenshot can be taken.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                NSLog("Browser: --open-devtools layout: %@", devTools.layoutSummary)
             }
         }
     }
