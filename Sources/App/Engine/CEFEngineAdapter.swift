@@ -14,7 +14,7 @@ enum CEFEngine: BrowserEngine {
     static var capabilities: EngineCapabilities {
         EngineCapabilities(
             inAppDevTools: true,
-            devToolsDocking: false,
+            devToolsDocking: true,
             responsiveDesignMode: true,
             perTabCPUUsage: true,
             perTabAudioMute: true,
@@ -100,22 +100,28 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func reload() { browser.reload() }
     func close() { browser.close() }
 
-    // Until the bridge can embed DevTools into a view (docking, panels,
-    // picker, inspect-at-point), every entry point opens CEF's own separate
-    // DevTools window -- hence devToolsDocking stays false. CEF reports no
-    // close from that window, so isDevToolsOpen can go stale when the user
-    // closes it themselves.
-    private(set) var isDevToolsOpen = false
+    /// Where docked tools currently live, so the picker and inspect-at-point
+    /// open into the same place; nil means CEF's own separate window.
+    private weak var devToolsContainer: NSView?
+
+    var isDevToolsOpen: Bool { browser.isDevToolsOpen }
+
     func showDevTools(panel: DevToolsPanel, dockSide: DevToolsDockSide, in container: NSView?) {
-        browser.showDevTools()
-        isDevToolsOpen = true
+        devToolsContainer = dockSide == .window ? nil : container
+        browser.showDevTools(in: devToolsContainer, panel: Self.bridgePanel(panel))
     }
-    func closeDevTools() {
-        browser.closeDevTools()
-        isDevToolsOpen = false
+    func closeDevTools() { browser.closeDevTools() }
+    func startElementPicker() { browser.startElementPicker(in: devToolsContainer) }
+    func inspectElement(at point: NSPoint) { browser.inspectElement(at: point, in: devToolsContainer) }
+
+    private static func bridgePanel(_ panel: DevToolsPanel) -> BRWDevToolsPanel {
+        switch panel {
+        case .default: return .default
+        case .console: return .console
+        case .elements: return .elements
+        }
     }
-    func startElementPicker() {}
-    func inspectElement(at point: NSPoint) {}
+
     func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
         browser.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile)
     }
@@ -253,6 +259,19 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidRequestClose() {
         delegate?.engineTabDidRequestClose()
+    }
+
+    func browserDevToolsDidOpen() {
+        delegate?.engineTabDevToolsDidOpen()
+    }
+
+    func browserDevToolsDidClose() {
+        delegate?.engineTabDevToolsDidClose()
+    }
+
+    @objc(browserDidRequestInspectElementAtPoint:)
+    func browserDidRequestInspectElement(at point: NSPoint) {
+        delegate?.engineTabDidRequestInspectElement(at: point)
     }
 
     func browserDidBlockRequest(toTracker trackerDomain: String, onPageHost pageHost: String) {

@@ -972,4 +972,5 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDevToolsDidOpen() { devTools.engineDidOpen() }
     func engineTabDevToolsDidClose() { devTools.engineDidClose() }
     func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide) { devTools.engineDidRequestDockSide(side) }
+    func engineTabDidRequestInspectElement(at point: NSPoint) { devTools.inspectElement(at: point) }
 }

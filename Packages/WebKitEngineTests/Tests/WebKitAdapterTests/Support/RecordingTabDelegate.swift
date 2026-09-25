@@ -103,4 +103,5 @@ final class RecordingTabDelegate: EngineTabDelegate {
     }
     func engineTabDevToolsDidClose() { events.append("devToolsClose") }
     func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide) { events.append("devToolsDockSide:\(side.rawValue)") }
+    func engineTabDidRequestInspectElement(at point: NSPoint) { events.append("inspectElementRequest") }
 }

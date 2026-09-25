@@ -197,6 +197,13 @@ protocol EngineTabDelegate: AnyObject {
     /// The receiver should move its dock container to match; the tools
     /// themselves have already moved.
     func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide)
+
+    /// The user chose the engine's own context-menu Inspect Element at
+    /// `point` (in the tab's web content view's coordinates). The receiver
+    /// opens the tools where it wants them and answers with
+    /// inspectElement(at:), passing `point` unchanged. An engine that claims
+    /// its tools through engineTabDevToolsDidOpen() instead never sends it.
+    func engineTabDidRequestInspectElement(at point: NSPoint)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
