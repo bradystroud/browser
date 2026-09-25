@@ -692,6 +692,9 @@ final class TabStripView: NSView {
         reportSelectionContrastIfRequested()
     }
 
+    /// Cached because it is read from `layout()`, which runs often.
+    private static let isContrastReportRequested = CommandLine.arguments.contains("--tab-contrast-report")
+
     /// `--tab-contrast-report`: prints the selected pill's measured colors
     /// and contrast ratios (browser-qpy.1) every time the strip lays out,
     /// so switching tabs walks through every theme color in the window and
@@ -704,7 +707,7 @@ final class TabStripView: NSView {
     /// says by how much, and would keep saying so if a future change to the
     /// chrome tint quietly ate the margin.
     private func reportSelectionContrastIfRequested() {
-        guard ProcessInfo.processInfo.arguments.contains("--tab-contrast-report") else { return }
+        guard Self.isContrastReportRequested else { return }
         for item in stripItems {
             guard case .tab(let button) = item, button.index == selectedIndex else { continue }
             NSLog("[tab-contrast] %@", button.selectionContrastReport)

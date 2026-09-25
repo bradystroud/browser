@@ -14,9 +14,11 @@ import AppKit
 /// state per record to reconstruct the sequence.
 ///
 /// Off unless switched on, and switchable on *without a relaunch* -- the
-/// marker file is stat'd at each drag rather than read once at startup,
-/// because the person who needs to turn this on is running an installed
-/// /Applications build he can't easily pass launch arguments to.
+/// marker file is re-checked while the app runs rather than read once at
+/// startup, because the person who needs to turn this on is running an
+/// installed /Applications build they can't easily pass launch arguments
+/// to. The check is cached for markerRecheckInterval, since `record` runs
+/// once per mouse-moved event of every drag.
 enum TabDragDiagnostics {
     /// `touch` this to start recording; delete it to stop. Sits next to
     /// session.json/profiles.json, so it's scoped by `--profiles-root` the
@@ -34,18 +36,32 @@ enum TabDragDiagnostics {
     private static var records: [[String: Any]] = []
     private static var flushScheduled = false
 
-    private static var directory: String {
+    private static let directory: String = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
         return ProfilesRootResolver.sessionAndProfilesMetadataDirectory(
             arguments: CommandLine.arguments, appSupportDirectory: appSupport
         )
-    }
+    }()
 
-    /// Stat'd per call rather than cached -- see the type's own doc comment.
-    /// `--drag-diagnostics` is the equivalent for a launch we do control.
+    private static let markerPath = (directory as NSString).appendingPathComponent(markerName)
+
+    /// Short enough that touching the marker takes effect before the next
+    /// drag attempt.
+    private static let markerRecheckInterval: TimeInterval = 1
+    private static var markerExists = false
+    private static var markerCheckedAt: TimeInterval?
+
+    /// `--drag-diagnostics` is the equivalent of the marker for a launch we
+    /// do control.
     static var isEnabled: Bool {
         if isForcedOnByArgument { return true }
-        return FileManager.default.fileExists(atPath: (directory as NSString).appendingPathComponent(markerName))
+        let now = ProcessInfo.processInfo.systemUptime
+        if let checkedAt = markerCheckedAt, now - checkedAt < markerRecheckInterval {
+            return markerExists
+        }
+        markerCheckedAt = now
+        markerExists = FileManager.default.fileExists(atPath: markerPath)
+        return markerExists
     }
 
     private static let isForcedOnByArgument = CommandLine.arguments.contains("--drag-diagnostics")
@@ -53,9 +69,7 @@ enum TabDragDiagnostics {
     /// `--drag-selftest`, cached -- read from `layout()`, which runs often.
     static let isSelfTestRequested = CommandLine.arguments.contains("--drag-selftest")
 
-    static var logPath: String {
-        (directory as NSString).appendingPathComponent(logName)
-    }
+    static let logPath = (directory as NSString).appendingPathComponent(logName)
 
     private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -118,10 +132,12 @@ enum TabDragDiagnostics {
     /// launch nobody is clicking in, which is the whole reason this exists.
     private static var hasProbedThisLaunch = false
 
-    /// `hasProbedThisLaunch` is checked before `isEnabled` deliberately: this
-    /// runs from layout, and `isEnabled` stats the marker file.
+    /// Decided at the first layout that has a probeable button, whether or
+    /// not diagnostics are on then: this runs from every layout, and a probe
+    /// for a session that turns diagnostics on later still comes from
+    /// beginDrag's own probeHitTesting call.
     static func probeHitTestingOnce(button: TabButtonView) {
-        guard !hasProbedThisLaunch, isEnabled, button.window != nil, button.bounds.width > 0 else { return }
+        guard !hasProbedThisLaunch, button.window != nil, button.bounds.width > 0 else { return }
         hasProbedThisLaunch = true
         probeHitTesting(button: button)
     }
