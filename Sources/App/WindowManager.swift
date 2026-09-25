@@ -42,7 +42,7 @@ final class WindowManager {
     /// profile, as the same target.
     @discardableResult
     func openNewPrivateWindow() -> BrowserWindowController {
-        let profile = Profile(id: "private-\(UUID().uuidString)", name: "Private", colorHex: "#3a3a3c")
+        let profile = Profile(id: "\(Profile.privateIdPrefix)\(UUID().uuidString)", name: "Private", colorHex: "#3a3a3c")
         // Always the start page, never the homepage (browser-m0x): a private
         // window that opened your homepage would hand the one site you visit
         // most a fresh, empty-cookie-jar session every ⇧⌘N, which is the
@@ -81,6 +81,10 @@ final class WindowManager {
         controller.onWindowClosed = { [weak self, weak controller] in
             guard let self, let controller else { return }
             self.windowControllers.removeAll { $0 === controller }
+            let profileId = controller.profile.id
+            if controller.profile.isPrivate, !self.windowControllers.contains(where: { $0.profile.id == profileId }) {
+                ProfileDataStoreManager.shared.discard(profileId: profileId)
+            }
             self.scheduleSessionSave()
         }
         // Activate the app *before* showing the window and focusing its

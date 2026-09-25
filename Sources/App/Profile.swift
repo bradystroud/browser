@@ -12,6 +12,13 @@ struct Profile: Codable, Equatable {
     let id: String
     var name: String
     var colorHex: String
+
+    /// Every private window gets a throwaway profile whose id starts with
+    /// this (see WindowManager.openNewPrivateWindow). Such a profile is never
+    /// saved to profiles.json, and nothing keyed by it may reach the disk.
+    static let privateIdPrefix = "private-"
+
+    var isPrivate: Bool { id.hasPrefix(Self.privateIdPrefix) }
 }
 
 /// Fixed palette offered when creating a new profile -- Apple's system accent

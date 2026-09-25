@@ -30,7 +30,8 @@ final class ProfileDataStores {
 /// directory BRWEngine already uses for that profile's CEF cache_path (see
 /// CommandLineArgs.profileDirectory / BRWEngine.mm's GetOrCreateProfileContext),
 /// keyed by the profile's immutable id, not its mutable display name
-/// (browser-ojw).
+/// (browser-ojw). A private profile's stores are in memory only, and are
+/// discarded when its last window closes.
 final class ProfileDataStoreManager {
     static let shared = ProfileDataStoreManager()
 
@@ -44,7 +45,9 @@ final class ProfileDataStoreManager {
         }
         let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profile.id))
         do {
-            let database = try Database(profileDirectory: profileDirectory)
+            let database = profile.isPrivate
+                ? try Database.inMemory()
+                : try Database(profileDirectory: profileDirectory)
             let stores = ProfileDataStores(database: database)
             cache[profile.id] = stores
             return stores
@@ -56,5 +59,9 @@ final class ProfileDataStoreManager {
             // every future call in this profile.
             fatalError("Browser: failed to open BrowserCore database for profile \(profile.name) (id: \(profile.id)): \(error)")
         }
+    }
+
+    func discard(profileId: String) {
+        cache[profileId] = nil
     }
 }

@@ -2166,11 +2166,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // that save to persist about it anyway.
         guard !isPrivate else { return }
         let history = ProfileDataStoreManager.shared.stores(for: profile).history
-        try? history.recordVisit(url: url, title: tab.title)
+        // Until the new page reports its title, tab.title is still the
+        // previous page's, which must not be stored under this URL.
+        try? history.recordVisit(url: url, title: tab.hasFreshTitle ? tab.title : nil)
         if let appDelegate = NSApp.delegate as? AppDelegate, tab === activeTab {
             appDelegate.mainMenuBuilder.rebuildRecentHistory(for: profile)
         }
         WindowManager.shared.scheduleSessionSave()
+    }
+
+    func tab(_ tab: Tab, didReceiveTitle title: String) {
+        guard !isPrivate else { return }
+        let history = ProfileDataStoreManager.shared.stores(for: profile).history
+        try? history.updateTitle(url: tab.urlString, title: title)
     }
 
     func tab(_ tab: Tab, didBeginDownload info: TabDownloadStart) {

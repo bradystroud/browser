@@ -8,6 +8,10 @@ protocol TabDelegate: AnyObject {
     /// does and doesn't cover. This is the history-recording signal.
     func tab(_ tab: Tab, didCommitNavigationTo url: String)
 
+    /// The page reported its title. A navigation commits before its page
+    /// has a title, so this is how history learns the real one.
+    func tab(_ tab: Tab, didReceiveTitle title: String)
+
     /// The main-frame URL actually changed -- including a same-document
     /// change (history.pushState), which never reaches
     /// tab(_:didCommitNavigationTo:) above. Not fired for a redundant report
@@ -623,6 +627,9 @@ final class Tab: NSObject, EngineTabDelegate {
         // starts. Harmless no-op if this fires outside a navigation.
         hasFreshTitle = true
         delegate?.tabDidChangeDisplayState(self)
+        if !title.isEmpty {
+            delegate?.tab(self, didReceiveTitle: title)
+        }
     }
 
     func engineTabDidChangeURL(_ url: String) {

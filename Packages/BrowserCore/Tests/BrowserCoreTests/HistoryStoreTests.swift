@@ -14,6 +14,17 @@ final class HistoryStoreTests: XCTestCase {
         TestSupport.removeQuietly(dir)
     }
 
+    func testUpdateTitleReplacesTitleRecordedAtCommit() throws {
+        try store.recordVisit(url: "https://example.com", title: nil)
+        try store.updateTitle(url: "https://example.com", title: "Example Domain")
+        try store.updateTitle(url: "https://example.com", title: "")
+        try store.updateTitle(url: "https://never-visited.example", title: "Ignored")
+
+        let results = try store.autocomplete(query: "example")
+        XCTAssertEqual(results.map(\.url), ["https://example.com"])
+        XCTAssertEqual(results.first?.title, "Example Domain")
+    }
+
     func testPrefixMatchRanksAboveMidStringMatch() throws {
         let now = Date()
         try store.recordVisit(url: "https://example.com", title: "Example Homepage", at: now)

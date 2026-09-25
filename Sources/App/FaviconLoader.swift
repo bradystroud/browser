@@ -16,6 +16,11 @@ import AppKit
 ///   collide with any of Chromium's own fixed per-profile filenames.
 /// - No third-party favicon services: this only ever talks to the site's
 ///   own host, for privacy.
+/// - Fetches use an ephemeral session: no cookies and no HTTP disk cache,
+///   so a favicon request can neither link profiles together nor leave a
+///   record of a private window's visits in the app's Caches directory.
+///   A private profile's icons are likewise never written to (or read from)
+///   the on-disk cache above.
 ///
 /// Prefers the page's own declared favicon URL when available (`hintURL`,
 /// forwarded from CefDisplayHandler::OnFaviconURLChange via
@@ -26,23 +31,25 @@ import AppKit
 final class FaviconLoader {
     static let shared = FaviconLoader()
 
+    /// Only touched on `queue`.
     private var memoryCache: [String: NSImage] = [:]
     private let queue = DispatchQueue(label: "dev.stroud.browser.faviconloader")
+    private let session = URLSession(configuration: .ephemeral)
     private let targetSize = NSSize(width: 32, height: 32) // @2x for a 16pt tab icon slot
 
     private init() {}
 
     func loadFavicon(host: String, hintURL: String?, profileId: String, completion: @escaping (NSImage?) -> Void) {
-        if let cached = memoryCache[host] {
-            DispatchQueue.main.async { completion(cached) }
-            return
-        }
-
         queue.async { [weak self] in
             guard let self else { return }
 
+            if let cached = self.memoryCache[host] {
+                DispatchQueue.main.async { completion(cached) }
+                return
+            }
+
             let diskURL = self.diskCacheURL(host: host, profileId: profileId)
-            if let data = try? Data(contentsOf: diskURL), let image = self.decodedImage(from: data) {
+            if let diskURL, let data = try? Data(contentsOf: diskURL), let image = self.decodedImage(from: data) {
                 self.memoryCache[host] = image
                 DispatchQueue.main.async { completion(image) }
                 return
@@ -53,7 +60,7 @@ final class FaviconLoader {
                 return
             }
 
-            let task = URLSession.shared.dataTask(with: fetchURL) { [weak self] data, response, _ in
+            let task = self.session.dataTask(with: fetchURL) { [weak self] data, response, _ in
                 guard let self else { return }
                 guard let data, let httpResponse = response as? HTTPURLResponse,
                       httpResponse.statusCode == 200,
@@ -63,7 +70,9 @@ final class FaviconLoader {
                 }
                 self.queue.async {
                     self.memoryCache[host] = image
-                    self.saveToDisk(image: image, url: diskURL)
+                    if let diskURL {
+                        self.saveToDisk(image: image, url: diskURL)
+                    }
                     DispatchQueue.main.async { completion(image) }
                 }
             }
@@ -106,19 +115,10 @@ final class FaviconLoader {
     /// own serial queue, and the disk cache is a superset of it anyway, since
     /// nothing enters memory without also being written to disk.
     func cachedFaviconData(host: String, profileId: String) -> Data? {
-        guard let data = try? Data(contentsOf: diskCacheURL(host: host, profileId: profileId)),
+        guard let diskURL = diskCacheURL(host: host, profileId: profileId),
+              let data = try? Data(contentsOf: diskURL),
               !data.isEmpty, data.count <= Self.maxInlinableBytes else { return nil }
         return data
-    }
-
-    /// The already-cached favicon for a host as an image, or nil. Same
-    /// cache-hit-only, no-network contract as `cachedFaviconData`; decoding a
-    /// 32x32 PNG is cheap enough to do inline where a caller would otherwise
-    /// show a placeholder for a frame and swap it out (see
-    /// OmniboxStartPanelTileView).
-    func cachedFaviconImage(host: String, profileId: String) -> NSImage? {
-        guard let data = cachedFaviconData(host: host, profileId: profileId) else { return nil }
-        return decodedImage(from: data)
     }
 
     /// Entries are our own re-encoded 32x32 PNGs -- 4KB of pixels before
@@ -128,8 +128,10 @@ final class FaviconLoader {
     /// URL, so it caps the whole page, not just one tile.
     private static let maxInlinableBytes = 32 * 1024
 
-    private func diskCacheURL(host: String, profileId: String) -> URL {
-        cacheDirectoryURL(profileId: profileId).appendingPathComponent("\(host).png")
+    /// Nil for a private profile, which has no on-disk cache.
+    private func diskCacheURL(host: String, profileId: String) -> URL? {
+        guard !profileId.hasPrefix(Profile.privateIdPrefix) else { return nil }
+        return cacheDirectoryURL(profileId: profileId).appendingPathComponent("\(host).png")
     }
 
     private func cacheDirectoryURL(profileId: String) -> URL {

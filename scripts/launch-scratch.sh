@@ -57,4 +57,4 @@ codesign --verify --strict "${SCRATCH_APP}"
 mkdir -p "${PROFILES_ROOT}"
 
 echo "Scratch app copy: ${SCRATCH_APP} (rm -rf ${SCRATCH_ROOT} when done)" >&2
-exec "${SCRATCH_APP}/Contents/MacOS/Browser" --profiles-root "${PROFILES_ROOT}" "${EXTRA_ARGS[@]}"
+exec "${SCRATCH_APP}/Contents/MacOS/Browser" --profiles-root "${PROFILES_ROOT}" ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}

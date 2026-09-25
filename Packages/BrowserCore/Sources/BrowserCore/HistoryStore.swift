@@ -38,6 +38,20 @@ public final class HistoryStore {
         }
     }
 
+    /// Sets the stored title of an already-recorded URL. A visit is recorded
+    /// when a navigation commits, which is before the new page has told us
+    /// its title, so the real title arrives through here afterwards. Does
+    /// nothing for a URL that was never recorded or for an empty title.
+    public func updateTitle(url: String, title: String) throws {
+        guard !title.isEmpty else { return }
+        try database.perform { db in
+            let update = try db.prepare("UPDATE history_urls SET title = ? WHERE url = ?;")
+            try update.bind(title, at: 1)
+            try update.bind(url, at: 2)
+            try update.step()
+        }
+    }
+
     /// Bulk variant for importing another browser's history (browser-ymx's
     /// Safari import) -- one shared transaction for the whole batch rather
     /// than one per visit (recordVisit's own per-call transaction is fine

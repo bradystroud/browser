@@ -324,6 +324,7 @@ final class MainMenuBuilder {
         ).keyEquivalentModifierMask = [.command, .shift]
         let recentlyClosedItem = NSMenuItem(title: "Recently Closed", action: nil, keyEquivalent: "")
         recentlyClosedItem.submenu = recentlyClosedMenu
+        recentlyClosedMenu.delegate = recentlyClosedMenuUpdater
         historyMenu.addItem(recentlyClosedItem)
         historyMenu.addItem(.separator())
         historyMenu.addItem(withTitle: "Show All History…", action: #selector(BrowserWindowController.showHistory(_:)), keyEquivalent: "y")
@@ -348,14 +349,21 @@ final class MainMenuBuilder {
         return "\(lead)…\(tail)"
     }
 
-    /// The Recently Closed submenu (browser-n2j). Rebuilt from the store each
-    /// time the key window changes, like the recent-history section below.
+    /// The Recently Closed submenu (browser-n2j). Rebuilt from the store
+    /// every time it opens, for the key window's profile.
     ///
     /// Item tags are positions within THIS profile's own filtered list, which
     /// is the same list ClosedItemStore.take(at:profileId:) counts in -- so
     /// "the second item in my Work menu" can never resolve to whatever
-    /// happens to sit at index 2 of the interleaved all-profiles stack.
+    /// happens to sit at index 2 of the interleaved all-profiles stack. That
+    /// only holds while the menu is current, which is why it is rebuilt on
+    /// open: ⇧⌘T or another close changes the list without the key window
+    /// changing, and a stale position would reopen a different entry.
     private let recentlyClosedMenu = NSMenu()
+    private lazy var recentlyClosedMenuUpdater = MenuUpdater { [weak self] in
+        guard let controller = (NSApp.keyWindow ?? NSApp.mainWindow)?.windowController as? BrowserWindowController else { return }
+        self?.rebuildRecentlyClosed(for: controller.profile)
+    }
 
     func rebuildRecentlyClosed(for profile: Profile) {
         recentlyClosedMenu.removeAllItems()
@@ -548,5 +556,20 @@ final class MainMenuBuilder {
         NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: diameter, height: diameter)).fill()
         image.unlockFocus()
         return image
+    }
+}
+
+/// Runs `update` just before its menu opens. NSMenuDelegate needs an
+/// NSObject, which MainMenuBuilder is not; the menu holds its delegate
+/// weakly, so the builder keeps this alive.
+private final class MenuUpdater: NSObject, NSMenuDelegate {
+    private let update: () -> Void
+
+    init(update: @escaping () -> Void) {
+        self.update = update
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        update()
     }
 }

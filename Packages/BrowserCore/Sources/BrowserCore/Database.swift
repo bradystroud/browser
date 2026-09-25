@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// Owns one profile's SQLite connection for one database file and
 /// serializes every access onto a private queue. SQLite is opened with
@@ -39,7 +40,7 @@ public final class Database {
     /// `queueLabel` is per-file rather than shared: two databases have no
     /// reason to serialize against each other, and a report flush should
     /// never be able to sit behind a history query.
-    init(
+    convenience init(
         profileDirectory: URL,
         fileName: String,
         queueLabel: String,
@@ -47,7 +48,44 @@ public final class Database {
     ) throws {
         try FileManager.default.createDirectory(at: profileDirectory, withIntermediateDirectories: true)
         let dbPath = profileDirectory.appendingPathComponent(fileName).path
-        self.connection = try SQLiteConnection(path: dbPath)
+        try self.init(path: dbPath, queueLabel: queueLabel, prepareSchema: prepareSchema)
+    }
+
+    /// Opens an existing profile's `browser.db` read-only, for a process that
+    /// only inspects it (the `browser` CLI) while the app may have it open.
+    /// Never creates the file or its directory, and never migrates: a newer
+    /// reader must not change the schema underneath a running older app.
+    public static func openExistingReadOnly(profileDirectory: URL) throws -> Database {
+        let dbPath = profileDirectory.appendingPathComponent("browser.db").path
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            throw SQLiteError(code: SQLITE_CANTOPEN, message: "no database at \(dbPath)")
+        }
+        return try Database(
+            path: dbPath,
+            readOnly: true,
+            queueLabel: "com.browser.BrowserCore.Database.readOnly",
+            prepareSchema: { _ in }
+        )
+    }
+
+    /// A `browser.db`-shaped database that lives only in memory and is gone
+    /// when the last reference to it is released. A private window's stores
+    /// use this, so nothing it does can reach the disk.
+    public static func inMemory() throws -> Database {
+        try Database(
+            path: ":memory:",
+            queueLabel: "com.browser.BrowserCore.Database.inMemory",
+            prepareSchema: Migrations.run(on:)
+        )
+    }
+
+    private init(
+        path: String,
+        readOnly: Bool = false,
+        queueLabel: String,
+        prepareSchema: (SQLiteConnection) throws -> Void
+    ) throws {
+        self.connection = try SQLiteConnection(path: path, readOnly: readOnly)
         self.queue = DispatchQueue(label: queueLabel)
         try queue.sync {
             try prepareSchema(connection)

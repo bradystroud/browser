@@ -18,6 +18,35 @@ final class DatabaseTests: XCTestCase {
         }
     }
 
+    func testInMemoryDatabaseHasTheFullSchemaAndIsNotShared() throws {
+        let first = HistoryStore(database: try Database.inMemory())
+        try first.recordVisit(url: "https://example.com", title: "Example")
+        XCTAssertEqual(try first.autocomplete(query: "example").count, 1)
+
+        let second = HistoryStore(database: try Database.inMemory())
+        XCTAssertTrue(try second.autocomplete(query: "example").isEmpty)
+    }
+
+    func testReadOnlyOpenNeverCreatesAMissingDatabase() throws {
+        let dir = try TestSupport.makeTempProfileDirectory()
+        defer { TestSupport.removeQuietly(dir) }
+        let profileDir = dir.appendingPathComponent("never-launched")
+
+        XCTAssertThrowsError(try Database.openExistingReadOnly(profileDirectory: profileDir))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: profileDir.path))
+    }
+
+    func testReadOnlyOpenReadsAnExistingDatabase() throws {
+        let dir = try TestSupport.makeTempProfileDirectory()
+        defer { TestSupport.removeQuietly(dir) }
+        try HistoryStore(database: try Database(profileDirectory: dir))
+            .recordVisit(url: "https://example.com", title: "Example")
+
+        let reader = HistoryStore(database: try Database.openExistingReadOnly(profileDirectory: dir))
+        XCTAssertEqual(try reader.autocomplete(query: "example").map(\.url), ["https://example.com"])
+        XCTAssertThrowsError(try reader.recordVisit(url: "https://other.example", title: nil))
+    }
+
     func testReopeningExistingDatabaseIsIdempotent() throws {
         let dir = try TestSupport.makeTempProfileDirectory()
         defer { TestSupport.removeQuietly(dir) }

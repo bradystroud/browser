@@ -218,6 +218,9 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     }
 
     private func handleAddressSubmit(_ payload: AddressFormSubmitPayload, tab: Tab) {
+        // A private window's profile is throwaway, so an address saved under
+        // it would sit on disk where no window can ever show it again.
+        guard !tab.isPrivate else { return }
         guard !payload.streetAddress.isEmpty || !payload.postalCode.isEmpty else { return }
         let store = AddressStoreManager.shared.store(forProfileId: tab.profileId)
 
