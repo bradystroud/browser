@@ -220,6 +220,12 @@ final class WebKitTab: NSObject, EngineTab {
     let profileName: String
     private var observations: [NSKeyValueObservation] = []
     private var isFindingActive = false
+    /// Bumped per find/stop so a slower, superseded result never overwrites
+    /// a newer one in the find bar.
+    private var findGeneration = 0
+    private var findQuery: String?
+    private var findMatchCase = false
+    private var findOrdinal = 0
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
@@ -401,30 +407,71 @@ final class WebKitTab: NSObject, EngineTab {
         }
     }
 
-    /// Best-effort approximation, not full parity: WKWebView.findString's
-    /// completion handler (WKFindResult) reports only whether a match was
-    /// found -- no match *count*, no active-match *ordinal*, unlike CEF's
-    /// find, which reports both repeatedly as it scans (see
-    /// EngineTabDidUpdateFindResult's own doc comment). There is no public
-    /// WKWebView API that exposes either number, so a find bar built against
-    /// this engine can show "found/not found" but not "3 of 12" the way it
-    /// does on CEF today -- a real, confirmed UI regression for
-    /// browser-5kq.5 parity, not just a rough edge.
+    /// WKWebView.find selects and scrolls to the match but reports only
+    /// found / not found. The "3 of 12" CEF reports is rebuilt from a text
+    /// walk (WebKitFindScript) run after each find: the count directly, and
+    /// the ordinal from where WebKit's own selection landed. When the
+    /// selection is somewhere the walk can't see (a form field, an iframe),
+    /// the ordinal is stepped from the previous result instead. Delivered
+    /// once, as a final update -- the find bar only ever shows the last one.
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
         guard !searchText.isEmpty else {
             stopFinding(clearSelection: true)
             return
         }
         isFindingActive = true
+        findGeneration += 1
+        let generation = findGeneration
+        let isNewSearch = !findNext || searchText != findQuery || matchCase != findMatchCase
+        findQuery = searchText
+        findMatchCase = matchCase
+
         let config = WKFindConfiguration()
         config.backwards = !forward
         config.caseSensitive = matchCase
         config.wraps = true
         webView.find(searchText, configuration: config) { [weak self] result in
-            self?.delegate?.engineTabDidUpdateFindResult(
-                matchCount: result.matchFound ? 1 : 0,
-                activeMatchOrdinal: result.matchFound ? 1 : 0,
-                isFinalUpdate: true)
+            guard let self, generation == self.findGeneration else { return }
+            guard result.matchFound else {
+                self.findOrdinal = 0
+                self.delegate?.engineTabDidUpdateFindResult(matchCount: 0, activeMatchOrdinal: 0, isFinalUpdate: true)
+                return
+            }
+            self.countFindMatches(searchText, matchCase: matchCase) { counted, selectedOrdinal in
+                guard generation == self.findGeneration else { return }
+                // WebKit found at least one, whatever the walk managed to see.
+                let count = max(counted, 1)
+                let ordinal: Int
+                if selectedOrdinal > 0 {
+                    ordinal = selectedOrdinal
+                } else if isNewSearch || self.findOrdinal == 0 {
+                    ordinal = 1
+                } else if forward {
+                    ordinal = self.findOrdinal % count + 1
+                } else {
+                    ordinal = self.findOrdinal <= 1 ? count : self.findOrdinal - 1
+                }
+                self.findOrdinal = min(ordinal, count)
+                self.delegate?.engineTabDidUpdateFindResult(matchCount: count, activeMatchOrdinal: self.findOrdinal, isFinalUpdate: true)
+            }
+        }
+    }
+
+    private func countFindMatches(_ query: String, matchCase: Bool, completion: @escaping (_ count: Int, _ selectedOrdinal: Int) -> Void) {
+        webView.callAsyncJavaScript(
+            WebKitFindScript.countMatches,
+            arguments: ["query": query, "matchCase": matchCase],
+            in: nil,
+            in: .defaultClient
+        ) { result in
+            switch result {
+            case .success(let value):
+                let numbers = (value as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
+                completion(numbers.first ?? 0, numbers.count > 1 ? numbers[1] : 0)
+            case .failure(let error):
+                NSLog("Browser: WebKit find match count failed: %@", error.localizedDescription)
+                completion(0, 0)
+            }
         }
     }
 
@@ -435,6 +482,9 @@ final class WebKitTab: NSObject, EngineTab {
     /// doc comment: "A match found by the search is selected").
     func stopFinding(clearSelection: Bool) {
         isFindingActive = false
+        findGeneration += 1
+        findQuery = nil
+        findOrdinal = 0
         guard clearSelection else { return }
         webView.evaluateJavaScript("window.getSelection() && window.getSelection().removeAllRanges();", completionHandler: nil)
     }
