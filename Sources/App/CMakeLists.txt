@@ -279,6 +279,7 @@ source_group(AutofillCore FILES ${BROWSER_AUTOFILL_CORE_SRCS})
 # directly into the Browser executable here too -- one copy of the logic,
 # two ways to build it.
 set(BROWSER_WEBENGINE_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentBlockerRegex.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentRuleListBuilder.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ProfileDataStoreKey.swift
   )

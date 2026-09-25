@@ -7,8 +7,16 @@ let package = Package(
     products: [
         .library(name: "WebEngineCore", targets: ["WebEngineCore"]),
     ],
+    dependencies: [
+        // Tests only: the bundled starter block list is the real input the
+        // WebKit adapter feeds ContentRuleListBuilder.
+        .package(path: "../BlockListCore"),
+    ],
     targets: [
         .target(name: "WebEngineCore"),
-        .testTarget(name: "WebEngineCoreTests", dependencies: ["WebEngineCore"]),
+        .testTarget(
+            name: "WebEngineCoreTests",
+            dependencies: ["WebEngineCore", .product(name: "BlockListCore", package: "BlockListCore")]
+        ),
     ]
 )
