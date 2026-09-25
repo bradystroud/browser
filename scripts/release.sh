@@ -200,7 +200,13 @@ if [[ "${DO_SIGN}" -eq 1 ]]; then
     /usr/libexec/PlistBuddy -c "Add :BRWDisableMockKeychain bool true" "${INFO_PLIST}"
   fi
 
-  CODESIGN_IDENTITY="${IDENTITY}" "${ROOT_DIR}/scripts/sign.sh" "${APP_PATH}" "${MANIFEST}"
+  # A real-identity release must carry the passkey provisioning profile (see
+  # sign.sh step 2c): a local build may fall back to signing without it, a
+  # shipped one may not.
+  REQUIRE_PROFILE=0
+  [[ "${IDENTITY}" != "-" ]] && REQUIRE_PROFILE=1
+  BRW_REQUIRE_PROVISIONING_PROFILE="${REQUIRE_PROFILE}" \
+    CODESIGN_IDENTITY="${IDENTITY}" "${ROOT_DIR}/scripts/sign.sh" "${APP_PATH}" "${MANIFEST}"
   # sign.sh already ran `codesign --verify --strict` on the outer app bundle
   # as its last step (see sign.sh for why never --deep -- it chokes on the
   # framework's Versions/Current symlink even on a validly-signed bundle).

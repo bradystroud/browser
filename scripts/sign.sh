@@ -125,11 +125,58 @@ if [[ -d "${SPARKLE_FRAMEWORK_DIR}" ]]; then
   codesign --force --options runtime --sign "${IDENTITY}" --timestamp "${SPARKLE_FRAMEWORK_DIR}"
 fi
 
+# 2c. The Developer ID provisioning profile that authorizes Apple's
+#     restricted com.apple.developer.web-browser.public-key-credential
+#     entitlement (Touch ID / iCloud Keychain passkeys). A signature that
+#     claims a restricted entitlement without an embedded profile allowing
+#     it is killed by the kernel at launch, so the profile and the
+#     entitlements it grants are always added together or not at all.
+#
+#     The profile lives outside this public repo. Its restricted keys are
+#     read from the profile itself rather than written into
+#     entitlements/browser.entitlements, which keeps the team ID out of the
+#     repo and keeps ad-hoc builds (which can never carry a profile)
+#     launchable.
+PROFILE_PATH="${BRW_PROVISIONING_PROFILE:-${HOME}/.config/browser/Browser.provisionprofile}"
+EMBEDDED_PROFILE="${APP_PATH}/Contents/embedded.provisionprofile"
+APP_ENTITLEMENTS_OVERRIDE=""
+rm -f "${EMBEDDED_PROFILE}"
+if [[ "${IDENTITY}" != "-" && -f "${PROFILE_PATH}" ]]; then
+  PROFILE_WORK_DIR="$(mktemp -d)"
+  trap 'rm -rf "${PROFILE_WORK_DIR}"' EXIT
+  PROFILE_PLIST="${PROFILE_WORK_DIR}/profile.plist"
+  security cms -D -i "${PROFILE_PATH}" > "${PROFILE_PLIST}"
+  profile_get() { /usr/libexec/PlistBuddy -c "Print :$1" "${PROFILE_PLIST}"; }
+
+  PROFILE_TEAM="$(profile_get "Entitlements:com.apple.developer.team-identifier")"
+  if [[ "${IDENTITY}" != *"(${PROFILE_TEAM})"* ]]; then
+    echo "error: provisioning profile ${PROFILE_PATH} is for team ${PROFILE_TEAM}, but the signing identity is '${IDENTITY}'" >&2
+    exit 1
+  fi
+
+  echo "Embedding provisioning profile: ${PROFILE_PATH}"
+  cp "${PROFILE_PATH}" "${EMBEDDED_PROFILE}"
+  APP_ENTITLEMENTS_OVERRIDE="${PROFILE_WORK_DIR}/browser.entitlements"
+elif [[ "${BRW_REQUIRE_PROVISIONING_PROFILE:-0}" == "1" ]]; then
+  echo "error: no provisioning profile at ${PROFILE_PATH} (or ad-hoc identity) -- this build would ship without Touch ID / iCloud Keychain passkeys" >&2
+  exit 1
+elif [[ "${IDENTITY}" != "-" ]]; then
+  echo "warning: no provisioning profile at ${PROFILE_PATH} -- signing without the passkey entitlement" >&2
+fi
+
 # 3. Helper app bundles, then the main app last -- exactly the order CMake
 #    wrote into the manifest (helpers first, "app|.|..." appended last).
 while IFS='|' read -r kind rel_path entitlements; do
   [[ -z "${kind}" ]] && continue
   target="${APP_PATH}/${rel_path}"
+  if [[ "${kind}" == "app" && -n "${APP_ENTITLEMENTS_OVERRIDE}" ]]; then
+    cp "${entitlements}" "${APP_ENTITLEMENTS_OVERRIDE}"
+    for key in com.apple.application-identifier com.apple.developer.team-identifier; do
+      /usr/libexec/PlistBuddy -c "Add :${key} string $(profile_get "Entitlements:${key}")" "${APP_ENTITLEMENTS_OVERRIDE}"
+    done
+    /usr/libexec/PlistBuddy -c "Add :com.apple.developer.web-browser.public-key-credential bool $(profile_get "Entitlements:com.apple.developer.web-browser.public-key-credential")" "${APP_ENTITLEMENTS_OVERRIDE}"
+    entitlements="${APP_ENTITLEMENTS_OVERRIDE}"
+  fi
   echo "Signing (${kind}): ${target}"
   sign_with_entitlements "${target}" "${entitlements}"
 done < "${MANIFEST}"
