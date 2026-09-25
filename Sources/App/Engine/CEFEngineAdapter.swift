@@ -194,8 +194,9 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
             matchCount: Int(matchCount), activeMatchOrdinal: Int(activeMatchOrdinal), isFinalUpdate: isFinalUpdate)
     }
 
-    func browserDidReceivePageMessage(_ request: String, requestId: Int64) {
-        delegate?.engineTabDidReceivePageMessage(request, requestId: requestId)
+    func browserDidReceivePageMessage(_ request: String, requestId: Int64, isMainFrame: Bool, frameURL: String) {
+        delegate?.engineTabDidReceivePageMessage(
+            request, requestId: requestId, source: PageMessageSource(isMainFrame: isMainFrame, frameURL: frameURL))
     }
 
     func browserDidStartMainFrameLoad() {

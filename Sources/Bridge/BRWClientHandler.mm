@@ -4,6 +4,7 @@
 #import "BRWStringUtil.h"
 #import "BRWThreatListInternal.h"
 
+#include <cstdlib>
 #include <vector>
 
 #include "include/cef_parser.h"
@@ -50,6 +51,57 @@ BRWWindowOpenDisposition TranslateDisposition(cef_window_open_disposition_t d) {
       // of them.
       return BRWWindowOpenDispositionForegroundTab;
   }
+}
+
+// An http(s) origin as (scheme, lowercased host, effective port), or false
+// when `url` has none. A blob: URL yields the origin embedded in it.
+bool HTTPOriginOf(const std::string& url, std::string* scheme, std::string* host, int* port) {
+  std::string target = url;
+  if (ToLowerASCII(target.substr(0, 5)) == "blob:") {
+    target = target.substr(5);
+  }
+  CefURLParts parts;
+  if (!CefParseURL(target, parts)) {
+    return false;
+  }
+  *scheme = ToLowerASCII(CefString(&parts.scheme).ToString());
+  if (*scheme != "http" && *scheme != "https") {
+    return false;
+  }
+  *host = ToLowerASCII(CefString(&parts.host).ToString());
+  if (host->empty()) {
+    return false;
+  }
+  const std::string port_string = CefString(&parts.port).ToString();
+  *port = port_string.empty() ? (*scheme == "https" ? 443 : 80) : atoi(port_string.c_str());
+  return true;
+}
+
+// The C++ copy of PopupTargetPolicy (Packages/WebEngineCore), which carries
+// the full rationale: a page may only put http(s), about:blank, or a blob it
+// created itself into a new top-level tab. Kept in step with it by hand --
+// this runs on CEF's UI thread and cannot call into Swift.
+bool BRWPopupTargetAllowed(const std::string& target_url, const std::string& opener_frame_url) {
+  if (target_url.empty()) {
+    return true;  // window.open() with no URL: a blank page.
+  }
+  const std::string lower = ToLowerASCII(target_url);
+  if (lower == "about:blank") {
+    return true;
+  }
+  std::string scheme, host;
+  int port = 0;
+  if (lower.rfind("http:", 0) == 0 || lower.rfind("https:", 0) == 0) {
+    return HTTPOriginOf(target_url, &scheme, &host, &port);
+  }
+  if (lower.rfind("blob:", 0) == 0) {
+    std::string opener_scheme, opener_host;
+    int opener_port = 0;
+    return HTTPOriginOf(target_url, &scheme, &host, &port) &&
+           HTTPOriginOf(opener_frame_url, &opener_scheme, &opener_host, &opener_port) &&
+           scheme == opener_scheme && host == opener_host && port == opener_port;
+  }
+  return false;
 }
 
 // Every handler constructed but not yet OnBeforeClose'd. Only ever touched on
@@ -136,6 +188,22 @@ bool BRWClientHandler::OnBeforePopup(
     return false;
   }
 
+  // Alloy has no popup blocker of its own: without this, any page could
+  // open tabs at will from a timer or on load. A real click on a
+  // target="_blank" link carries a gesture and still gets through.
+  if (!user_gesture) {
+    NSLog(@"Browser: refused a page-opened window with no user gesture");
+    return true;
+  }
+  // The delegate loads the target as a fresh, browser-initiated navigation,
+  // which Chromium's own block on page-initiated top-level data: loads
+  // doesn't cover -- so the scheme is checked here.
+  const std::string opener_url = frame ? frame->GetURL().ToString() : std::string();
+  if (!BRWPopupTargetAllowed(target_url.ToString(), opener_url)) {
+    NSLog(@"Browser: refused a page-opened window for a disallowed URL scheme");
+    return true;
+  }
+
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestNewTabForURL:disposition:)]) {
     [delegate_ browserDidRequestNewTabForURL:ToNSString(target_url)
                                  disposition:TranslateDisposition(target_disposition)];
@@ -179,6 +247,15 @@ bool BRWClientHandler::OnOpenURLFromTab(CefRefPtr<CefBrowser> browser,
       // tab. Same shape as cefclient's own reference OnOpenURLFromTab
       // (tests/cefclient/browser/client_handler.cc).
       return false;
+  }
+
+  // Same rules as OnBeforePopup: a new tab needs a real click, and only
+  // for a URL a page may open. Either failing cancels the navigation
+  // outright rather than letting it proceed in the current tab.
+  const std::string opener_url = frame ? frame->GetURL().ToString() : std::string();
+  if (!user_gesture || !BRWPopupTargetAllowed(target_url.ToString(), opener_url)) {
+    NSLog(@"Browser: refused a new tab (gesture=%d)", user_gesture ? 1 : 0);
+    return true;
   }
 
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestNewTabForURL:disposition:)]) {

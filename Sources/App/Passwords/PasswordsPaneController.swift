@@ -154,7 +154,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     /// (Touch ID, falling back to the account password if Touch ID isn't
     /// available/enrolled, same as `.deviceOwnerAuthentication`'s standard
     /// behavior) must succeed first. PasswordStore.password(profileName:
-    /// origin:username:) itself performs no such check -- this pane is the
+    /// credential:) itself performs no such check -- this pane is the
     /// only caller, and this method is the only place that call happens.
     @objc private func revealSelectedPassword() {
         let row = credentialsTableView.selectedRow
@@ -165,7 +165,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
             toReveal: "password",
             reason: "reveal the saved password for \(credential.username) at \(credential.origin)"
         ) {
-            guard let password = PasswordStore.password(profileName: profile.name, origin: credential.origin, username: credential.username)
+            guard let password = PasswordStore.password(profileName: profile.name, credential: credential)
             else {
                 return
             }
@@ -184,7 +184,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
             confirmTitle: "Delete"
         ) else { return }
 
-        PasswordStore.delete(profileName: profile.name, origin: credential.origin, username: credential.username)
+        PasswordStore.delete(profileName: profile.name, credential: credential)
         loadCredentialsForSelectedProfile()
     }
 

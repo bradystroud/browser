@@ -1,7 +1,7 @@
 import AppKit
 
+/// No `origin`: the page's own claim about where it is is never read.
 private struct PaymentFormSubmitPayload: Decodable {
-    let origin: String
     let cardNumber: String
     let cardholderName: String
     let expMonth: String

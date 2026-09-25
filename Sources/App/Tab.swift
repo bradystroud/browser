@@ -560,13 +560,20 @@ final class Tab: NSObject, EngineTabDelegate {
     /// concern, not the window controller's. `request`
     /// is an opaque string the page passed to `window.cefQuery` -- callers
     /// parse their own payload shape out of it (see BRWBrowser.h's
-    /// -browserDidReceivePageMessage:requestId: for the full contract,
+    /// -browserDidReceivePageMessage:requestId:isMainFrame:frameURL: for the full contract,
     /// including that not calling respondToPageMessage(requestId:...)
     /// exactly once leaves the page's promise pending forever).
-    var onPageMessage: ((_ request: String, _ requestId: Int64) -> Void)?
+    var onPageMessage: ((_ request: String, _ requestId: Int64, _ source: PageMessageSource) -> Void)?
 
-    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64) {
-        onPageMessage?(request, requestId)
+    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64, source: PageMessageSource) {
+        onPageMessage?(request, requestId, source)
+    }
+
+    /// What PageMessagePolicy cross-checks a page message's sender against.
+    /// Carries the engine's real URL, not `urlString`: the start page has to
+    /// be recognizable by its exact data: URL.
+    var pageMessageTabState: PageMessageTabState {
+        PageMessageTabState(engineURL: engineURLString, isShowingStartPage: isShowingStartPage)
     }
 
     /// "Look Up Image" from the native context menu (browser-5kq.2) --

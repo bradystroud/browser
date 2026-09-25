@@ -18,7 +18,7 @@ final class RecordingTabDelegate: EngineTabDelegate {
     }
     private(set) var downloads: [Int64: Download] = [:]
     private(set) var findResults: [(count: Int, ordinal: Int, isFinal: Bool)] = []
-    private(set) var pageMessages: [(request: String, requestId: Int64)] = []
+    private(set) var pageMessages: [(request: String, requestId: Int64, source: PageMessageSource)] = []
 
     /// Called for each page message; the test answers (or deliberately
     /// doesn't) through EngineTab.respondToPageMessage.
@@ -81,8 +81,8 @@ final class RecordingTabDelegate: EngineTabDelegate {
         findResults.append((matchCount, activeMatchOrdinal, isFinalUpdate))
     }
 
-    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64) {
-        pageMessages.append((request, requestId))
+    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64, source: PageMessageSource) {
+        pageMessages.append((request, requestId, source))
         onPageMessage?(request, requestId)
     }
 

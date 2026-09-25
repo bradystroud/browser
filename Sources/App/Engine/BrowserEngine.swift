@@ -76,11 +76,13 @@ protocol EngineTabDelegate: AnyObject {
 
     /// A page called `window.cefQuery({request: ...})` via the generic
     /// JS<->native channel (browser-ojh.1) -- see BRWBrowser.h's
-    /// -browserDidReceivePageMessage:requestId: for the exact contract,
+    /// -browserDidReceivePageMessage:requestId:isMainFrame:frameURL: for the exact contract,
     /// including that `requestId` must eventually reach
     /// respondToPageMessage(requestId:success:response:) below exactly once
-    /// or the page's promise never resolves.
-    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64)
+    /// or the page's promise never resolves. `source` is the engine's own
+    /// account of which frame sent it -- the only part of a page message
+    /// that can be trusted (see PageMessagePolicy).
+    func engineTabDidReceivePageMessage(_ request: String, requestId: Int64, source: PageMessageSource)
 
     /// Fires once per top-level navigation at "document-start" timing --
     /// see BRWBrowser.h's -browserDidStartMainFrameLoad for the exact CEF
@@ -266,7 +268,7 @@ protocol EngineTab: AnyObject {
     func getPageSource(completion: @escaping (String?) -> Void)
 
     /// Answers a page message previously delivered via
-    /// engineTabDidReceivePageMessage(_:requestId:) -- see BRWBrowser.h's
+    /// engineTabDidReceivePageMessage(_:requestId:source:) -- see BRWBrowser.h's
     /// -respondToPageMessageWithId:success:response: for the exact contract
     /// (in particular, that `requestId` is global across every tab, not
     /// scoped to whichever EngineTab this is called on).

@@ -57,12 +57,13 @@ private enum PageMessageBridge {
 /// `onFailure(errorCode, errorMessage)` are called asynchronously, and
 /// `cefQueryCancel(id)` stops any further callback for that query.
 ///
-/// The trust model is CEF's: any script in any frame can already send a
-/// query there, so exposing the same entry point here grants a page nothing
-/// new, and native handlers get only the request string, never a claim
-/// about who sent it. `postMessage` is captured at document start, so later
-/// page tampering with `window.webkit` cannot redirect or intercept the
-/// channel.
+/// The trust model is CEF's: any script in any frame can send a query, so
+/// every message reaches native code with WebKit's own account of the
+/// sending frame (`WKScriptMessage.frameInfo`) attached as a
+/// PageMessageSource, and nothing the page wrote into the request is taken
+/// as a statement of who sent it. `postMessage` is captured at document
+/// start, so later page tampering with `window.webkit` cannot redirect or
+/// intercept the channel.
 enum PageMessageShim {
     /// CEF's own `kCanceledErrorCode`/`kCanceledErrorMessage`, used when no
     /// handler takes a query or its browser goes away first.
@@ -257,6 +258,17 @@ extension WebKitTab: WKScriptMessageHandlerWithReply {
             return
         }
         let requestId = PageMessageBridge.nextId(owner: self, reply: reply)
-        delegate.engineTabDidReceivePageMessage(request, requestId: requestId)
+        delegate.engineTabDidReceivePageMessage(request, requestId: requestId, source: Self.pageMessageSource(message.frameInfo))
+    }
+
+    /// WebKit's securityOrigin is the frame's real origin, which for an
+    /// about:blank or srcdoc frame is inherited from its parent rather than
+    /// derivable from its URL; PageMessagePolicy cross-checks the two.
+    static func pageMessageSource(_ frame: WKFrameInfo) -> PageMessageSource {
+        let securityOrigin = frame.securityOrigin
+        return PageMessageSource(
+            isMainFrame: frame.isMainFrame,
+            frameURL: frame.request.url?.absoluteString ?? "",
+            origin: WebOrigin(scheme: securityOrigin.protocol, host: securityOrigin.host, port: securityOrigin.port))
     }
 }

@@ -11,8 +11,19 @@ extension WebKitTab: WKUIDelegate {
     /// what lets its own window.close() through). A ⌘/⇧-click never reaches
     /// here: decidePolicyFor navigationAction already turned it into a
     /// URL-only new tab.
+    ///
+    /// A popup without a user gesture never gets this far: every tab's
+    /// preferences set javaScriptCanOpenWindowsAutomatically to false, so
+    /// WebKit's own popup blocker -- which knows about real user activation,
+    /// something WKNavigationAction does not expose publicly -- refuses it
+    /// first. What remains is checked against PopupTargetPolicy here.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let delegate else { return nil }
+        let target = navigationAction.request.url?.absoluteString ?? ""
+        guard PopupTargetPolicy.isAllowed(targetURL: target, openerOrigin: Self.sourceOrigin(of: navigationAction)) else {
+            NSLog("Browser: refused a page-opened window for %@", Self.schemeForLog(target))
+            return nil
+        }
         let disposition = Self.clickDisposition(for: navigationAction)
             ?? Self.popupDisposition(for: windowFeatures)
         let popup = WebKitEngine.createPopupTab(configuration: configuration, openerProfileName: profileName)
@@ -121,6 +132,21 @@ extension WebKitTab: WKUIDelegate {
     }
 
     // MARK: - Helpers
+
+    /// The origin of the frame that started `navigationAction`. Read through
+    /// KVC because WebKit can leave `sourceFrame` nil despite its nonnull
+    /// annotation, and Swift would trap on touching it.
+    static func sourceOrigin(of navigationAction: WKNavigationAction) -> WebOrigin? {
+        guard let frame = navigationAction.value(forKey: "sourceFrame") as? WKFrameInfo else { return nil }
+        let origin = frame.securityOrigin
+        return WebOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+
+    /// Only the scheme: a refused target may be a megabyte-long data: URL.
+    static func schemeForLog(_ url: String) -> String {
+        guard let colon = url.firstIndex(of: ":") else { return "(no scheme)" }
+        return String(url[..<colon].prefix(32)) + ":"
+    }
 
     /// The origin string handed to the app's permission prompt and store.
     /// Media capture and geolocation must agree on it, or a remembered

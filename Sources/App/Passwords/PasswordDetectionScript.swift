@@ -13,7 +13,9 @@ import Foundation
 ///    (a real form submit, Enter in a password field, or a click on a
 ///    submit-like control while a password field is filled): capture
 ///    {origin, username, password} and report it via a "passwordFormSubmit"
-///    message, which prompts to save straight away.
+///    message, which prompts to save straight away. The `origin` field is
+///    never read natively -- any frame can send any JSON -- the site comes
+///    from PageMessage.origin instead.
 /// 3. Candidate -- a password field simply *has* a value, reported
 ///    (debounced) via "passwordCredentialCandidate". The native side holds
 ///    this as the tab's pending credential and re-decides when the tab

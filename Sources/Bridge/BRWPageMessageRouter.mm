@@ -21,11 +21,17 @@ class BRWPageMessageRouter::HandlerImpl : public CefMessageRouterBrowserSide::Ha
                CefRefPtr<Callback> callback) override {
     BRWClientHandler* handler = BRWClientHandler::ForBrowser(browser);
     id<BRWBrowserDelegate> delegate = handler ? handler->GetDelegate() : nil;
-    if (!delegate || ![delegate respondsToSelector:@selector(browserDidReceivePageMessage:requestId:)]) {
+    if (!delegate ||
+        ![delegate respondsToSelector:@selector(browserDidReceivePageMessage:requestId:isMainFrame:frameURL:)]) {
       return false;  // Not handled -- CEF auto-cancels with error -1.
     }
+    const bool is_main = frame && frame->IsMain();
+    NSString* frame_url = frame ? ToNSString(frame->GetURL()) : @"";
     pending_[query_id] = callback;
-    [delegate browserDidReceivePageMessage:ToNSString(request) requestId:query_id];
+    [delegate browserDidReceivePageMessage:ToNSString(request)
+                                 requestId:query_id
+                               isMainFrame:is_main
+                                  frameURL:frame_url];
     return true;
   }
 

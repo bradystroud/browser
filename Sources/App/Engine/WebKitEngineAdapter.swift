@@ -322,6 +322,10 @@ final class WebKitTab: NSObject, EnginePopupTab {
         if #available(macOS 12.3, *) {
             config.preferences.isElementFullscreenEnabled = true
         }
+        // macOS defaults this to true, which lets a page open windows with no
+        // user gesture at all. False makes WebKit's own popup blocker refuse
+        // them before WKUIDelegate is ever asked; a click still opens one.
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
         // Every tab is listed in Safari's Develop menu from the start, not
         // only once "Developer Tools" has been chosen for it.
         if #available(macOS 13.3, *) {

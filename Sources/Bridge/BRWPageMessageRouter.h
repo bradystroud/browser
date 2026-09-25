@@ -55,7 +55,7 @@ class BRWPageMessageRouter {
                                  CefRefPtr<CefProcessMessage> message);
 
   // Completes a pending query previously delivered via
-  // -browserDidReceivePageMessage:requestId: on some BRWBrowserDelegate.
+  // -browserDidReceivePageMessage:requestId:isMainFrame:frameURL: on some BRWBrowserDelegate.
   // No-op if `requestId` isn't currently pending (e.g. the page navigated
   // away and CEF already canceled it internally).
   void Respond(int64_t requestId, bool success, const std::string& response);

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Writes parsed CSV password entries into PasswordStore (browser-ymx),
-/// deduped by (origin host, username) -- an existing saved credential wins
+/// deduped by (origin, username) -- an existing saved credential wins
 /// unless the caller opts to overwrite. Pure Keychain/PasswordStore glue,
 /// no UI; SafariImportWindowController's Passwords section is the only
 /// caller.
@@ -22,36 +22,41 @@ enum PasswordImportCoordinator {
     }
 
     /// `overwriteExisting`: when false (the default UI choice), an entry
-    /// whose (host, username) already has a saved credential in `profile`
+    /// whose (origin, username) already has a saved credential in `profile`
     /// is skipped rather than replacing it -- "existing entry wins," per
     /// Brady's own spec.
     static func importEntries(_ entries: [PasswordCSVEntry], into profile: Profile, overwriteExisting: Bool) -> ImportResult {
         struct Key: Hashable {
-            let host: String
+            let scope: CredentialScope
             let username: String
         }
 
         // One allCredentials() read up front rather than one Keychain
         // query per row -- this set is kept up to date as rows are
         // imported below, so a CSV with duplicate rows for the same
-        // (host, username) still dedupes correctly against itself, not
+        // (origin, username) still dedupes correctly against itself, not
         // just against what was already saved before this import started.
-        var existing = Set(PasswordStore.allCredentials(profileName: profile.name).map { Key(host: $0.origin, username: $0.username) })
+        var existing = Set(PasswordStore.allCredentials(profileName: profile.name).map { Key(scope: $0.scope, username: $0.username) })
 
         var imported = 0
         var skipped = 0
         for entry in entries {
-            let host = hostOnly(entry.url)
-            guard !host.isEmpty, !entry.username.isEmpty else {
+            // A row with no http(s) origin (an android:// app entry, say)
+            // could never be filled into a web page.
+            guard let origin = WebOrigin(urlString: entry.url), !entry.username.isEmpty else {
                 skipped += 1
                 continue
             }
-            let key = Key(host: host, username: entry.username)
-            if existing.contains(key), !overwriteExisting {
+            let key = Key(scope: .origin(origin), username: entry.username)
+            // A legacy host-only item this row would supersede counts as
+            // already saved, exactly as PasswordStore.save would replace it.
+            let supersedes = existing.contains(Key(scope: .legacyHost(origin.host), username: entry.username))
+                && CredentialScope.legacyHost(origin.host).matches(origin)
+            if existing.contains(key) || supersedes, !overwriteExisting {
                 skipped += 1
                 continue
             }
-            guard PasswordStore.save(profileName: profile.name, origin: host, username: entry.username, password: entry.password) else {
+            guard PasswordStore.save(profileName: profile.name, origin: origin, username: entry.username, password: entry.password) else {
                 skipped += 1
                 continue
             }
@@ -59,17 +64,6 @@ enum PasswordImportCoordinator {
             imported += 1
         }
         return ImportResult(importedCount: imported, skippedAsDuplicateCount: skipped)
-    }
-
-    /// Mirrors PasswordStore's own private `host(fromOrigin:)` -- a CSV
-    /// row's `url` column is a full URL ("https://example.com/login"),
-    /// but PasswordStore keys strictly on host, matching every other
-    /// caller's contract.
-    private static func hostOnly(_ url: String) -> String {
-        if let parsed = URL(string: url), let host = parsed.host {
-            return host
-        }
-        return url
     }
 
     /// Best-effort "secure" delete of the plaintext CSV file the user
