@@ -17,11 +17,18 @@ enum AutofillScript {
     /// JSON-encoded before being embedded in the script so they're always
     /// safe as JS string literals, whatever characters (quotes, newlines,
     /// unicode) the stored credential happens to contain.
-    static func fillScript(username: String, password: String) -> String {
+    ///
+    /// Does nothing unless the document it lands in is at `expectedOrigin`:
+    /// the script is evaluated asynchronously, and the tab may have moved to
+    /// (or not yet left) a document on another origin by the time it runs.
+    /// `location.origin` is unforgeable by page script.
+    static func fillScript(username: String, password: String, expectedOrigin: WebOrigin) -> String {
         let usernameJSON = jsonStringLiteral(username)
         let passwordJSON = jsonStringLiteral(password)
+        let originJSON = jsonStringLiteral(expectedOrigin.serialized)
         return """
-        (function(usernameValue, passwordValue) {
+        (function(usernameValue, passwordValue, expectedOrigin) {
+          if (window.top !== window || location.origin !== expectedOrigin) { return; }
           var passwordField = document.querySelector('input[type="password"]');
           if (!passwordField) { return; }
           var scope = passwordField.form || document;
@@ -44,7 +51,7 @@ enum AutofillScript {
           }
           setValue(usernameField, usernameValue);
           setValue(passwordField, passwordValue);
-        })(\(usernameJSON), \(passwordJSON));
+        })(\(usernameJSON), \(passwordJSON), \(originJSON));
         """
     }
 

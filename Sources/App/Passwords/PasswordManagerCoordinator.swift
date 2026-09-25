@@ -1,7 +1,8 @@
 import AppKit
 
+/// The page's own `origin` field is deliberately not decoded: which site a
+/// credential belongs to comes from PageMessage.origin, never the page.
 private struct PasswordFormSubmitPayload: Decodable {
-    let origin: String
     let username: String
     let password: String
 }
@@ -17,12 +18,12 @@ private struct PasswordFieldsPresentPayload: Decodable {
 /// "the tab navigated" has to be a trigger at all (plenty of real login
 /// pages never fire a submit event).
 private final class PendingCredential {
-    let origin: String
+    let origin: WebOrigin
     let username: String
     let password: String
     let capturedAtURL: String
 
-    init(origin: String, username: String, password: String, capturedAtURL: String) {
+    init(origin: WebOrigin, username: String, password: String, capturedAtURL: String) {
         self.origin = origin
         self.username = username
         self.password = password
@@ -48,7 +49,7 @@ private final class PendingCredential {
 ///   .passwordStoreDidChange.
 ///
 /// The last of those is why refresh() is called from the lookup completion
-/// as well: cachedCredential(profileName:host:) deliberately answers "not
+/// as well: cachedCredential(profileName:origin:) deliberately answers "not
 /// yet" rather than blocking, and with the old 0.5s poll gone there is no
 /// later tick to pick the real answer up on.
 final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
@@ -68,7 +69,10 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     /// updateKeyButton(for:) to decide whether the autofill key icon should
     /// show at all -- a saved credential existing isn't by itself enough;
     /// the current page needs to actually have somewhere to fill it into.
-    private var passwordFieldPresence = NSMapTable<Tab, NSNumber>.weakToStrongObjects()
+    /// The value is the serialized origin that reported the field, so a
+    /// report from one document can never make another origin's credential
+    /// fill (see hasPasswordField(_:at:)).
+    private var passwordFieldPresence = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
     /// One floating "key" button per window content view -- shown when the
     /// window's active tab both has a detected password field and a saved
@@ -106,7 +110,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     private var recentlyPromptedAt: [String: Date] = [:]
     private static let duplicatePromptWindow: TimeInterval = 3
 
-    /// Cached Keychain lookups, keyed "profileName\\0host". `nil` value means
+    /// Cached Keychain lookups, keyed "profileName\\0origin". `nil` value means
     /// "looked up, no credential" -- distinct from absent, which means "not
     /// looked up yet".
     ///
@@ -135,8 +139,8 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         PageMessageDispatcher.shared.activate()
         PageMessageDispatcher.shared.register(
             types: ["passwordFormSubmit", "passwordFieldsPresent", "passwordCredentialCandidate"]
-        ) { [weak self] type, request, requestId, tab in
-            self?.handlePageMessage(type: type, request: request, requestId: requestId, tab: tab)
+        ) { [weak self] (message: PageMessage) in
+            self?.handlePageMessage(message)
         }
         NotificationCenter.default.addObserver(
             forName: .passwordStoreDidChange, object: nil, queue: .main
@@ -186,24 +190,24 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
 
     // MARK: - Keychain lookups (never on the main thread)
 
-    private func cacheKey(profileName: String, host: String) -> String {
-        "\(profileName)\u{0}\(host)"
+    private func cacheKey(profileName: String, origin: WebOrigin) -> String {
+        "\(profileName)\u{0}\(origin.serialized)"
     }
 
-    /// The cached credential for this profile/host, kicking off a background
+    /// The cached credential for this profile/origin, kicking off a background
     /// lookup the first time one is asked for. Returns nil while that lookup
     /// is still outstanding -- and calls refresh() when it lands, since with
     /// the old 0.5s poll gone (browser-g6d) there's no later tick for callers
     /// to pick the real answer up on.
-    private func cachedCredential(profileName: String, host: String) -> (username: String, password: String)? {
-        let key = cacheKey(profileName: profileName, host: host)
+    private func cachedCredential(profileName: String, origin: WebOrigin) -> (username: String, password: String)? {
+        let key = cacheKey(profileName: profileName, origin: origin)
         if let cached = credentialCache[key] {
             return cached
         }
         guard !credentialLookupsInFlight.contains(key) else { return nil }
         credentialLookupsInFlight.insert(key)
         keychainQueue.async { [weak self] in
-            let found = PasswordStore.credential(profileName: profileName, origin: host)
+            let found = PasswordStore.credential(profileName: profileName, for: origin)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.credentialCache[key] = found
@@ -211,7 +215,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
                 // Only when the answer is a real credential: a "no credential
                 // here" result can't make any icon appear or any page fill,
                 // and refreshing on it would re-enter this method for every
-                // other unresolved host on every miss.
+                // other unresolved origin on every miss.
                 if found != nil {
                     self.refresh()
                 }
@@ -220,8 +224,10 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         return nil
     }
 
-    private func handlePageMessage(type: String, request: String, requestId: Int64, tab: Tab) {
-        guard let data = request.data(using: .utf8) else {
+    private func handlePageMessage(_ message: PageMessage) {
+        let tab = message.tab
+        let requestId = message.requestId
+        guard let data = message.request.data(using: .utf8), let origin = message.origin else {
             tab.respondToPageMessage(requestId: requestId, success: false, response: "")
             return
         }
@@ -232,20 +238,20 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         // after, fire-and-forget from the page's perspective).
         tab.respondToPageMessage(requestId: requestId, success: true, response: "{}")
 
-        switch type {
+        switch message.type {
         case "passwordFormSubmit":
             guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data) else { return }
             // A recognizable login gesture -- this supersedes whatever the
             // tab was holding, so the navigation path below can't ask a
             // second time about the same credential.
             pendingCredentials.removeObject(forKey: tab)
-            maybePrompt(origin: payload.origin, username: payload.username, password: payload.password, tab: tab)
+            maybePrompt(origin: origin, username: payload.username, password: payload.password, tab: tab)
         case "passwordCredentialCandidate":
             guard let payload = try? JSONDecoder().decode(PasswordFormSubmitPayload.self, from: data),
                   !payload.password.isEmpty else { return }
             pendingCredentials.setObject(
                 PendingCredential(
-                    origin: payload.origin,
+                    origin: origin,
                     username: payload.username,
                     password: payload.password,
                     capturedAtURL: tab.urlString
@@ -254,7 +260,11 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
             )
         case "passwordFieldsPresent":
             guard let payload = try? JSONDecoder().decode(PasswordFieldsPresentPayload.self, from: data) else { return }
-            passwordFieldPresence.setObject(NSNumber(value: payload.present), forKey: tab)
+            if payload.present {
+                passwordFieldPresence.setObject(origin.serialized as NSString, forKey: tab)
+            } else {
+                passwordFieldPresence.removeObject(forKey: tab)
+            }
             // The other half of what the 0.5s poll used to do: this message
             // is the one that says a page has somewhere to fill into, so
             // both the fill and the icon are decided here rather than on a
@@ -284,7 +294,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     /// SECURITY: `password` only ever flows into PasswordStore.save (a
     /// Keychain write) or is dropped -- never logged, never written to any
     /// plaintext file, never included in a notification/pasteboard.
-    private func maybePrompt(origin: String, username: String, password: String, tab: Tab) {
+    private func maybePrompt(origin: WebOrigin, username: String, password: String, tab: Tab) {
         guard !password.isEmpty else { return }
         let profileName = tab.profileName
 
@@ -296,7 +306,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
             return
         }
 
-        guard !PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).isNeverForSite(origin) else {
+        guard !PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).isNeverForSite(origin.serialized) else {
             return
         }
 
@@ -317,7 +327,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         // to happen off the main thread (browser-le4.1) -- hence deciding
         // and showing asynchronously rather than inline.
         keychainQueue.async { [weak self] in
-            let existing = PasswordStore.credential(profileName: profileName, origin: origin)
+            let existing = PasswordStore.credential(profileName: profileName, for: origin)
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let existing, existing.username == username, existing.password == password {
@@ -329,7 +339,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
                 self.recentlyPromptedAt[key] = Date()
                 let anchor = self.anchorView(in: contentView, controller: controller)
                 self.savePrompt.show(
-                    origin: origin,
+                    origin: origin.serialized,
                     anchorView: anchor,
                     onSave: {
                         self.keychainQueue.async {
@@ -337,7 +347,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
                         }
                     },
                     onNever: {
-                        PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).setNeverForSite(origin)
+                        PasswordNeverStoreManager.shared.store(forProfileId: tab.profileId).setNeverForSite(origin.serialized)
                     }
                 )
             }
@@ -360,16 +370,23 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     /// notification to hook, and an already-loaded page the user is looking
     /// at still has the key icon as its manual path.
     private func autofillIfNeeded(_ tab: Tab) {
-        guard PasswordAutofillPreference.isAutomaticFillEnabled,
-              passwordFieldPresence.object(forKey: tab)?.boolValue == true
-        else { return }
+        guard PasswordAutofillPreference.isAutomaticFillEnabled else { return }
         let url = tab.urlString
         guard (autofilledURL.object(forKey: tab) as String?) != url,
-              let host = URL(string: url)?.host,
-              let credential = cachedCredential(profileName: tab.profileName, host: host)
+              let origin = WebOrigin(urlString: url),
+              hasPasswordField(tab, at: origin),
+              let credential = cachedCredential(profileName: tab.profileName, origin: origin)
         else { return }
         autofilledURL.setObject(url as NSString, forKey: tab)
-        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password))
+        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password, expectedOrigin: origin))
+    }
+
+    /// Whether the document now at `origin` in this tab reported a password
+    /// field. A report from a document on any other origin -- the previous
+    /// page, still live while the tab's URL already shows the next one --
+    /// doesn't count.
+    private func hasPasswordField(_ tab: Tab, at origin: WebOrigin) -> Bool {
+        (passwordFieldPresence.object(forKey: tab) as String?) == origin.serialized
     }
 
     /// A thin, invisible positioning view near the omnibox's on-screen
@@ -416,9 +433,9 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     private func updateKeyButton(for controller: BrowserWindowController) {
         guard let window = controller.window, let contentView = window.contentView else { return }
         guard let tab = controller.activeTab,
-              passwordFieldPresence.object(forKey: tab)?.boolValue == true,
-              let host = URL(string: tab.urlString)?.host,
-              cachedCredential(profileName: tab.profileName, host: host) != nil
+              let origin = WebOrigin(urlString: tab.urlString),
+              hasPasswordField(tab, at: origin),
+              cachedCredential(profileName: tab.profileName, origin: origin) != nil
         else {
             setKeyButtonVisible(false, in: contentView, window: window, controller: controller)
             return
@@ -458,14 +475,15 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         guard let window = windowForKeyButton.object(forKey: sender),
               let controller = window.windowController as? BrowserWindowController,
               let tab = controller.activeTab,
-              let host = URL(string: tab.urlString)?.host
+              let origin = WebOrigin(urlString: tab.urlString),
+              hasPasswordField(tab, at: origin)
         else {
             return
         }
         // Cached (whatever made this icon visible already warmed it) --
         // and never a blocking Keychain call on the main thread regardless,
         // per browser-le4.1.
-        guard let credential = cachedCredential(profileName: tab.profileName, host: host) else { return }
-        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password))
+        guard let credential = cachedCredential(profileName: tab.profileName, origin: origin) else { return }
+        tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password, expectedOrigin: origin))
     }
 }

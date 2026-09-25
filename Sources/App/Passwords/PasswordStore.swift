@@ -12,20 +12,24 @@ extension Notification.Name {
 
 /// One saved credential, as listed in the Passwords settings pane -- never
 /// carries the password itself (see PasswordStore.password(profileName:
-/// origin:username:) for the one place that's read back, gated by Touch ID).
+/// credential:) for the one place that's read back, gated by Touch ID).
 struct SavedCredential: Equatable {
-    let origin: String
+    let scope: CredentialScope
     let username: String
+
+    /// What the pane shows in its Site column.
+    var origin: String { scope.displayName }
 }
 
 /// Per-profile, Keychain-backed credential storage (browser-ojh.1). NEVER
 /// plaintext -- every credential is a real `kSecClassInternetPassword`
-/// Keychain item, one per (profile, origin host, username):
-///   - kSecAttrServer = the origin's *host* only (no scheme/port) -- per
-///     spec, so e.g. an http and https login on the same host share one
-///     saved credential (matches how this app's own profile-scoped cookie
-///     jars already treat a site, and avoids prompting twice through an
-///     HTTP -> HTTPS upgrade redirect).
+/// Keychain item, one per (profile, origin, username):
+///   - kSecAttrServer = the origin's host.
+///   - kSecAttrProtocol + kSecAttrPort = the origin's scheme and effective
+///     port, so an https login is never offered to http on the same host,
+///     nor to another port. Items saved before these were recorded carry
+///     neither; CredentialScope.legacyHost decides where those may be used,
+///     and they are read as they are, never rewritten.
 ///   - kSecAttrAccount = username.
 ///   - kSecAttrSecurityDomain = "dev.stroud.browser.password.<profileName>" --
 ///     this app's own namespace, one per profile, so two profiles never see
@@ -62,38 +66,116 @@ enum PasswordStore {
         "dev.stroud.browser.password.\(profileName)"
     }
 
-    /// `origin` may be a full origin ("https://example.com") or a bare host
-    /// -- either way, only the host is ever used as the Keychain server
-    /// attribute (see this enum's own doc comment for why).
-    private static func host(fromOrigin origin: String) -> String {
-        if let parsed = URL(string: origin), let host = parsed.host {
-            return host
+    private static func keychainProtocol(forScheme scheme: String) -> CFString? {
+        switch scheme {
+        case "https": return kSecAttrProtocolHTTPS
+        case "http": return kSecAttrProtocolHTTP
+        default: return nil
         }
-        return origin
     }
 
-    /// Saves (or overwrites) a credential. Returns whether the Keychain
-    /// operation succeeded -- callers should treat a `false` return as "the
-    /// save silently failed," since there's no UI-facing recovery for a rare
-    /// Keychain-level error in v1.
-    @discardableResult
-    static func save(profileName: String, origin: String, username: String, password: String) -> Bool {
-        let server = host(fromOrigin: origin)
+    /// The scope an item was saved under, from its own attributes. An item
+    /// with no protocol attribute predates origin scoping; one with a
+    /// protocol this app never writes is ignored.
+    private static func scope(ofItem item: [String: Any], server: String) -> CredentialScope? {
+        guard let proto = item[kSecAttrProtocol as String] as? String, !proto.isEmpty else {
+            return .legacyHost(server)
+        }
+        let scheme: String
+        if proto == kSecAttrProtocolHTTPS as String {
+            scheme = "https"
+        } else if proto == kSecAttrProtocolHTTP as String {
+            scheme = "http"
+        } else {
+            return nil
+        }
+        let port = (item[kSecAttrPort as String] as? NSNumber)?.intValue
+        return WebOrigin(scheme: scheme, host: server, port: port).map(CredentialScope.origin)
+    }
+
+    private struct Item {
+        let scope: CredentialScope
+        let username: String
+        let persistentRef: Data
+    }
+
+    /// Every item for this profile (narrowed to `server`/`username` when
+    /// given), with the attributes needed to decide which may be used
+    /// where -- no secrets.
+    private static func items(profileName: String, server: String?, username: String? = nil) -> [Item] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
+            kSecReturnAttributes as String: true,
+            kSecReturnPersistentRef as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        if let server { query[kSecAttrServer as String] = server }
+        if let username { query[kSecAttrAccount as String] = username }
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let found = result as? [[String: Any]]
+        else { return [] }
+        return found.compactMap { item in
+            guard let itemServer = item[kSecAttrServer as String] as? String,
+                  let account = item[kSecAttrAccount as String] as? String,
+                  let ref = item[kSecValuePersistentRef as String] as? Data,
+                  let scope = scope(ofItem: item, server: itemServer)
+            else { return nil }
+            return Item(scope: scope, username: account, persistentRef: ref)
+        }
+    }
+
+    private static func password(persistentRef: Data) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassInternetPassword,
-            kSecAttrServer as String: server,
+            kSecValuePersistentRef as String: persistentRef,
+            kSecReturnData as String: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data
+        else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    private static func deleteItem(persistentRef: Data) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecValuePersistentRef as String: persistentRef,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        return status == errSecSuccess || status == errSecItemNotFound
+    }
+
+    /// Saves (or overwrites) the credential for exactly `origin`. Returns
+    /// whether the Keychain operation succeeded -- callers should treat a
+    /// `false` return as "the save silently failed," since there's no
+    /// UI-facing recovery for a rare Keychain-level error in v1.
+    ///
+    /// Replaces this username's item for the same origin and, when it
+    /// covers this origin's pages, the username's legacy host-only item --
+    /// otherwise the superseded password would linger in the list and could
+    /// still be filled on the pages the new one doesn't cover.
+    @discardableResult
+    static func save(profileName: String, origin: WebOrigin, username: String, password: String) -> Bool {
+        guard let proto = keychainProtocol(forScheme: origin.scheme) else { return false }
+        for item in items(profileName: profileName, server: origin.host, username: username)
+        where item.scope == .origin(origin) || (item.scope == .legacyHost(origin.host) && item.scope.matches(origin)) {
+            deleteItem(persistentRef: item.persistentRef)
+        }
+
+        let addQuery: [String: Any] = [
+            kSecClass as String: kSecClassInternetPassword,
+            kSecAttrServer as String: origin.host,
+            kSecAttrProtocol as String: proto,
+            kSecAttrPort as String: origin.port,
             kSecAttrAccount as String: username,
             kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
+            kSecValueData as String: Data(password.utf8),
+            kSecAttrLabel as String: "\(profileName): \(origin.host)",
         ]
-        // Delete-then-add rather than SecItemUpdate: this is a single
-        // overwrite-the-whole-item operation (password value + label), not
-        // an incremental attribute patch, so there's no benefit to update's
-        // separate query/attributes-to-change split here.
-        SecItemDelete(query as CFDictionary)
-
-        var addQuery = query
-        addQuery[kSecValueData as String] = Data(password.utf8)
-        addQuery[kSecAttrLabel as String] = "\(profileName): \(server)"
         let saved = SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
         if saved {
             postDidChange()
@@ -115,83 +197,55 @@ enum PasswordStore {
         }
     }
 
-    /// The single saved credential for `origin` in this profile, if any --
-    /// used by chunk 4's autofill (existence + username, to decide whether
-    /// to show the key icon) and by the save-prompt flow (to detect "this is
-    /// the same password already saved," so re-submitting an unchanged
-    /// login doesn't re-prompt). At most one credential per (profile,
-    /// origin) in v1 -- a page with two distinct saved logins for the same
-    /// host isn't supported yet (out of scope; see notes' Deviations).
-    static func credential(profileName: String, origin: String) -> (username: String, password: String)? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassInternetPassword,
-            kSecAttrServer as String: host(fromOrigin: origin),
-            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
-            kSecReturnAttributes as String: true,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let attributes = result as? [String: Any],
-              let account = attributes[kSecAttrAccount as String] as? String,
-              let data = attributes[kSecValueData as String] as? Data,
-              let password = String(data: data, encoding: .utf8)
-        else {
-            return nil
-        }
-        return (account, password)
+    /// The saved credential that may be used on a page at `origin`, if any
+    /// (CredentialScope decides) -- used by autofill (existence + username,
+    /// to decide whether to show the key icon) and by the save-prompt flow
+    /// (to detect "this is the same password already saved," so
+    /// re-submitting an unchanged login doesn't re-prompt). At most one
+    /// credential per (profile, origin) in v1 -- a page with two distinct
+    /// saved logins for the same site isn't supported yet (out of scope;
+    /// see notes' Deviations).
+    static func credential(profileName: String, for origin: WebOrigin) -> (username: String, password: String)? {
+        let candidates = items(profileName: profileName, server: origin.host)
+        guard let best = CredentialScope.bestMatch(for: origin, in: candidates, scope: { $0.scope }),
+              let password = password(persistentRef: best.persistentRef)
+        else { return nil }
+        return (best.username, password)
     }
 
     /// Every saved credential across every origin in this profile, for the
     /// Passwords settings pane's list -- never includes the password itself;
-    /// see `password(profileName:origin:username:)` for the one Touch-ID-
-    /// gated path that reads it back.
+    /// see `password(profileName:credential:)` for the one Touch-ID-gated
+    /// path that reads it back.
     static func allCredentials(profileName: String) -> [SavedCredential] {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassInternetPassword,
-            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll,
-        ]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]]
-        else {
-            return []
-        }
-        return items.compactMap { item in
-            guard let server = item[kSecAttrServer as String] as? String,
-                  let account = item[kSecAttrAccount as String] as? String
-            else { return nil }
-            return SavedCredential(origin: server, username: account)
-        }
+        items(profileName: profileName, server: nil).map { SavedCredential(scope: $0.scope, username: $0.username) }
     }
 
-    /// Reads back a single credential's plaintext password -- the only
-    /// function in this store that does. Callers (the Settings pane's
-    /// "reveal" action) must gate this behind a fresh LocalAuthentication
-    /// (Touch ID) check first; this function itself performs no such check,
-    /// since Keychain's own ACL (no explicit access-control flags set at
-    /// save time) doesn't require per-read authentication -- the UI-level
-    /// gate is this app's own, on top of Keychain's default protection.
-    static func password(profileName: String, origin: String, username: String) -> String? {
-        guard let found = credential(profileName: profileName, origin: origin), found.username == username else {
-            return nil
+    private static func item(profileName: String, credential: SavedCredential) -> Item? {
+        let server: String
+        switch credential.scope {
+        case .origin(let origin): server = origin.host
+        case .legacyHost(let host): server = host
         }
-        return found.password
+        return items(profileName: profileName, server: server, username: credential.username)
+            .first { $0.scope == credential.scope }
+    }
+
+    /// Reads back a single credential's plaintext password for the
+    /// Settings pane's "reveal" action, which must gate this behind a fresh
+    /// LocalAuthentication (Touch ID) check first; this function itself
+    /// performs no such check, since Keychain's own ACL (no explicit
+    /// access-control flags set at save time) doesn't require per-read
+    /// authentication -- the UI-level gate is this app's own, on top of
+    /// Keychain's default protection.
+    static func password(profileName: String, credential: SavedCredential) -> String? {
+        item(profileName: profileName, credential: credential).flatMap { password(persistentRef: $0.persistentRef) }
     }
 
     @discardableResult
-    static func delete(profileName: String, origin: String, username: String) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassInternetPassword,
-            kSecAttrServer as String: host(fromOrigin: origin),
-            kSecAttrAccount as String: username,
-            kSecAttrSecurityDomain as String: securityDomain(profileName: profileName),
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        let deleted = status == errSecSuccess || status == errSecItemNotFound
+    static func delete(profileName: String, credential: SavedCredential) -> Bool {
+        guard let item = item(profileName: profileName, credential: credential) else { return true }
+        let deleted = deleteItem(persistentRef: item.persistentRef)
         if deleted {
             postDidChange()
         }
