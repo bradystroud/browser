@@ -237,6 +237,7 @@ final class WebKitTab: NSObject, EngineTab {
             let uuid = ProfileDataStoreKey.identifier(forProfileId: profileId)
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
         }
+        config.applicationNameForUserAgent = SafariUserAgent.applicationName
         webView = WKWebView(frame: hostView.bounds, configuration: config)
         super.init()
         finishInit(hostView: hostView, initialURL: initialURL, config: config)
@@ -253,6 +254,7 @@ final class WebKitTab: NSObject, EngineTab {
         profileName = "private"
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        config.applicationNameForUserAgent = SafariUserAgent.applicationName
         webView = WKWebView(frame: hostView.bounds, configuration: config)
         super.init()
         finishInit(hostView: hostView, initialURL: initialURL, config: config)
@@ -262,7 +264,7 @@ final class WebKitTab: NSObject, EngineTab {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
-        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: WebKitTab.pageMessageHandlerName)
+        installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
         hostView.addSubview(webView)
 
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, change in
@@ -321,6 +323,7 @@ final class WebKitTab: NSObject, EngineTab {
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         webView.configuration.userContentController.removeScriptMessageHandler(forName: WebKitTab.pageMessageHandlerName)
+        cancelPendingPageMessages()
         webView.removeFromSuperview()
     }
 
