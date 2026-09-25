@@ -16,5 +16,11 @@
 	<true/>
 	<key>com.apple.security.cs.disable-library-validation</key>
 	<true/>
+	<!-- The hardened runtime blocks Location Services unless the app
+	     declares it; WebKit's geolocation runs its CLLocationManager in this
+	     process, and without the key a site's location request fails even
+	     after the user allows it. -->
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
 </dict>
 </plist>
