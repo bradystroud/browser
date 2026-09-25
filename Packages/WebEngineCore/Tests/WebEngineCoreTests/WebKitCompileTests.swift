@@ -73,6 +73,28 @@ final class WebKitCompileTests: XCTestCase {
         }
     }
 
+    /// One rule WebKit refuses must cost only that rule, not the list.
+    func testBisectorIsolatesARuleWebKitRejects() async throws {
+        let output = ContentRuleListBuilder.build(blockedDomains: (0..<64).map { "d\($0).example" }, allowlistedHosts: [])
+        var rules = try XCTUnwrap(ContentRuleListBisector.rules(inList: output.lists[0]))
+        rules.insert(#"{"action":{"type":"block"},"trigger":{"url-filter":"a|b"}}"#, at: 17)
+        let store = try XCTUnwrap(self.store)
+        let (rejected, compiledRules): ([Range<Int>], Int) = await withCheckedContinuation { continuation in
+            var attempt = 0
+            ContentRuleListBisector.run(ruleCount: rules.count, compile: { range, done in
+                attempt += 1
+                let json = ContentRuleListBisector.list(fromRules: rules[range])
+                store.compileContentRuleList(forIdentifier: "bisect-\(attempt)", encodedContentRuleList: json) { list, _ in
+                    done(list)
+                }
+            }, completion: { (result: ContentRuleListBisector.Result<WKContentRuleList>) in
+                continuation.resume(returning: (result.rejected, result.compiled.reduce(0) { $0 + $1.range.count }))
+            })
+        }
+        XCTAssertEqual(rejected, [17..<18])
+        XCTAssertEqual(compiledRules, 64)
+    }
+
     private func rule(_ pattern: String) -> String {
         let escaped = pattern.replacingOccurrences(of: "\\", with: "\\\\")
         return #"[{"trigger":{"url-filter":"\#(escaped)"},"action":{"type":"block"}}]"#
