@@ -216,6 +216,7 @@ final class WebKitTab: NSObject, EngineTab {
     private var findMatchCase = false
     private var findOrdinal = 0
     let navigationState = WebKitNavigationState()
+    let audioMute = WebKitAudioMute()
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
@@ -278,6 +279,7 @@ final class WebKitTab: NSObject, EngineTab {
             webView.isInspectable = true
         }
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
+        audioMute.install(into: config.userContentController)
         hostView.addSubview(webView)
 
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, change in
@@ -385,8 +387,11 @@ final class WebKitTab: NSObject, EngineTab {
         return 0
     }
 
+    /// Best-effort and script-based. No public WKWebView API mutes page
+    /// audio (WKWebExtensionTab's setMuted is for extension contexts only).
+    /// See WebKitAudioMute for how it works and what can still be heard.
     func setAudioMuted(_ muted: Bool) {
-        unsupported("per-tab audio mute (confirmed: no public WKWebView API mutes page audio output -- WKWebExtensionTab's setMuted:forWebExtensionContext: is extension-API-only, not a general WKWebView property)")
+        audioMute.setMuted(muted, in: webView)
     }
 
     /// Full parity on the mechanism, no workaround needed (browser-5kq.15):
