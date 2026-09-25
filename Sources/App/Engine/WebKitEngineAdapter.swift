@@ -313,7 +313,9 @@ final class WebKitTab: NSObject, EngineTab {
     }
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
-    func reload() { webView.reload() }
+    func reload() {
+        if !retryFailedNavigationIfShowingErrorPage() { webView.reload() }
+    }
     func close() {
         observations.forEach { $0.invalidate() }
         observations.removeAll()

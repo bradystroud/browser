@@ -9,6 +9,19 @@ final class WebKitNavigationState {
     /// one navigation (the favicon read in didFinish) can tell it has been
     /// superseded by the next one.
     var generation = 0
+
+    /// The navigation that loads our own error/crash page. Its commit and
+    /// finish are not a visit: the page is ours, not the site's.
+    var errorPageNavigation: WKNavigation?
+
+    /// The real URL behind the error page currently on screen, so reload()
+    /// retries the site instead of re-rendering the error HTML.
+    var failedURL: URL?
+
+    /// When the last automatic reload after a content-process crash
+    /// happened. A second crash soon after shows the crash page instead of
+    /// looping.
+    var lastCrashReload: Date?
 }
 
 extension WebKitTab: WKNavigationDelegate {
@@ -93,6 +106,9 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if navigation !== navigationState.errorPageNavigation {
+            navigationState.failedURL = nil
+        }
         // CEF's OnLoadStart, which fires after commit but before the new
         // document's own scripts run. didCommit is the closest WebKit hook:
         // the response has started arriving and the old document is gone,
@@ -103,7 +119,58 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        if navigation === navigationState.errorPageNavigation {
+            navigationState.errorPageNavigation = nil
+            return
+        }
         reportFinishedNavigation()
+    }
+
+    /// The document committed and then failed part-way (a dropped
+    /// connection mid-page). What arrived is on screen, so it still counts
+    /// as a visit -- CEF's OnLoadEnd fires for a main frame that committed
+    /// whether or not it completed. A cancel is different: it means a newer
+    /// navigation replaced this one, and that one gets its own report.
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if navigation === navigationState.errorPageNavigation {
+            navigationState.errorPageNavigation = nil
+            return
+        }
+        NSLog("Browser: WebKit load failed after commit for %@: %@", webView.url?.absoluteString ?? "(nil)", error.localizedDescription)
+        guard !Self.isBenignNavigationError(error) else { return }
+        reportFinishedNavigation()
+    }
+
+    /// The navigation never committed: DNS, offline, refused connection,
+    /// TLS failure. Without this the tab keeps showing the previous page (or
+    /// stays blank) with nothing explaining why.
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if navigation === navigationState.errorPageNavigation {
+            navigationState.errorPageNavigation = nil
+            return
+        }
+        let failingURL = Self.failingURL(of: error) ?? webView.url
+        NSLog("Browser: WebKit load failed for %@: %@ (%@ %d)", failingURL?.absoluteString ?? "(nil)",
+              error.localizedDescription, (error as NSError).domain, (error as NSError).code)
+        guard !Self.isBenignNavigationError(error), let failingURL else { return }
+        let page = WebKitErrorPage.loadFailure(error: error as NSError, url: failingURL)
+        showErrorPage(page, for: failingURL)
+    }
+
+    /// The renderer process died (a crash, or the OS reclaiming memory).
+    /// Reload once automatically, the way Safari does; a second death soon
+    /// after shows a page explaining it instead of crash-looping.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        let url = webView.url
+        NSLog("Browser: WebKit web content process terminated for %@", url?.absoluteString ?? "(nil)")
+        let now = Date()
+        if let last = navigationState.lastCrashReload, now.timeIntervalSince(last) < 30 {
+            guard let url, url.scheme == "http" || url.scheme == "https" else { return }
+            showErrorPage(WebKitErrorPage.processCrashed(url: url), for: url)
+            return
+        }
+        navigationState.lastCrashReload = now
+        webView.reload()
     }
 
     /// Reads the page's declared icons, reports the chosen one, then reports
@@ -119,6 +186,43 @@ extension WebKitTab: WKNavigationDelegate {
             self.delegate?.engineTabDidChangeFaviconURL(FaviconCandidate.best(of: candidates))
             self.delegate?.engineTabDidCommitNavigation(url)
         }
+    }
+
+    // MARK: - Error pages
+
+    /// Loaded with the failing URL as its base, so the omnibox, the tab and
+    /// Try Again all keep pointing at the address the user asked for.
+    private func showErrorPage(_ html: String, for url: URL) {
+        navigationState.failedURL = url
+        navigationState.errorPageNavigation = webView.loadHTMLString(html, baseURL: url)
+    }
+
+    /// Called from reload(): on an error page, retry the real address rather
+    /// than re-rendering the error HTML. Returns false when there is
+    /// nothing to retry and an ordinary reload should happen.
+    func retryFailedNavigationIfShowingErrorPage() -> Bool {
+        guard let failedURL = navigationState.failedURL, webView.url == failedURL else { return false }
+        navigationState.failedURL = nil
+        webView.load(URLRequest(url: failedURL))
+        return true
+    }
+
+    /// Cancellations are routine (a newer navigation replaced this one, or
+    /// the user pressed Stop). WebKit's "frame load interrupted" is its own
+    /// cancel for a navigation turned into a download or cancelled by
+    /// policy, and "plug-in handled load" means something else took it over.
+    static func isBenignNavigationError(_ error: Error) -> Bool {
+        let error = error as NSError
+        if error.domain == NSURLErrorDomain, error.code == NSURLErrorCancelled { return true }
+        if error.domain == "WebKitErrorDomain", error.code == 102 || error.code == 204 { return true }
+        return false
+    }
+
+    private static func failingURL(of error: Error) -> URL? {
+        let userInfo = (error as NSError).userInfo
+        if let url = userInfo[NSURLErrorFailingURLErrorKey] as? URL { return url }
+        if let string = userInfo[NSURLErrorFailingURLStringErrorKey] as? String { return URL(string: string) }
+        return nil
     }
 
     // MARK: - Favicons
@@ -161,5 +265,93 @@ struct FaviconCandidate {
         let icons = candidates.filter(\.isIcon)
         if let icon = icons.first(where: { !$0.isSVG }) ?? icons.first { return icon.href }
         return candidates.first(where: \.isTouchIcon)?.href
+    }
+}
+
+/// Self-contained HTML for load failures and renderer crashes. No network
+/// resources and no script: the page runs with the failing site's origin as
+/// its base, and must render when the network is exactly what's broken.
+enum WebKitErrorPage {
+    static func loadFailure(error: NSError, url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        let (heading, explanation) = describe(error, host: host)
+        return render(heading: heading, explanation: explanation, url: url,
+                      detail: "\(error.localizedDescription) (\(error.domain) \(error.code))")
+    }
+
+    static func processCrashed(url: URL) -> String {
+        render(heading: "This page crashed",
+               explanation: "The page stopped working, twice in a row. It may be using too much memory or hitting a bug.",
+               url: url, detail: nil)
+    }
+
+    private static func describe(_ error: NSError, host: String) -> (String, String) {
+        guard error.domain == NSURLErrorDomain else {
+            return ("Can\u{2019}t open this page", "Something went wrong while loading \(host).")
+        }
+        switch error.code {
+        case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorDataNotAllowed,
+             NSURLErrorInternationalRoamingOff:
+            return ("You\u{2019}re not connected to the internet", "Check your network connection, then try again.")
+        case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed:
+            return ("Can\u{2019}t find the server", "\(host) couldn\u{2019}t be found. Check the address for typos.")
+        case NSURLErrorCannotConnectToHost:
+            return ("Can\u{2019}t connect to the server", "\(host) refused the connection or isn\u{2019}t responding.")
+        case NSURLErrorTimedOut:
+            return ("The server took too long to respond", "\(host) didn\u{2019}t answer in time.")
+        case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateHasBadDate,
+             NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasUnknownRoot,
+             NSURLErrorServerCertificateNotYetValid, NSURLErrorClientCertificateRejected,
+             NSURLErrorClientCertificateRequired:
+            return ("Can\u{2019}t establish a secure connection",
+                    "The connection to \(host) isn\u{2019}t secure, so the page wasn\u{2019}t loaded. Someone may be impersonating the site, or its certificate is misconfigured.")
+        case NSURLErrorUnsupportedURL, NSURLErrorBadURL:
+            return ("Can\u{2019}t open this address", "This browser can\u{2019}t open that kind of link.")
+        case NSURLErrorAppTransportSecurityRequiresSecureConnection:
+            return ("Can\u{2019}t open this page", "\(host) can only be loaded over a secure connection.")
+        default:
+            return ("Can\u{2019}t open this page", "Something went wrong while loading \(host).")
+        }
+    }
+
+    private static func render(heading: String, explanation: String, url: URL, detail: String?) -> String {
+        let href = escape(url.absoluteString)
+        let detailHTML = detail.map { "<p class=\"detail\">\(escape($0))</p>" } ?? ""
+        // No <title>: an empty title makes the tab show the URL, and a real
+        // one would overwrite the history entry's title for that URL.
+        return """
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+        :root { color-scheme: light dark; --bg: #f5f5f7; --fg: #1d1d1f; --muted: #6e6e73; --accent: #0071e3; }
+        @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f5f5f7; --muted: #98989d; --accent: #0a84ff; } }
+        html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+          font: 15px -apple-system, BlinkMacSystemFont, sans-serif; }
+        main { max-width: 520px; margin: 0 auto; padding: 18vh 24px 24px; }
+        h1 { font-size: 24px; font-weight: 600; margin: 0 0 12px; }
+        p { line-height: 1.5; margin: 0 0 12px; }
+        .url { color: var(--muted); word-break: break-all; }
+        .detail { color: var(--muted); font-size: 13px; }
+        a.button { display: inline-block; margin-top: 12px; padding: 8px 18px; border-radius: 8px;
+          background: var(--accent); color: #fff; text-decoration: none; font-weight: 500; }
+        </style></head>
+        <body><main>
+        <h1>\(escape(heading))</h1>
+        <p>\(escape(explanation))</p>
+        <p class="url">\(href)</p>
+        \(detailHTML)
+        <a class="button" href="\(href)">Try Again</a>
+        </main></body></html>
+        """
+    }
+
+    private static func escape(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 }
