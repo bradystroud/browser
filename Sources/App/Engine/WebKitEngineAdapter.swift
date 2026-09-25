@@ -41,16 +41,16 @@ enum WebKitEngine: BrowserEngine {
         // setWindowCloseHandler.
     }
 
-    private static var contentRuleListStore: WKContentRuleListStore?
+    static var contentRuleListStore: WKContentRuleListStore?
 
-    /// Per-profile compiled content-blocking rule list, keyed by profile
+    /// Per-profile compiled content-blocking rule lists, keyed by profile
     /// name (or "private" -- see BRWBrowser.mm's private-window profile-name
     /// convention this mirrors). Populated asynchronously by
-    /// updateContentBlocking(domains:profileSettings:) below; a tab created
+    /// WebKitContentBlocking.swift; a tab created
     /// before its profile's first compile finishes just has no rule list
     /// attached yet (fails open, same direction BRWContentBlockerShouldBlock
     /// itself fails in) until the next update.
-    fileprivate static var compiledContentRuleLists: [String: WKContentRuleList] = [:]
+    static var compiledContentRuleLists: [String: [WKContentRuleList]] = [:]
 
     /// Every live tab, by profile name, so a content-blocking update can
     /// push a freshly-compiled rule list into already-open tabs -- unlike
@@ -58,7 +58,7 @@ enum WebKitEngine: BrowserEngine {
     /// per-request, a WKContentRuleList must be explicitly (re-)attached to
     /// each WKWebView's own WKUserContentController. Weak so a closed tab
     /// falls out of this registry on its own.
-    private static var liveTabsByProfile: [String: NSHashTable<WebKitTab>] = [:]
+    static var liveTabsByProfile: [String: NSHashTable<WebKitTab>] = [:]
 
     private static var threatDomains: [String] = []
     private static var threatProfileSettings: [String: EngineProfileThreatSettings] = [:]
@@ -103,8 +103,8 @@ enum WebKitEngine: BrowserEngine {
         let table = liveTabsByProfile[profileName] ?? NSHashTable<WebKitTab>.weakObjects()
         table.add(tab)
         liveTabsByProfile[profileName] = table
-        if let ruleList = compiledContentRuleLists[profileName] {
-            tab.applyContentRuleList(ruleList)
+        if let ruleLists = compiledContentRuleLists[profileName] {
+            tab.applyContentRuleLists(ruleLists)
         }
     }
 
@@ -156,25 +156,7 @@ enum WebKitEngine: BrowserEngine {
     private(set) static var downloadDirectory = ""
 
     static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings]) {
-        guard let store = contentRuleListStore else { return }
-        for (profileName, settings) in profileSettings {
-            guard settings.enabled else {
-                compiledContentRuleLists.removeValue(forKey: profileName)
-                liveTabsByProfile[profileName]?.allObjects.forEach { $0.removeContentRuleList() }
-                continue
-            }
-            let json = ContentRuleListBuilder.json(blockedDomains: domains, allowlistedHosts: settings.allowlistedHosts)
-            let identifier = "content-blocker.\(profileName)"
-            store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json) { ruleList, error in
-                if let error {
-                    NSLog("Browser: WebKit content rule list compile failed for profile %@: %@", profileName, error.localizedDescription)
-                    return
-                }
-                guard let ruleList else { return }
-                compiledContentRuleLists[profileName] = ruleList
-                liveTabsByProfile[profileName]?.allObjects.forEach { $0.applyContentRuleList(ruleList) }
-            }
-        }
+        compileContentBlocking(domains: domains, profileSettings: profileSettings)
     }
 
     static func setThreatInterstitialBuilder(_ builder: @escaping (String, String) -> String) {
@@ -321,20 +303,11 @@ final class WebKitTab: NSObject, EngineTab {
         // Favicons have no KVO/delegate hook on WKWebView; the navigation
         // delegate reads <link rel="icon"> itself when a load finishes.
 
-        if let ruleList = WebKitEngine.compiledContentRuleLists[profileName] {
-            applyContentRuleList(ruleList)
+        if let ruleLists = WebKitEngine.compiledContentRuleLists[profileName] {
+            applyContentRuleLists(ruleLists)
         }
 
         loadURL(initialURL)
-    }
-
-    fileprivate func applyContentRuleList(_ ruleList: WKContentRuleList) {
-        webView.configuration.userContentController.removeAllContentRuleLists()
-        webView.configuration.userContentController.add(ruleList)
-    }
-
-    fileprivate func removeContentRuleList() {
-        webView.configuration.userContentController.removeAllContentRuleLists()
     }
 
     // MARK: - EngineTab

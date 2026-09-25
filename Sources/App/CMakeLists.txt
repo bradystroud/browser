@@ -80,6 +80,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
   Engine/WebKitEngineAdapter.swift
+  Engine/WebKitContentBlocking.swift
   Engine/WebKitTab+Navigation.swift
   Engine/WebKitTab+UIDelegate.swift
   Engine/WebKitTab+Downloads.swift
@@ -280,6 +281,7 @@ source_group(AutofillCore FILES ${BROWSER_AUTOFILL_CORE_SRCS})
 # two ways to build it.
 set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentBlockerRegex.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentRuleListBisector.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ContentRuleListBuilder.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ProfileDataStoreKey.swift
   )
