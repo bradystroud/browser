@@ -23,6 +23,24 @@ enum EngineWindowOpenDisposition {
     case newPopup
 }
 
+/// Which developer-tools panel to bring forward when opening them. Engines
+/// that cannot select a panel open whatever they last showed.
+enum DevToolsPanel {
+    /// Whatever the tools last showed (Elements the first time).
+    case `default`
+    case console
+    case elements
+}
+
+/// Where a tab's developer tools live. Bottom/right/left dock them into the
+/// tab's own content area; `window` is the engine's own separate window.
+enum DevToolsDockSide: String, CaseIterable {
+    case bottom
+    case right
+    case left
+    case window
+}
+
 /// Per-tab navigation/state/download/permission callbacks -- the
 /// engine-agnostic counterpart of the bridge's BRWBrowserDelegate
 /// (Objective-C protocol, CEF-specific naming). One EngineTab has at most
@@ -162,6 +180,23 @@ protocol EngineTabDelegate: AnyObject {
     /// page that actually made it (browser-e7r). Either may be empty when
     /// the underlying URL had no parseable host.
     func engineTabDidBlockRequest(trackerDomain: String, pageHost: String)
+
+    /// The engine opened this tab's developer tools on its own -- from its
+    /// own context menu's Inspect Element, say -- rather than because
+    /// showDevTools(panel:dockSide:in:) was called. Delivered before the tools are
+    /// placed anywhere, so the receiver can call showDevTools(panel:dockSide:in:)
+    /// from inside this callback to claim them for its dock container.
+    /// Also delivered, harmlessly, for opens the receiver asked for itself.
+    func engineTabDevToolsDidOpen()
+
+    /// This tab's developer tools closed, including from their own UI
+    /// (the close button, or closing their separate window).
+    func engineTabDevToolsDidClose()
+
+    /// The user picked a dock side from inside the developer tools' own UI.
+    /// The receiver should move its dock container to match; the tools
+    /// themselves have already moved.
+    func engineTabDevToolsDidRequestDockSide(_ side: DevToolsDockSide)
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -178,8 +213,34 @@ protocol EngineTab: AnyObject {
     func goForward()
     func reload()
     func close()
-    func showDevTools()
+
+    /// Opens (or brings forward) this tab's developer tools on `panel`, or
+    /// moves already-open tools. `container` is the view docked tools must
+    /// fill, owned and laid out by the app: the engine never sizes the page
+    /// itself. `dockSide` says where that container sits relative to the
+    /// page, for the tools' own dock-side controls; `.window` (or a nil
+    /// container) means the engine's own separate window. An engine without
+    /// EngineCapabilities.devToolsDocking ignores both and always uses its
+    /// own window.
+    func showDevTools(panel: DevToolsPanel, dockSide: DevToolsDockSide, in container: NSView?)
+
+    /// Closes this tab's developer tools, docked or not. Safe when closed.
     func closeDevTools()
+
+    /// Whether this tab's developer tools are open, as far as the engine
+    /// knows -- including while they are still loading.
+    var isDevToolsOpen: Bool { get }
+
+    /// Turns on the tools' element picker, so the next click on the page
+    /// selects that element in the Elements panel. Call after
+    /// showDevTools(panel:dockSide:in:); an engine without a picker just shows the
+    /// Elements panel.
+    func startElementPicker()
+
+    /// Reveals the element at `point` (in the tab's web content view's own
+    /// coordinates, as a context-menu click reports it) in the Elements
+    /// panel. Call after showDevTools(panel:dockSide:in:).
+    func inspectElement(at point: NSPoint)
 
     /// Overrides this tab's viewport to a fixed device size/scale, the same
     /// effect as DevTools' own device toolbar (browser-6hi.2) -- see
@@ -288,9 +349,13 @@ protocol EnginePopupTab: EngineTab {
 /// `ActiveEngine.capabilities` rather than asking which engine is running.
 struct EngineCapabilities {
     /// A developer-tools window opened from inside the app, including
-    /// right-click Inspect Element. When false, showDevTools() explains how
-    /// to inspect the page from another app instead.
+    /// right-click Inspect Element. When false, showDevTools(panel:dockSide:in:)
+    /// explains how to inspect the page from another app instead.
     var inAppDevTools: Bool
+    /// showDevTools(panel:dockSide:in:) puts docked tools into the container
+    /// it is given. When false the engine always uses its own window, so the
+    /// app offers no dock sides.
+    var devToolsDocking: Bool = false
     /// setResponsiveDesignMode(...) actually resizes the viewport.
     var responsiveDesignMode: Bool
     /// cpuUsagePercent() reports a real per-tab figure rather than 0.

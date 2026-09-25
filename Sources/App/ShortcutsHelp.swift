@@ -64,7 +64,9 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.showDownloads(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.addToReadingList(_:)): .historyAndBookmarks,
         #selector(BrowserWindowController.showReadingList(_:)): .historyAndBookmarks,
-        #selector(BrowserWindowController.showDevTools(_:)): .developer,
+        #selector(BrowserWindowController.toggleDevTools(_:)): .developer,
+        #selector(BrowserWindowController.showJavaScriptConsole(_:)): .developer,
+        #selector(BrowserWindowController.inspectElements(_:)): .developer,
         #selector(BrowserWindow.printPage(_:)): .general,
         #selector(BrowserWindowController.showKeyboardShortcuts(_:)): .general,
         #selector(NSApplication.terminate(_:)): .general,
@@ -102,7 +104,7 @@ enum ShortcutsHelp {
             for topItem in mainMenu.items {
                 guard let submenu = topItem.submenu else { continue }
                 for item in submenu.items {
-                    guard !item.keyEquivalent.isEmpty, let action = item.action,
+                    guard !item.keyEquivalent.isEmpty, !item.isHidden, let action = item.action,
                           let category = categoryBySelector[action] else { continue }
                     entries[category, default: []].append(
                         ShortcutEntry(key: displayString(for: item), title: item.title))

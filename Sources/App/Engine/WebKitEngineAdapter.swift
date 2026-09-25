@@ -42,7 +42,7 @@ enum WebKitEngine: BrowserEngine {
     }
 
     /// Whether the in-app Web Inspector (private _WKInspector SPI) exists on
-    /// this system; without it, showDevTools() points at Safari instead.
+    /// this system; without it, showDevTools(panel:dockSide:in:) points at Safari instead.
     static var inAppInspectorAvailable: Bool { WebKitInspector.isAvailable }
 
     /// Per-tab mute is done in page script (every media element muted), not
@@ -52,6 +52,7 @@ enum WebKitEngine: BrowserEngine {
     static var capabilities: EngineCapabilities {
         EngineCapabilities(
             inAppDevTools: inAppInspectorAvailable,
+            devToolsDocking: WebKitInspector.canDockIntoContainer,
             responsiveDesignMode: WebKitResponsiveDesign.isAvailable,
             perTabCPUUsage: false,
             perTabAudioMute: true,
@@ -337,6 +338,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
         audioMute.install(into: config.userContentController)
         findFrames.install(into: config.userContentController)
+        installDevTools()
         hostView?.addSubview(webView)
 
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, change in
@@ -442,13 +444,11 @@ final class WebKitTab: NSObject, EnginePopupTab {
         webView.removeFromSuperview()
     }
 
-    /// Opens WebKit's own Web Inspector in the app through the private
-    /// _WKInspector SPI (see WebKitInspector.swift). When that SPI is missing
-    /// on this macOS, falls back to the public route: isInspectable (set on
-    /// every tab at creation) lets Safari's Develop menu attach to the tab,
-    /// so a sheet explains where to find it and offers to open Safari.
-    func showDevTools() {
-        if WebKitInspector.show(for: webView) { return }
+    /// The fallback for showDevTools(panel:dockSide:in:) when the in-app
+    /// inspector SPI is missing on this macOS: isInspectable (set on every
+    /// tab at creation) lets Safari's Develop menu attach to the tab, so a
+    /// sheet explains where to find it and offers to open Safari.
+    func showSafariInspectorHandOff() {
         NSLog("Browser: WebKit in-app Web Inspector unavailable -- showing the Safari Develop-menu hand-off instead")
         guard #available(macOS 13.3, *) else {
             unsupported("DevTools (Safari Web Inspector attachment needs macOS 13.3+)")
@@ -481,7 +481,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
     /// Closes the in-app inspector. With the Safari fallback there is
     /// nothing to close: Safari's inspector window belongs to Safari.
     func closeDevTools() {
-        WebKitInspector.close(for: webView)
+        WebKitInspectorSession.session(for: webView).close()
     }
 
     /// Built from private WKWebView SPI -- see WebKitResponsiveDesign.swift

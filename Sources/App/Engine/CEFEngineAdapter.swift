@@ -14,6 +14,7 @@ enum CEFEngine: BrowserEngine {
     static var capabilities: EngineCapabilities {
         EngineCapabilities(
             inAppDevTools: true,
+            devToolsDocking: false,
             responsiveDesignMode: true,
             perTabCPUUsage: true,
             perTabAudioMute: true,
@@ -98,8 +99,23 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func goForward() { browser.goForward() }
     func reload() { browser.reload() }
     func close() { browser.close() }
-    func showDevTools() { browser.showDevTools() }
-    func closeDevTools() { browser.closeDevTools() }
+
+    // Until the bridge can embed DevTools into a view (docking, panels,
+    // picker, inspect-at-point), every entry point opens CEF's own separate
+    // DevTools window -- hence devToolsDocking stays false. CEF reports no
+    // close from that window, so isDevToolsOpen can go stale when the user
+    // closes it themselves.
+    private(set) var isDevToolsOpen = false
+    func showDevTools(panel: DevToolsPanel, dockSide: DevToolsDockSide, in container: NSView?) {
+        browser.showDevTools()
+        isDevToolsOpen = true
+    }
+    func closeDevTools() {
+        browser.closeDevTools()
+        isDevToolsOpen = false
+    }
+    func startElementPicker() {}
+    func inspectElement(at point: NSPoint) {}
     func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
         browser.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile)
     }
