@@ -46,12 +46,13 @@ enum WebKitEngine: BrowserEngine {
     static var inAppInspectorAvailable: Bool { WebKitInspector.isAvailable }
 
     /// Per-tab mute is done in page script (every media element muted), not
-    /// by the engine. CPU use and device emulation have no public WKWebView
-    /// API, and macOS WKWebView offers no way to add context-menu items.
+    /// by the engine. Device emulation relies on private WKWebView SPI and is
+    /// offered only when that SPI exists. CPU use has no WKWebView API, and
+    /// macOS WKWebView offers no way to add context-menu items.
     static var capabilities: EngineCapabilities {
         EngineCapabilities(
             inAppDevTools: inAppInspectorAvailable,
-            responsiveDesignMode: false,
+            responsiveDesignMode: WebKitResponsiveDesign.isAvailable,
             perTabCPUUsage: false,
             perTabAudioMute: true,
             customContextMenuItems: false)
