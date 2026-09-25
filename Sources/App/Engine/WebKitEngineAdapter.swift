@@ -195,6 +195,7 @@ enum WebKitEngine: BrowserEngine {
     /// threatInterstitialBuilder if it matches -- see WebKitTab's own
     /// implementation.
     static func shouldWarn(host: String, profileName: String) -> Bool {
+        guard !hasThreatSessionBypass(host: host, profileName: profileName) else { return false }
         guard threatProfileSettings[profileName]?.enabled == true else { return false }
         let hostLabels = host.lowercased().split(separator: ".")
         for domain in threatDomains {
