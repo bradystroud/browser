@@ -80,6 +80,10 @@ set(BROWSER_SWIFT_SRCS
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
   Engine/WebKitEngineAdapter.swift
+  Engine/WebKitTab+Navigation.swift
+  Engine/WebKitTab+UIDelegate.swift
+  Engine/WebKitTab+Downloads.swift
+  Engine/WebKitTab+Scripts.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
