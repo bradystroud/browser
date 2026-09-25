@@ -14,12 +14,16 @@ final class ReadingListCoordinator {
 
     /// A capture that has been asked for but not yet answered. Keyed by the
     /// URL the script was given, which is what comes back in the reply --
-    /// not by tab, because the tab may well have navigated on by then and
-    /// the answer still belongs to the page that was saved.
+    /// the tab may well have navigated on by then and the answer still
+    /// belongs to the page that was saved. A reply is only accepted from
+    /// the tab that was asked, though: any page can send a message of this
+    /// type, and one in another tab must not be able to supply the offline
+    /// copy of an article it was never asked for.
     private struct PendingCapture {
         let itemId: Int64
         let profile: Profile
         let requestedAt: Date
+        weak var tab: Tab?
     }
 
     /// How long a capture may stay outstanding before it is forgotten. A
@@ -78,7 +82,7 @@ final class ReadingListCoordinator {
 
     private func requestCapture(for itemId: Int64, url: String, title: String, tab: Tab, profile: Profile) {
         forgetStaleCaptures()
-        pendingCaptures[url] = PendingCapture(itemId: itemId, profile: profile, requestedAt: Date())
+        pendingCaptures[url] = PendingCapture(itemId: itemId, profile: profile, requestedAt: Date(), tab: tab)
         tab.executeJavaScript(ReadingListCaptureScript.source(url: url, title: title))
     }
 
@@ -105,7 +109,8 @@ final class ReadingListCoordinator {
 
         guard let data = request.data(using: .utf8),
               let reply = try? JSONDecoder().decode(CaptureReply.self, from: data),
-              let pending = pendingCaptures.removeValue(forKey: reply.url) else { return }
+              let pending = pendingCaptures[reply.url], pending.tab === tab else { return }
+        pendingCaptures.removeValue(forKey: reply.url)
         guard reply.ok, let content = reply.content else {
             // Extraction failed. The item stays on the list without an
             // offline copy, which is a real state the UI shows -- opening

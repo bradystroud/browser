@@ -31,6 +31,13 @@ import Foundation
 /// is allowed -- this script only ever decides whether a *granted*
 /// notification actually gets shown to the user.
 ///
+/// The one exception is narrowing: after Chromium answers "granted", the
+/// shim asks the native side ("notificationPermission") as well, and reports
+/// "denied" when WebPushCoordinator would refuse to show anything -- a
+/// private window, or a site with no stored grant. The native check is the
+/// real gate either way; this only keeps what the page is told consistent
+/// with it.
+///
 /// Only the *foreground* Notification API is covered -- pages/service
 /// workers that are actually running right now. Full background Web Push
 /// (delivery while the browser process itself isn't running) needs
@@ -64,6 +71,23 @@ enum NotificationOverrideScript {
         });
       }
 
+      // Last native answer, so the synchronous `permission` getter can
+      // report a native refusal Chromium itself does not know about.
+      var nativeDenied = false;
+      function requestPermission() {
+        return RealNotification.requestPermission().then(function(permission) {
+          if (permission !== 'granted') { return permission; }
+          return send({ type: 'notificationPermission' }).then(function(result) {
+            var granted = !!result && result.permission === 'granted';
+            nativeDenied = !granted;
+            return granted ? 'granted' : 'denied';
+          }, function() {
+            nativeDenied = true;
+            return 'denied';
+          });
+        });
+      }
+
       function BRWNotification(title, options) {
         var self = this;
         options = options || {};
@@ -80,7 +104,7 @@ enum NotificationOverrideScript {
         this._closed = false;
         this._id = null;
 
-        RealNotification.requestPermission().then(function(permission) {
+        requestPermission().then(function(permission) {
           if (permission !== 'granted' || self._closed) { return; }
           return send({
             type: 'notificationShow', title: title, body: self.body, icon: self.icon, tag: self.tag
@@ -131,10 +155,10 @@ enum NotificationOverrideScript {
       };
 
       Object.defineProperty(BRWNotification, 'permission', {
-        get: function() { return RealNotification.permission; }
+        get: function() { return nativeDenied ? 'denied' : RealNotification.permission; }
       });
       BRWNotification.requestPermission = function(callback) {
-        var promise = RealNotification.requestPermission();
+        var promise = requestPermission();
         if (typeof callback === 'function') { promise.then(callback); }
         return promise;
       };

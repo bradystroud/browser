@@ -11,26 +11,26 @@ import UserNotifications
 /// collided over that one closure slot before it did.
 ///
 /// See NotificationOverrideScript's own doc comment for the full design.
-/// The short version: permission is never reimplemented here. The
-/// injected script's `Notification.requestPermission()` delegates
-/// straight to the real, underlying Notification API, so this app's
-/// existing CefPermissionHandler -> PermissionPromptController ->
-/// PermissionStore path (browser-12m.2) is the only thing that ever
-/// decides whether a page may show a notification at all -- this
-/// coordinator only ever runs once a page's own constructor has already
-/// resolved "granted", and its only job is turning that into a real
+/// The short version: permission is never *granted* here. The injected
+/// script's `Notification.requestPermission()` delegates straight to the
+/// real, underlying Notification API, so this app's existing
+/// CefPermissionHandler -> PermissionPromptController -> PermissionStore
+/// path (browser-12m.2) is the only thing that ever grants a page
+/// notifications. It is still *checked* here, natively, on every
+/// "notificationShow": the script runs in the page's own JavaScript world,
+/// so a page can skip its permission check and send the message directly.
+/// The check reads the origin from the tab's own URL, never from the
+/// payload. Its other job is turning a permitted request into a real
 /// system notification and reporting back what happens to it (shown,
 /// clicked, or dismissed).
 ///
-/// Private windows: permission for a private window's "private"
-/// pseudo-profile flows through the exact same CefPermissionHandler path,
-/// just never persisted (see BrowserWindowController's isPrivate guard on
-/// that path) -- so a private window can still be granted notifications
-/// for the life of that window, and forgets the decision entirely once
-/// it closes, with no extra code needed here. This coordinator itself
-/// keeps no notification history of its own anywhere (`pending` below is
-/// purely in-memory bookkeeping for in-flight notifications, not a log),
-/// so "never persisted" holds for both real and private windows equally.
+/// Private windows: a private window never reads or writes PermissionStore
+/// (see BrowserWindowController's isPrivate guard on the permission path),
+/// so there is no stored grant for the native check to find, and a private
+/// tab's notifications are refused. Every mainstream browser's incognito
+/// mode refuses them too. This coordinator itself keeps no notification
+/// history of its own anywhere (`pending` below is purely in-memory
+/// bookkeeping for in-flight notifications, not a log).
 final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
     static let shared = WebPushCoordinator()
 
@@ -63,7 +63,7 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().delegate = self
         PageMessageDispatcher.shared.activate()
         PageMessageDispatcher.shared.register(
-            types: ["notificationShow", "notificationWaitForEvent", "notificationClose"]
+            types: ["notificationShow", "notificationWaitForEvent", "notificationClose", "notificationPermission"]
         ) { [weak self] type, request, requestId, tab in
             self?.handle(type: type, request: request, requestId: requestId, tab: tab)
         }
@@ -85,6 +85,22 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         switch type {
+        case "notificationPermission":
+            // The native answer the page-side shim reports, so a page is not
+            // told "granted" for a notification this coordinator will refuse.
+            let permission: String
+            if permittedOrigin(for: tab) != nil {
+                permission = "granted"
+            } else if !tab.isPrivate,
+                      let origin = SiteIdentity.origin(forURLString: tab.urlString),
+                      PermissionStoreManager.shared.store(forProfileId: tab.profileId)
+                          .decision(for: origin, kinds: .notifications) == nil {
+                permission = "default"
+            } else {
+                permission = "denied"
+            }
+            tab.respondToPageMessage(requestId: requestId, success: true, response: "{\"permission\":\"\(permission)\"}")
+
         case "notificationShow":
             guard let payload = try? JSONDecoder().decode(ShowPayload.self, from: data) else {
                 tab.respondToPageMessage(requestId: requestId, success: false, response: "")
@@ -97,9 +113,10 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
                 tab.respondToPageMessage(requestId: requestId, success: false, response: "")
                 return
             }
-            guard var entry = pending[payload.id] else {
-                // No matching post -- e.g. a stale/bogus id. Fail rather
-                // than leave the page's promise hanging forever.
+            guard var entry = pending[payload.id], entry.tab === tab else {
+                // No matching post from this tab -- e.g. a stale/bogus id,
+                // or another tab's. Fail rather than leave the page's
+                // promise hanging forever.
                 tab.respondToPageMessage(requestId: requestId, success: false, response: "")
                 return
             }
@@ -120,8 +137,11 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
                 tab.respondToPageMessage(requestId: requestId, success: false, response: "")
                 return
             }
-            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [payload.id])
-            resolvePending(id: payload.id, event: "close")
+            // A tab may only close notifications it posted itself.
+            if pending[payload.id]?.tab === tab {
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [payload.id])
+                resolvePending(id: payload.id, event: "close")
+            }
             tab.respondToPageMessage(requestId: requestId, success: true, response: "{}")
 
         default:
@@ -129,8 +149,37 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
+    /// The origin a notification from `tab` is attributed to, and whether
+    /// that origin holds a stored "allow". Derived from the tab's own
+    /// top-level URL, so a page cannot claim another site's grant, and nil
+    /// for anything that is not an ordinary http(s) page.
+    private func permittedOrigin(for tab: Tab) -> String? {
+        guard !tab.isPrivate,
+              let origin = SiteIdentity.origin(forURLString: tab.urlString)
+        else { return nil }
+        let store = PermissionStoreManager.shared.store(forProfileId: tab.profileId)
+        return store.decision(for: origin, kinds: .notifications) == true ? origin : nil
+    }
+
     private func postNotification(_ payload: ShowPayload, tab: Tab, requestId: Int64) {
-        let id = UUID().uuidString
+        guard let origin = permittedOrigin(for: tab) else {
+            tab.respondToPageMessage(requestId: requestId, success: false, response: "")
+            return
+        }
+        // A tagged notification replaces the site's earlier one with the same
+        // tag instead of stacking, as the Notifications API specifies. The
+        // identifier is scoped to the origin so one site's tag can never
+        // reach another site's notification.
+        let id: String
+        if let tag = payload.tag, !tag.isEmpty {
+            id = "\(origin)#\(tag)"
+            if pending[id] != nil {
+                resolvePending(id: id, event: "close")
+                pending.removeValue(forKey: id)
+            }
+        } else {
+            id = UUID().uuidString
+        }
         // Seeded before any async work starts, so a click/dismiss that
         // (implausibly) races ahead of the page's own follow-up
         // "notificationWaitForEvent" query still has a tab to resolve
@@ -139,6 +188,10 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
 
         let content = UNMutableNotificationContent()
         content.title = payload.title
+        // Every notification is posted under this app's own name and icon,
+        // so the site is always named too -- otherwise a page could word one
+        // to look like it came from another app or from the system.
+        content.subtitle = SiteIdentity.host(forURLString: tab.urlString) ?? origin
         if let body = payload.body, !body.isEmpty {
             content.body = body
         }
@@ -146,8 +199,8 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
 
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         // Authorization is a one-time, app-wide macOS gate, independent of
-        // (and layered underneath) the per-origin web permission already
-        // checked before this method is ever called -- lazy rather than
+        // (and layered underneath) the per-origin web permission checked
+        // above -- lazy rather than
         // requested at launch, so a user who never visits a
         // notification-requesting site is never asked at all.
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
@@ -165,7 +218,9 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
                         tab.respondToPageMessage(requestId: requestId, success: false, response: "")
                         return
                     }
-                    tab.respondToPageMessage(requestId: requestId, success: true, response: "{\"id\":\"\(id)\"}")
+                    // Encoded, not interpolated: a tagged id carries page text.
+                    let response = (try? JSONEncoder().encode(["id": id])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                    tab.respondToPageMessage(requestId: requestId, success: true, response: response)
                 }
             }
         }

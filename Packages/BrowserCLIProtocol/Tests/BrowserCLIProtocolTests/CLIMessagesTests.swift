@@ -108,4 +108,34 @@ final class CLIMessagesTests: XCTestCase {
         XCTAssertGreaterThan(longDirectory.utf8.count, 104)
         XCTAssertLessThan(CLISocketPath.path(inDirectory: longDirectory).utf8.count, 104)
     }
+
+    func testSocketPathLivesInThePerUserTempDirectory() {
+        let path = CLISocketPath.path(inDirectory: "/tmp/scratch")
+        let userTemp = CLISocketPath.userTempDirectory()
+        XCTAssertTrue(userTemp.hasPrefix("/var/folders/") || userTemp.hasPrefix("/private/var/folders/"), userTemp)
+        XCTAssertTrue(path.hasPrefix(userTemp), path)
+        XCTAssertFalse(path.hasPrefix("/tmp/"), path)
+    }
+
+    /// The real per-user temp directory, and the longest shape one takes
+    /// (a `/private`-prefixed `/var/folders/xx/<28 chars>/T/`), must both
+    /// leave the socket path inside sun_path's 104 bytes, NUL included.
+    func testSocketPathFitsSunPathUnderTheUserTempDirectory() {
+        let longDirectory = String(repeating: "d", count: 300)
+        let sunPathSize = MemoryLayout.size(ofValue: sockaddr_un().sun_path)
+        XCTAssertEqual(sunPathSize, 104)
+        XCTAssertLessThan(CLISocketPath.path(inDirectory: longDirectory).utf8.count, sunPathSize)
+        let longestUserTemp = "/private/var/folders/zz/" + String(repeating: "x", count: 28) + "0000gn/T/"
+        XCTAssertLessThan(
+            CLISocketPath.path(inDirectory: longDirectory, userTempDirectory: longestUserTemp).utf8.count,
+            sunPathSize
+        )
+    }
+
+    func testSocketPathJoinsATempDirectoryWithoutTrailingSlash() {
+        XCTAssertEqual(
+            CLISocketPath.path(inDirectory: "/x", userTempDirectory: "/base"),
+            CLISocketPath.path(inDirectory: "/x", userTempDirectory: "/base/")
+        )
+    }
 }

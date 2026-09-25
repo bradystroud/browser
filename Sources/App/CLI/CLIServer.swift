@@ -13,7 +13,7 @@ import Darwin
 /// instance without AppleScript/System Events UI automation, which this
 /// project's own UI verification protocol (AGENTS.md) already bans for
 /// agents -- this is the sanctioned alternative. One listener per running
-/// instance, at `<sessionAndProfilesMetadataDirectory>/cli.sock`
+/// instance, at a short hashed name in the per-user temp directory
 /// (`CLISocketPath`) -- keyed by `--profiles-root` the same way
 /// `profiles.json`/`session.json`/`routing.json` already are (see
 /// `CommandLineArgs.sessionAndProfilesMetadataDirectory`), so a scratch test
@@ -27,7 +27,21 @@ import Darwin
 /// each way per connection (connect, write request, read one response line,
 /// close) -- no persistent session, matching how infrequently and briefly a
 /// CLI invocation talks to the app.
+///
+/// Only the user running the app may talk to it: the socket is mode 0600
+/// inside a 0700 per-user directory, and every accepted connection's peer
+/// uid is checked as well, since this socket can open arbitrary URLs and
+/// read every open tab's address.
 final class CLIServer {
+    /// How long one client may take to send its request line. The accept
+    /// queue is serial, so without a limit a client that connects and never
+    /// finishes its line would stop every later CLI call from being served.
+    private static let receiveTimeoutSeconds = 2
+
+    /// A request is one small JSON object. Anything longer is not a real
+    /// client and is refused rather than buffered without bound.
+    private static let maximumRequestBytes = 64 * 1024
+
     static let shared = CLIServer()
 
     private var listenSocketFD: Int32 = -1
@@ -86,6 +100,12 @@ final class CLIServer {
             close(fd)
             return
         }
+        guard chmod(path, 0o600) == 0 else {
+            NSLog("Browser: CLIServer chmod() failed (errno %d) -- CLI control unavailable", errno)
+            close(fd)
+            unlink(path)
+            return
+        }
         guard listen(fd, 8) == 0 else {
             NSLog("Browser: CLIServer listen() failed (errno %d) -- CLI control unavailable", errno)
             close(fd)
@@ -110,6 +130,18 @@ final class CLIServer {
     private func acceptConnection() {
         let clientFD = accept(listenSocketFD, nil, nil)
         guard clientFD >= 0 else { return }
+        var peerUID: uid_t = 0
+        var peerGID: gid_t = 0
+        guard getpeereid(clientFD, &peerUID, &peerGID) == 0, peerUID == getuid() else {
+            close(clientFD)
+            return
+        }
+        var timeout = timeval(tv_sec: Self.receiveTimeoutSeconds, tv_usec: 0)
+        setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        // A client that disconnects before reading its response must not
+        // take the app down with SIGPIPE.
+        var noSigPipe: Int32 = 1
+        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
         queue.async { [weak self] in
             self?.handleConnection(fd: clientFD)
         }
@@ -263,11 +295,15 @@ final class CLIServer {
     /// at 0 -- deliberately identical to `handleTabs`' own numbering, so the
     /// two commands never disagree about what "window 1" means for the same
     /// filter.
+    ///
+    /// Private windows are never listed, here or in `tabs`: what a private
+    /// window shows must not leave the window, and this socket's output
+    /// ends up in shell history, scripts and Raycast.
     private static func handleWindows(_ request: CLIRequest) -> CLIResponse {
         let profileNameFilter = request.args["profile"]
         var windowInfos: [CLIWindowInfo] = []
         var windowIndex = 0
-        for controller in WindowManager.shared.windowControllers {
+        for controller in WindowManager.shared.windowControllers where !controller.isPrivate {
             if let profileNameFilter, controller.profile.name != profileNameFilter { continue }
             let activeTab = controller.activeTabIndex.flatMap { index in
                 controller.tabs.indices.contains(index) ? controller.tabs[index] : nil
@@ -290,7 +326,7 @@ final class CLIServer {
 
     private static func handleProfiles() -> CLIResponse {
         let profiles = ProfileManager.shared.profiles.map { profile -> CLIProfileInfo in
-            let windowCount = WindowManager.shared.windowControllers.filter { $0.profile.id == profile.id }.count
+            let windowCount = WindowManager.shared.windowControllers.filter { !$0.isPrivate && $0.profile.id == profile.id }.count
             return CLIProfileInfo(id: profile.id, name: profile.name, colorHex: profile.colorHex, windowCount: windowCount)
         }
         return CLIResponse(ok: true, message: "\(profiles.count) profile(s)", profiles: profiles)
@@ -305,7 +341,7 @@ final class CLIServer {
         let profileNameFilter = request.args["profile"]
         var tabInfos: [CLITabInfo] = []
         var windowIndex = 0
-        for controller in WindowManager.shared.windowControllers {
+        for controller in WindowManager.shared.windowControllers where !controller.isPrivate {
             if let profileNameFilter, controller.profile.name != profileNameFilter { continue }
             for (tabIndex, tab) in controller.tabs.enumerated() {
                 // Tab.urlString is "" while showing the internal start page
@@ -336,6 +372,7 @@ final class CLIServer {
             if n <= 0 { break }
             if byte == 0x0A { break }
             buffer.append(byte)
+            if buffer.count > maximumRequestBytes { return nil }
         }
         guard !buffer.isEmpty else { return nil }
         return String(decoding: buffer, as: UTF8.self)
