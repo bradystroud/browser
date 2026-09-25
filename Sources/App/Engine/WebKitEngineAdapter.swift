@@ -234,6 +234,7 @@ final class WebKitTab: NSObject, EngineTab {
     private var findQuery: String?
     private var findMatchCase = false
     private var findOrdinal = 0
+    private let findFrames = WebKitFindFrameRegistry()
     let navigationState = WebKitNavigationState()
 
     private static let pageMessageHandlerName = "brwPageMessage"
@@ -297,6 +298,7 @@ final class WebKitTab: NSObject, EngineTab {
             webView.isInspectable = true
         }
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
+        findFrames.install(into: config.userContentController)
         hostView.addSubview(webView)
 
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, change in
@@ -535,9 +537,10 @@ final class WebKitTab: NSObject, EngineTab {
     /// WKWebView.find selects and scrolls to the match but reports only
     /// found / not found. The "3 of 12" CEF reports is rebuilt from a text
     /// walk (WebKitFindScript) run after each find: the count directly, and
-    /// the ordinal from where WebKit's own selection landed. When the
-    /// selection is somewhere the walk can't see (a form field, an iframe),
-    /// the ordinal is stepped from the previous result instead. Delivered
+    /// the ordinal from where WebKit's own selection landed, summed across
+    /// the main frame and its iframes. When the selection is somewhere no
+    /// walk can see (a form field), the ordinal is stepped from the previous
+    /// result instead. Delivered
     /// once, as a final update -- the find bar only ever shows the last one.
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
         guard !searchText.isEmpty else {
@@ -582,21 +585,102 @@ final class WebKitTab: NSObject, EngineTab {
         }
     }
 
+    /// One walk per frame. A frame whose walk fails (a removed iframe) or
+    /// repeats another frame's position is dropped from the registry, and
+    /// one that has not answered within a second is left out of this count
+    /// only. The rest are ordered by frame path, which is the order WebKit's
+    /// find steps through them, so the selected frame's ordinal is offset by
+    /// every match in the frames before it.
     private func countFindMatches(_ query: String, matchCase: Bool, completion: @escaping (_ count: Int, _ selectedOrdinal: Int) -> Void) {
-        webView.callAsyncJavaScript(
-            WebKitFindScript.countMatches,
-            arguments: ["query": query, "matchCase": matchCase],
-            in: nil,
-            in: .defaultClient
-        ) { result in
-            switch result {
-            case .success(let value):
-                let numbers = (value as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
-                completion(numbers.first ?? 0, numbers.count > 1 ? numbers[1] : 0)
-            case .failure(let error):
-                NSLog("Browser: WebKit find match count failed: %@", error.localizedDescription)
+        struct FrameCount {
+            let token: String?
+            let count: Int
+            let selectedOrdinal: Int
+            let path: [Int]
+            let visibilityState: String
+            let isZeroSize: Bool
+        }
+
+        let targets: [(token: String?, frame: WKFrameInfo?)] = [(nil, nil)] + findFrames.frames.map { ($0.key, $0.value) }
+        var results: [FrameCount] = []
+        var failedTokens: [String] = []
+        var pending = targets.count
+        var finished = false
+        var timedOut = false
+        var mainFrameAnswered = false
+
+        let finish = { [weak self] in
+            guard !finished else { return }
+            finished = true
+            guard let self else { return }
+            var frames: [FrameCount] = []
+            var seenPaths: Set<[Int]> = []
+            var duplicateTokens: [String] = []
+            guard let main = results.first(where: { $0.token == nil }) else {
+                self.findFrames.remove(tokens: failedTokens)
                 completion(0, 0)
+                return
             }
+            for frame in [main] + results.filter({ $0.token != nil }) {
+                if frame.token != nil, frame.isZeroSize || frame.visibilityState != main.visibilityState {
+                    continue
+                }
+                guard seenPaths.insert(frame.path).inserted else {
+                    if let token = frame.token { duplicateTokens.append(token) }
+                    continue
+                }
+                frames.append(frame)
+            }
+            self.findFrames.remove(tokens: failedTokens + duplicateTokens)
+            frames.sort { $0.path.lexicographicallyPrecedes($1.path) }
+
+            let total = frames.reduce(0) { $0 + $1.count }
+            let selected = frames.enumerated().filter { $0.element.selectedOrdinal > 0 }
+            var ordinal = 0
+            if selected.count == 1, let hit = selected.first {
+                ordinal = frames[..<hit.offset].reduce(0) { $0 + $1.count } + hit.element.selectedOrdinal
+            }
+            completion(total, ordinal)
+        }
+
+        for target in targets {
+            webView.callAsyncJavaScript(
+                WebKitFindScript.countMatches,
+                arguments: ["query": query, "matchCase": matchCase],
+                in: target.frame,
+                in: .defaultClient
+            ) { result in
+                guard !finished else { return }
+                switch result {
+                case .success(let value):
+                    let parts = value as? [Any] ?? []
+                    let number = { (index: Int) in parts.count > index ? (parts[index] as? NSNumber)?.intValue ?? 0 : 0 }
+                    let path = (parts.count > 2 ? parts[2] as? [Any] : nil)?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
+                    results.append(FrameCount(
+                        token: target.token,
+                        count: number(0),
+                        selectedOrdinal: number(1),
+                        path: path,
+                        visibilityState: parts.count > 3 ? parts[3] as? String ?? "" : "",
+                        isZeroSize: parts.count > 4 ? (parts[4] as? NSNumber)?.boolValue ?? false : false
+                    ))
+                case .failure(let error):
+                    if let token = target.token {
+                        failedTokens.append(token)
+                    } else {
+                        NSLog("Browser: WebKit find match count failed: %@", error.localizedDescription)
+                    }
+                }
+                pending -= 1
+                if target.token == nil { mainFrameAnswered = true }
+                if pending == 0 || (timedOut && mainFrameAnswered) { finish() }
+            }
+        }
+        // An iframe that never answers must not hold the find bar's count
+        // back; the main frame's own walk is always waited for.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            timedOut = true
+            if mainFrameAnswered { finish() }
         }
     }
 
