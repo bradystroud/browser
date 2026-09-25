@@ -35,22 +35,10 @@ enum WebKitEngine: BrowserEngine {
         // wait-for-every-browser-to-close shutdown handshake before AppKit's
         // normal -terminate: proceeds. WKWebView needs neither: it's an
         // ordinary in-process NSView with synchronous, ARC-managed teardown,
-        // so a stock NSApplication is sufficient here.
-        //
-        // Real gap this leaves: CEF's shutdown
-        // handshake is exactly what makes AppDelegate's registered close
-        // handler (see setWindowCloseHandler below) actually get invoked at
-        // quit time, via -[BRWApplication terminate:] calling it before
-        // deferring to super. Nothing plays that role here, so under this
-        // engine WindowManager.closeAllWindowsForShutdown() -- and whatever
-        // session-save-on-quit behavior it implements -- never runs unless
-        // AppDelegate itself is changed to call it directly rather than
-        // relying on the engine to. Flagged rather than worked around: fixing
-        // it means moving that responsibility up a layer (AppDelegate always
-        // owns quit sequencing; an engine only gets to *delay* it if it needs
-        // to, which WebKit doesn't), which is a decision for
-        // browser-n50.5's decision checkpoint, not something this adapter
-        // should quietly paper over.
+        // so a stock NSApplication is sufficient here. The one thing that
+        // handshake also does -- running the app's window close handler at
+        // quit -- is done from willTerminateNotification instead; see
+        // setWindowCloseHandler.
     }
 
     private static var contentRuleListStore: WKContentRuleListStore?
@@ -120,9 +108,28 @@ enum WebKitEngine: BrowserEngine {
         }
     }
 
+    /// On CEF, -[BRWApplication terminate:] calls this handler before the
+    /// engine shuts down, which is what saves the session at quit without
+    /// waiting out its one-second debounce. WebKit has no terminate override,
+    /// so the same handler runs from willTerminateNotification: every
+    /// orderly quit posts it, and it arrives before the process exits with
+    /// every window still open. isTerminating is raised first so closing the
+    /// last window doesn't ask AppKit to terminate a second time.
     static func setWindowCloseHandler(_ handler: @escaping () -> Void) {
         windowCloseHandler = handler
+        guard terminationObserver == nil else { return }
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            guard !isTerminating else { return }
+            isTerminating = true
+            windowCloseHandler?()
+        }
     }
+
+    private static var terminationObserver: NSObjectProtocol?
 
     static func setVisualLookUpAvailable(_ available: Bool) {
         // No macOS WKWebView hook to wire this to at all: WKUIDelegate's
@@ -220,6 +227,12 @@ final class WebKitTab: NSObject, EngineTab {
     let profileName: String
     private var observations: [NSKeyValueObservation] = []
     private var isFindingActive = false
+    /// Bumped per find/stop so a slower, superseded result never overwrites
+    /// a newer one in the find bar.
+    private var findGeneration = 0
+    private var findQuery: String?
+    private var findMatchCase = false
+    private var findOrdinal = 0
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
@@ -264,6 +277,23 @@ final class WebKitTab: NSObject, EngineTab {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
+        webView.allowsBackForwardNavigationGestures = true
+        // Pinch is WebKit's visual magnification, on top of (not instead of)
+        // the pageZoom the zoom menu drives -- the same split Safari has.
+        // setZoomLevel(_:) resets it, so a zoom command always leaves the page
+        // at exactly the level the UI reports.
+        webView.allowsMagnification = true
+        // `config` shares its WKPreferences object with the web view, so this
+        // still takes effect after creation. Without it a video's fullscreen
+        // button does nothing.
+        if #available(macOS 12.3, *) {
+            config.preferences.isElementFullscreenEnabled = true
+        }
+        // Every tab is listed in Safari's Develop menu from the start, not
+        // only once "Developer Tools" has been chosen for it.
+        if #available(macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
         hostView.addSubview(webView)
 
@@ -327,19 +357,39 @@ final class WebKitTab: NSObject, EngineTab {
         webView.removeFromSuperview()
     }
 
+    /// No public API opens Web Inspector from inside the app -- Apple's
+    /// programmatic inspector API (_showInspector etc.) is private SPI.
+    /// isInspectable (set on every tab at creation) is the whole public
+    /// surface: the tab can be attached to from Safari's Develop menu. So
+    /// "Developer Tools" explains where to find it and offers to open Safari,
+    /// rather than doing nothing visible.
     func showDevTools() {
-        // No public API to *open* Web Inspector at all -- Apple's
-        // programmatic inspector API (_showInspector etc.) is private SPI,
-        // Safari-only. isInspectable (macOS 13.3+) is the entire public
-        // surface: it makes the tab available to attach to *externally*,
-        // via Safari's Develop menu or the separate Web Inspector app, not
-        // something this app can pop open itself the way CEF's -showDevTools
-        // does with its own native window.
-        if #available(macOS 13.3, *) {
-            webView.isInspectable = true
-            NSLog("Browser: WebKit engine has no in-app DevTools window -- attach via Safari's Develop menu (isInspectable = true is now set for this tab).")
-        } else {
-            NSLog("Browser: unsupported on WebKit engine: DevTools (isInspectable needs macOS 13.3+)")
+        guard #available(macOS 13.3, *) else {
+            unsupported("DevTools (Safari Web Inspector attachment needs macOS 13.3+)")
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Inspect this page from Safari"
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Browser"
+        alert.informativeText = """
+        The WebKit engine has no built-in developer tools window. In Safari, choose \
+        Develop > \(Host.current().localizedName ?? "this Mac") > \(appName), then pick this page.
+
+        If Safari has no Develop menu, turn on "Show features for web developers" \
+        in Safari Settings > Advanced.
+        """
+        alert.addButton(withTitle: "Open Safari")
+        alert.addButton(withTitle: "OK")
+        let openSafari = {
+            guard let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") else { return }
+            NSWorkspace.shared.openApplication(at: safari, configuration: NSWorkspace.OpenConfiguration())
+        }
+        if let window = webView.window {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { openSafari() }
+            }
+        } else if alert.runModal() == .alertFirstButtonReturn {
+            openSafari()
         }
     }
     func closeDevTools() {
@@ -374,6 +424,7 @@ final class WebKitTab: NSObject, EngineTab {
     /// per profile (see EngineTab.setZoomLevel(_:)). Reading zoomLevel() back
     /// -- which the UI does on every access -- is correct under either.
     func setZoomLevel(_ level: Double) {
+        webView.magnification = 1
         webView.pageZoom = CGFloat(PageZoom.factor(forLevel: level))
     }
 
@@ -381,9 +432,32 @@ final class WebKitTab: NSObject, EngineTab {
         PageZoom.level(forFactor: Double(webView.pageZoom))
     }
 
+    /// NSPrintOperation(view: webView) prints blank pages -- WKWebView draws
+    /// in a separate process, so only its own printOperation(with:) has
+    /// anything to put on paper. That operation's view also needs a real
+    /// frame before it can paginate, and it has to run as a window-modal
+    /// sheet: a plain run() comes back blank as well.
     func print() {
-        let operation = NSPrintOperation(view: webView)
-        operation.run()
+        let info = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = false
+        info.isVerticallyCentered = false
+        // Half-inch margins all round, close to Safari's own defaults.
+        info.topMargin = 36
+        info.bottomMargin = 36
+        info.leftMargin = 36
+        info.rightMargin = 36
+
+        let operation = webView.printOperation(with: info)
+        operation.showsPrintPanel = true
+        operation.showsProgressPanel = true
+        operation.view?.frame = webView.bounds
+        if let window = webView.window {
+            operation.runModal(for: window, delegate: nil, didRun: nil, contextInfo: nil)
+        } else {
+            operation.run()
+        }
     }
 
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
@@ -404,30 +478,71 @@ final class WebKitTab: NSObject, EngineTab {
         }
     }
 
-    /// Best-effort approximation, not full parity: WKWebView.findString's
-    /// completion handler (WKFindResult) reports only whether a match was
-    /// found -- no match *count*, no active-match *ordinal*, unlike CEF's
-    /// find, which reports both repeatedly as it scans (see
-    /// EngineTabDidUpdateFindResult's own doc comment). There is no public
-    /// WKWebView API that exposes either number, so a find bar built against
-    /// this engine can show "found/not found" but not "3 of 12" the way it
-    /// does on CEF today -- a real, confirmed UI regression for
-    /// browser-5kq.5 parity, not just a rough edge.
+    /// WKWebView.find selects and scrolls to the match but reports only
+    /// found / not found. The "3 of 12" CEF reports is rebuilt from a text
+    /// walk (WebKitFindScript) run after each find: the count directly, and
+    /// the ordinal from where WebKit's own selection landed. When the
+    /// selection is somewhere the walk can't see (a form field, an iframe),
+    /// the ordinal is stepped from the previous result instead. Delivered
+    /// once, as a final update -- the find bar only ever shows the last one.
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
         guard !searchText.isEmpty else {
             stopFinding(clearSelection: true)
             return
         }
         isFindingActive = true
+        findGeneration += 1
+        let generation = findGeneration
+        let isNewSearch = !findNext || searchText != findQuery || matchCase != findMatchCase
+        findQuery = searchText
+        findMatchCase = matchCase
+
         let config = WKFindConfiguration()
         config.backwards = !forward
         config.caseSensitive = matchCase
         config.wraps = true
         webView.find(searchText, configuration: config) { [weak self] result in
-            self?.delegate?.engineTabDidUpdateFindResult(
-                matchCount: result.matchFound ? 1 : 0,
-                activeMatchOrdinal: result.matchFound ? 1 : 0,
-                isFinalUpdate: true)
+            guard let self, generation == self.findGeneration else { return }
+            guard result.matchFound else {
+                self.findOrdinal = 0
+                self.delegate?.engineTabDidUpdateFindResult(matchCount: 0, activeMatchOrdinal: 0, isFinalUpdate: true)
+                return
+            }
+            self.countFindMatches(searchText, matchCase: matchCase) { counted, selectedOrdinal in
+                guard generation == self.findGeneration else { return }
+                // WebKit found at least one, whatever the walk managed to see.
+                let count = max(counted, 1)
+                let ordinal: Int
+                if selectedOrdinal > 0 {
+                    ordinal = selectedOrdinal
+                } else if isNewSearch || self.findOrdinal == 0 {
+                    ordinal = 1
+                } else if forward {
+                    ordinal = self.findOrdinal % count + 1
+                } else {
+                    ordinal = self.findOrdinal <= 1 ? count : self.findOrdinal - 1
+                }
+                self.findOrdinal = min(ordinal, count)
+                self.delegate?.engineTabDidUpdateFindResult(matchCount: count, activeMatchOrdinal: self.findOrdinal, isFinalUpdate: true)
+            }
+        }
+    }
+
+    private func countFindMatches(_ query: String, matchCase: Bool, completion: @escaping (_ count: Int, _ selectedOrdinal: Int) -> Void) {
+        webView.callAsyncJavaScript(
+            WebKitFindScript.countMatches,
+            arguments: ["query": query, "matchCase": matchCase],
+            in: nil,
+            in: .defaultClient
+        ) { result in
+            switch result {
+            case .success(let value):
+                let numbers = (value as? [Any])?.compactMap { ($0 as? NSNumber)?.intValue } ?? []
+                completion(numbers.first ?? 0, numbers.count > 1 ? numbers[1] : 0)
+            case .failure(let error):
+                NSLog("Browser: WebKit find match count failed: %@", error.localizedDescription)
+                completion(0, 0)
+            }
         }
     }
 
@@ -438,6 +553,9 @@ final class WebKitTab: NSObject, EngineTab {
     /// doc comment: "A match found by the search is selected").
     func stopFinding(clearSelection: Bool) {
         isFindingActive = false
+        findGeneration += 1
+        findQuery = nil
+        findOrdinal = 0
         guard clearSelection else { return }
         webView.evaluateJavaScript("window.getSelection() && window.getSelection().removeAllRanges();", completionHandler: nil)
     }

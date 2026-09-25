@@ -84,6 +84,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitTab+UIDelegate.swift
   Engine/WebKitTab+Downloads.swift
   Engine/WebKitTab+Scripts.swift
+  Engine/WebKitFindScript.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
