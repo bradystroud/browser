@@ -66,6 +66,15 @@ final class BrowserWindow: NSWindow {
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // ⇧⌘M, Developer > Toggle Device Toolbar, taken before any web view
+        // -- the tools' own front-end included -- can claim it.
+        if event.modifierFlags.intersection(Self.consideredModifiers) == [.command, .shift],
+           event.charactersIgnoringModifiers?.lowercased() == "m",
+           ActiveEngine.capabilities.responsiveDesignMode,
+           let tab = (windowController as? BrowserWindowController)?.activeTab {
+            tab.deviceToolbar.toggle()
+            return true
+        }
         if isDevToolsFocused {
             return performDevToolsKeyEquivalent(with: event)
         }

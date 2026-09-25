@@ -27,6 +27,7 @@ final class MainMenuBuilder {
     private let javaScriptConsoleItem = NSMenuItem(title: "JavaScript Console", action: #selector(BrowserWindowController.showJavaScriptConsole(_:)), keyEquivalent: "j")
     private let inspectElementsItem = NSMenuItem(title: "Inspect Elements", action: #selector(BrowserWindowController.inspectElements(_:)), keyEquivalent: "c")
     private let devToolsDockSideItem = NSMenuItem(title: "Dock Side", action: nil, keyEquivalent: "")
+    private let deviceToolbarItem = NSMenuItem(title: "Toggle Device Toolbar", action: #selector(AppDelegate.toggleDeviceToolbar(_:)), keyEquivalent: "m")
     private lazy var engineDependentItemsUpdater = MenuUpdater { [weak self] in
         self?.refreshEngineDependentItems()
     }
@@ -305,6 +306,8 @@ final class MainMenuBuilder {
     /// straightforward follow-up if ever asked for.
     private func responsiveDesignModeMenu() -> NSMenu {
         let menu = NSMenu(title: "Responsive Design Mode")
+        menu.addItem(withTitle: "Responsive", action: #selector(AppDelegate.setResponsiveDesignMode(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         for preset in ResponsiveDevicePreset.all {
             let item = NSMenuItem(title: preset.name, action: #selector(AppDelegate.setResponsiveDesignMode(_:)), keyEquivalent: "")
             item.representedObject = preset
@@ -564,6 +567,11 @@ final class MainMenuBuilder {
         }
         devToolsDockSideItem.submenu = dockMenu
         menu.addItem(devToolsDockSideItem)
+        menu.addItem(.separator())
+        // Chrome's chord. Shift is spelled out in the mask rather than by an
+        // uppercase "M", so the menu shows ⇧⌘M.
+        deviceToolbarItem.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(deviceToolbarItem)
         menu.delegate = engineDependentItemsUpdater
         refreshEngineDependentItems()
         return menu
@@ -577,6 +585,7 @@ final class MainMenuBuilder {
     private func refreshEngineDependentItems() {
         let capabilities = ActiveEngine.capabilities
         responsiveDesignModeItem.isHidden = !capabilities.responsiveDesignMode
+        deviceToolbarItem.isHidden = !capabilities.responsiveDesignMode
         // With in-app tools, BrowserWindowController.validateMenuItem toggles
         // this between Open and Close for the active tab.
         if !capabilities.inAppDevTools { devToolsItem.title = "Inspect Page in Safari…" }

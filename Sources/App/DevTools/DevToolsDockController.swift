@@ -164,7 +164,13 @@ final class DevToolsDockController {
         func frame(_ view: NSView) -> String { view.isHidden ? "hidden" : NSStringFromRect(view.frame) }
         return "open=\(isOpen) engineOpen=\(engineTab?.isDevToolsOpen == true) side=\(dockSide.rawValue) "
             + "page=\(frame(pageView)) tools=\(frame(layoutView.toolsView)) "
-            + "toolsSubviews=\(layoutView.toolsView.subviews.count) header=\(frame(layoutView.header))"
+            + "toolsSubviews=\(layoutView.toolsView.subviews.count) header=\(frame(layoutView.header)) "
+            + "pageToolbar=\(layoutView.pageToolbar.map(frame) ?? "none")"
+    }
+
+    /// Shows `toolbar` above the page, inside the tab, or removes it (nil).
+    func setPageToolbar(_ toolbar: NSView?) {
+        layoutView.pageToolbar = toolbar
     }
 
     /// Whether the given view is inside this tab's docked tools pane, so
@@ -237,21 +243,40 @@ private final class DevToolsDockLayoutView: NSView {
         draggedLength ?? (dockSide == .bottom ? DevToolsPreferences.bottomHeight : DevToolsPreferences.sideWidth)
     }
 
+    /// A bar across the top of the page's side of the split (the device
+    /// toolbar), taken out of the page's height rather than drawn over it.
+    var pageToolbar: NSView? {
+        didSet {
+            guard pageToolbar !== oldValue else { return }
+            oldValue?.removeFromSuperview()
+            if let pageToolbar { addSubview(pageToolbar) }
+            layoutNow()
+        }
+    }
+
     func layoutNow() {
-        let bounds = self.bounds
-        toolsView.isHidden = !isDocked
-        divider.isHidden = !isDocked
+        layoutSplit()
         // Read live: the header only exists for tools without their own.
         let showsHeader = isDocked && !ActiveEngine.capabilities.devToolsHasOwnChrome
         header.isHidden = !showsHeader
-        defer {
-            if showsHeader {
-                let tools = toolsView.frame
-                let height = min(DevToolsPaneHeaderView.height, tools.height)
-                header.frame = NSRect(x: tools.minX, y: tools.maxY - height, width: tools.width, height: height)
-                toolsView.frame = NSRect(x: tools.minX, y: tools.minY, width: tools.width, height: tools.height - height)
-            }
+        if showsHeader {
+            let tools = toolsView.frame
+            let height = min(DevToolsPaneHeaderView.height, tools.height)
+            header.frame = NSRect(x: tools.minX, y: tools.maxY - height, width: tools.width, height: height)
+            toolsView.frame = NSRect(x: tools.minX, y: tools.minY, width: tools.width, height: tools.height - height)
         }
+        if let pageToolbar {
+            let page = pageView.frame
+            let height = min(pageToolbar.intrinsicContentSize.height, page.height)
+            pageToolbar.frame = NSRect(x: page.minX, y: page.maxY - height, width: page.width, height: height)
+            pageView.frame = NSRect(x: page.minX, y: page.minY, width: page.width, height: page.height - height)
+        }
+    }
+
+    private func layoutSplit() {
+        let bounds = self.bounds
+        toolsView.isHidden = !isDocked
+        divider.isHidden = !isDocked
         guard isDocked else {
             pageView.frame = bounds
             return
@@ -416,13 +441,16 @@ final class DevToolsPaneHeaderView: NSView {
         onClose?()
     }
 
-    /// Chrome's DevTools toolbar grey, with a hairline under it.
+    /// Chrome's DevTools toolbar grey, shared with the device toolbar.
+    static let toolbarColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x28 / 255.0, green: 0x28 / 255.0, blue: 0x28 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 0xf1 / 255.0, green: 0xf3 / 255.0, blue: 0xf4 / 255.0, alpha: 1)
+    }
+
+    /// The toolbar grey, with a hairline under it.
     override func draw(_ dirtyRect: NSRect) {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                ? NSColor(srgbRed: 0x28 / 255.0, green: 0x28 / 255.0, blue: 0x28 / 255.0, alpha: 1)
-                : NSColor(srgbRed: 0xf1 / 255.0, green: 0xf3 / 255.0, blue: 0xf4 / 255.0, alpha: 1)
-        }.setFill()
+        Self.toolbarColor.setFill()
         bounds.fill()
         NSColor.separatorColor.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
@@ -477,8 +505,31 @@ private final class DevToolsDividerView: NSView {
 /// `default`, `console`, `elements`, `picker`, or `inspect:X,Y` (a point in
 /// the page view's coordinates). No-ops unless passed.
 enum DevToolsLaunchOption {
+    /// `--device-toolbar responsive|<preset name>`: turns the first window's
+    /// device toolbar on, the same way, and logs the resulting layout.
+    private static func applyDeviceToolbarIfRequested(_ args: [String]) {
+        guard let index = args.firstIndex(of: "--device-toolbar"), index + 1 < args.count else { return }
+        let what = args[index + 1]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            guard let tab = NSApp.windows.lazy.compactMap({ $0.windowController as? BrowserWindowController })
+                .first?.activeTab else { return }
+            if let preset = ResponsiveDevicePreset.all.first(where: { $0.name == what }) {
+                tab.deviceToolbar.select(preset)
+            } else {
+                tab.deviceToolbar.selectResponsive()
+            }
+            let toolbar = tab.deviceToolbar
+            NSLog("Browser: --device-toolbar %@: on=%d preset=%@ %dx%d @%.1f", what, toolbar.isOn,
+                  toolbar.preset?.name ?? "Responsive", toolbar.width, toolbar.height, toolbar.scale)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                NSLog("Browser: --device-toolbar layout: %@", tab.devTools.layoutSummary)
+            }
+        }
+    }
+
     static func applyIfRequested() {
         let args = CommandLine.arguments
+        applyDeviceToolbarIfRequested(args)
         guard let index = args.firstIndex(of: "--open-devtools"), index + 1 < args.count else { return }
         let what = args[index + 1]
         var side: DevToolsDockSide?

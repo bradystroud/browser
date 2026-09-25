@@ -1,7 +1,7 @@
 import AppKit
 import VisionKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // Not private: BrowserWindowController reaches this via `NSApp.delegate
     // as? AppDelegate` to refresh the History/Bookmarks menus' per-profile
     // dynamic sections after a visit/bookmark change -- see
@@ -220,15 +220,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// works without opening DevTools' own UI at all. `sender`'s
     /// representedObject is the ResponsiveDevicePreset the menu item was
     /// built for (see MainMenuBuilder.responsiveDesignModeMenu()).
+    /// Goes through the tab's device toolbar, so the toolbar shows the choice.
     @objc func setResponsiveDesignMode(_ sender: NSMenuItem) {
-        guard let preset = sender.representedObject as? ResponsiveDevicePreset,
-              let tab = WindowManager.shared.keyBrowserWindowController?.activeTab else { return }
-        tab.setResponsiveDesignMode(width: preset.width, height: preset.height, deviceScaleFactor: preset.deviceScaleFactor, mobile: preset.mobile)
+        guard let tab = WindowManager.shared.keyBrowserWindowController?.activeTab else { return }
+        if let preset = sender.representedObject as? ResponsiveDevicePreset {
+            tab.deviceToolbar.select(preset)
+        } else {
+            tab.deviceToolbar.selectResponsive()
+        }
     }
 
     /// View > Responsive Design Mode > Off.
     @objc func clearResponsiveDesignMode(_ sender: Any?) {
-        WindowManager.shared.keyBrowserWindowController?.activeTab?.clearResponsiveDesignMode()
+        WindowManager.shared.keyBrowserWindowController?.activeTab?.deviceToolbar.turnOff()
+    }
+
+    /// ⇧⌘M -- Chrome's Toggle Device Toolbar, for the key window's active tab.
+    /// BrowserWindow.performKeyEquivalent takes the chord first, so docked
+    /// developer tools with focus cannot swallow it.
+    @objc func toggleDeviceToolbar(_ sender: Any?) {
+        WindowManager.shared.keyBrowserWindowController?.activeTab?.deviceToolbar.toggle()
+    }
+
+    /// Checks the active tab's Responsive Design Mode choice in the menus.
+    /// Every other AppDelegate item stays enabled, as it was before this
+    /// existed.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let toolbar = WindowManager.shared.keyBrowserWindowController?.activeTab?.deviceToolbar
+        switch menuItem.action {
+        case #selector(setResponsiveDesignMode(_:)):
+            let chosen = (menuItem.representedObject as? ResponsiveDevicePreset)?.name
+            menuItem.state = toolbar?.isOn == true && toolbar?.preset?.name == chosen ? .on : .off
+            return toolbar != nil
+        case #selector(clearResponsiveDesignMode(_:)):
+            menuItem.state = toolbar?.isOn == true ? .off : .on
+            return toolbar != nil
+        case #selector(toggleDeviceToolbar(_:)):
+            menuItem.state = toolbar?.isOn == true ? .on : .off
+            return toolbar != nil
+        default:
+            return true
+        }
     }
 
     @objc func newProfilePrompt(_ sender: Any?) {

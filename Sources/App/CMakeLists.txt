@@ -174,6 +174,7 @@ set(BROWSER_SWIFT_SRCS
   TabOverview/TabOverviewView.swift
   TabOverview/TabOverviewController.swift
   DevTools/ResponsiveDesignMode.swift
+  DevTools/DeviceToolbar.swift
   DevTools/DevToolsDockController.swift
   VisualLookUp/VisualLookUpController.swift
   VisualLookUp/VisualLookUpPanelController.swift

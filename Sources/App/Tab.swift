@@ -102,6 +102,9 @@ final class Tab: NSObject, EngineTabDelegate {
     /// the engine draws the page into `devTools.pageView`, not `hostView`.
     private(set) lazy var devTools = DevToolsDockController(hostView: hostView)
 
+    /// This tab's Responsive Design Mode and the device toolbar above its page.
+    private(set) lazy var deviceToolbar = DeviceToolbarController(tab: self)
+
     /// True for a Private Browsing tab (browser-12m.1). `profileName` above
     /// is still set (to whatever throwaway profile the owning window uses
     /// cosmetically -- see WindowManager.openNewPrivateWindow) but is never
