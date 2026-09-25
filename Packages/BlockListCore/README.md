@@ -2,8 +2,9 @@
 
 Standalone SwiftPM package (pure Swift/Foundation, no AppKit/CEF dependency)
 implementing the domain-matching core for Browser's built-in ad/tracker
-content blocker (M7 epic, bead `browser-12m.5`). **Phase 1 only** -- this
-package has zero wiring into the app yet; see "Phase 2" below.
+content blocker (M7 epic, bead `browser-12m.5`) and threat-warning list.
+The app compiles these sources directly (`Sources/App/CMakeLists.txt`) and
+drives them from `ContentBlockerCoordinator` and `ThreatListCoordinator`.
 
 ## What's here
 
@@ -38,6 +39,10 @@ package has zero wiring into the app yet; see "Phase 2" below.
   blocking works offline out of the box; not a claim of comprehensive
   coverage -- loading a full curated list (OISD, StevenBlack) via
   `load(_:)` is the intended primary path for real-world coverage.
+- **Threat warnings** -- `StarterThreatList` (the bundled list of known
+  dangerous domains), `ThreatWarningSettings` (the per-profile on/off
+  model), `ThreatWarningLink` (the interstitial's "continue anyway" link
+  format) and `ThreatWarningPageRenderer` (the interstitial page's HTML).
 - **`RemoteListSource`** -- a *stubbed interface only* (no implementation)
   for a future remote list fetch with ETag-based conditional requests.
   Pins down the shape Phase 2 needs to build against; see "Remote list
@@ -65,44 +70,9 @@ replicate on the CMake side.
 cd Packages/BlockListCore && swift test
 ```
 
-## Phase 2 (follow-up, not done here)
+## Not done yet
 
-Wiring this into the running browser needs, roughly:
-
-1. **Request interception**: implement a `CefResourceRequestHandler` (or
-   extend the existing client handler in `Sources/Bridge/`) and override
-   `OnBeforeResourceLoad`. For each outgoing request, extract the request
-   URL's host, ask `BlockingSettings.shouldBlock(host:blockList:)` (the
-   active profile's settings + one process-wide shared `BlockList`), and
-   return `RV_CANCEL` when true -- CEF's documented way to cancel a
-   request outright, distinct from redirecting it. This callback fires on
-   CEF's IO thread, not the UI thread; `DomainTrie.contains` is a pure,
-   read-only walk over already-built nodes, so it's safe to call from
-   there as long as list mutation (loading/reloading) is synchronized
-   separately if it ever needs to happen after browsers are already
-   issuing requests.
-2. **App-side wiring**: one shared `BlockList` built at launch (loading the
-   starter list, later a cached remote list), and a `BlockingSettings`
-   value stored per profile -- same JSON-under-`~/Library/Application
-   Support/Browser/` pattern as `RoutingRulesStore`/`ProfileManager`.
-3. **Toolbar badge**: a per-tab (or per-window) blocked-request counter,
-   incremented each time `OnBeforeResourceLoad` cancels a request for that
-   browser, surfaced as a small badge/count in the toolbar -- mirrors
-   other browsers' "N trackers blocked on this page" indicator. Needs a
-   `BRWBrowserDelegate`-style callback so the count reaches Swift/AppKit
-   without CEF types leaking into the UI layer, per this repo's
-   engine-agnostic-UI principle (see root `AGENTS.md`).
-4. **Settings UI**: a "Privacy" section in the Settings window (see
-   `SettingsWindowController`) -- master on/off toggle, and a way to
-   view/remove per-site allowlist entries. A one-click "allow this site"
-   action from the toolbar is the more important UX to get right first; a
-   plain remove button next to each entry in Settings covers the rest.
-5. **Remote list refresh**: `ListParser`/`BlockList` are already
-   text-in/domain-out, so this only needs an actual fetch step --
-   implement `RemoteListSource` against a real URL + ETag cache
-   (conditional GET, re-parse only on 200, keep the last-known-good list
-   on any fetch failure).
-
-Phase 2 is filed as a follow-up bead linked to `browser-12m.5` (see `bd
-show browser-12m.5` for the link) -- this package's job stops at "block
-list Phase 1" per the task that produced it.
+`RemoteListSource` is only a protocol: the lists are the bundled starter
+lists, with no remote refresh. A real source needs a fetch against a URL
+with an ETag cache (conditional GET, re-parse only on 200, keep the
+last-known-good list on any failure).

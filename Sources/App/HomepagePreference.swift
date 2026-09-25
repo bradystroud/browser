@@ -102,13 +102,13 @@ enum HomepagePreference {
 
     /// Turns what the user typed into a URL worth navigating to, or nil if
     /// it isn't one. Deliberately *not* a search fallback: the omnibox turns
-    /// "hello world" into a DuckDuckGo query (see BrowserWindowController's
-    /// `OmniboxSubmission.resolve`), but a homepage silently becoming a search
+    /// "hello world" into a search, but a homepage silently becoming a search
     /// for its own text is a setting behaving as though it were accepted when
     /// it wasn't. Rejecting it is what lets the field say so.
     ///
-    /// The scheme-less rule is `OmniboxSubmission.resolve`'s own, on purpose,
-    /// so "example.org" means the same thing typed into either place.
+    /// Scheme-less input goes through the omnibox's own
+    /// `OmniboxInputClassifier`, on purpose, so "example.org" or
+    /// "localhost:3000" means the same thing typed into either place.
     static func normalized(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -117,9 +117,8 @@ enum HomepagePreference {
         if trimmed.contains("://") {
             candidate = trimmed
         } else {
-            // Same "looks like a domain" test the omnibox uses.
-            guard trimmed.contains("."), !trimmed.contains(" ") else { return nil }
-            candidate = "https://" + trimmed
+            guard case .url(let resolved) = OmniboxInputClassifier.classify(trimmed) else { return nil }
+            candidate = resolved
         }
 
         guard let url = URL(string: candidate),
