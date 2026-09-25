@@ -28,6 +28,11 @@ extension WebKitTab: WKNavigationDelegate {
     // MARK: - Policy
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let url = navigationAction.request.url, Self.isExternalScheme(url) {
+            decisionHandler(.cancel)
+            openExternally(url, navigationAction: navigationAction)
+            return
+        }
         // target="_blank"/window.open() -- see
         // webView(_:createWebViewWith:for:windowFeatures:) for the matching
         // new-tab signal. The threat-warning check only applies to top-level
@@ -223,6 +228,108 @@ extension WebKitTab: WKNavigationDelegate {
         if let url = userInfo[NSURLErrorFailingURLErrorKey] as? URL { return url }
         if let string = userInfo[NSURLErrorFailingURLStringErrorKey] as? String { return URL(string: string) }
         return nil
+    }
+
+    // MARK: - External schemes
+
+    /// Schemes the web view renders itself. Anything else (mailto:, tel:,
+    /// zoommtg:, slack:, ...) belongs to another app. The app has no custom
+    /// internal scheme of its own: the start page and the threat
+    /// interstitial are data: URLs.
+    private static let webSchemes: Set<String> = ["http", "https", "file", "about", "data", "blob", "javascript"]
+
+    static func isExternalScheme(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        return !webSchemes.contains(scheme)
+    }
+
+    /// A click on a link opens the other app straight away, as any browser
+    /// does. A page redirecting itself there (Zoom's and Teams' join pages do
+    /// exactly this) is asked about first, and only for the main frame, so a
+    /// hidden ad iframe can't launch apps or spam prompts.
+    private func openExternally(_ url: URL, navigationAction: WKNavigationAction) {
+        guard let appURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
+            NSLog("Browser: no application to open %@", url.scheme ?? "")
+            return
+        }
+        switch navigationAction.navigationType {
+        case .linkActivated, .formSubmitted:
+            NSWorkspace.shared.open(url)
+        default:
+            guard navigationAction.targetFrame?.isMainFrame != false else { return }
+            let appName = FileManager.default.displayName(atPath: appURL.path)
+            let alert = NSAlert()
+            alert.messageText = "Open \u{201C}\(appName)\u{201D}?"
+            let site = webView.url?.host ?? "This page"
+            alert.informativeText = "\(site) wants to open a link in \(appName)."
+            alert.addButton(withTitle: "Open")
+            alert.addButton(withTitle: "Cancel")
+            present(alert) { response in
+                if response == .alertFirstButtonReturn {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+    }
+
+    // MARK: - HTTP authentication
+
+    /// Basic/Digest only get a username/password prompt. Every other method
+    /// -- above all server trust -- takes WebKit's default handling, which
+    /// rejects an untrusted certificate outright.
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let method = challenge.protectionSpace.authenticationMethod
+        guard method == NSURLAuthenticationMethodHTTPBasic || method == NSURLAuthenticationMethodHTTPDigest else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        let space = challenge.protectionSpace
+        let alert = NSAlert()
+        alert.messageText = "Sign in to \(space.host)"
+        var info = space.receivesCredentialSecurely
+            ? "The server requires a username and password."
+            : "The server requires a username and password. Your password will be sent unencrypted."
+        if let realm = space.realm, !realm.isEmpty {
+            info += "\n\nThe server says: \(realm)"
+        }
+        if challenge.previousFailureCount > 0 {
+            info = "The username or password was incorrect. " + info
+        }
+        alert.informativeText = info
+        alert.addButton(withTitle: "Sign In")
+        alert.addButton(withTitle: "Cancel")
+
+        let usernameField = NSTextField(frame: NSRect(x: 0, y: 30, width: 260, height: 24))
+        usernameField.placeholderString = "Username"
+        usernameField.stringValue = challenge.proposedCredential?.user ?? ""
+        let passwordField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        passwordField.placeholderString = "Password"
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 54))
+        accessory.addSubview(usernameField)
+        accessory.addSubview(passwordField)
+        alert.accessoryView = accessory
+        alert.window.initialFirstResponder = usernameField.stringValue.isEmpty ? usernameField : passwordField
+        usernameField.nextKeyView = passwordField
+        passwordField.nextKeyView = usernameField
+
+        present(alert) { response in
+            guard response == .alertFirstButtonReturn else {
+                completionHandler(.cancelAuthenticationChallenge, nil)
+                return
+            }
+            let credential = URLCredential(user: usernameField.stringValue, password: passwordField.stringValue, persistence: .forSession)
+            completionHandler(.useCredential, credential)
+        }
+    }
+
+    /// As a sheet on this tab's window when it has one; a background tab
+    /// that isn't in a window falls back to an app-modal alert.
+    private func present(_ alert: NSAlert, completion: @escaping (NSApplication.ModalResponse) -> Void) {
+        if let window = webView.window {
+            alert.beginSheetModal(for: window, completionHandler: completion)
+        } else {
+            completion(alert.runModal())
+        }
     }
 
     // MARK: - Favicons
