@@ -6,9 +6,9 @@ import WebKit
 // this same target by Sources/App/CMakeLists.txt (see its
 // BROWSER_WEBENGINE_CORE_SRCS), the same "one copy of the logic, two ways
 // to build it" pattern as BlockList/BlockingSettings (BlockListCore) and
-// ProfilesRootResolver (BrowserCore) elsewhere in this file's sibling
-// sources -- so no `import WebEngineCore` here, matching how those other
-// packages' types are used directly elsewhere in Sources/App.
+// ProfilesRootResolver (BrowserCore) -- so no `import WebEngineCore` in any
+// Engine/WebKit*.swift file, matching how those other packages' types are
+// used directly elsewhere in Sources/App.
 
 /// A second, WKWebView-backed `BrowserEngine` conformer alongside
 /// `CEFEngineAdapter.swift`'s `CEFEngine` -- exploratory/spike-quality
@@ -18,13 +18,14 @@ import WebKit
 /// is a logged, safe no-op whose comment says why.
 ///
 /// Selected via `--engine webkit` (default `cef`) -- see
-/// `CommandLineArgs.engineChoice()` and `main.swift`'s `ActiveEngine`.
+/// `CommandLineArgs.engineChoice()` and `ActiveEngine` at the end of this file.
 ///
-/// Everything WebKit-specific is confined to this file and
-/// `Packages/WebEngineCore` (the pure, testable logic pulled out of it) --
-/// exactly the same "one file owns the bridge-specific symbols" shape
-/// `CEFEngine`/`CEFTab` established, just with WKWebView/WebKit.framework
-/// types standing in for BRW*/CEF ones.
+/// Everything WebKit-specific is confined to the Engine/WebKit*.swift files
+/// -- this one, WebKitTab's per-area extensions (WebKitTab+*.swift) and the
+/// helpers they use -- and `Packages/WebEngineCore` (the pure, testable
+/// logic pulled out of them): the same "the adapter owns the engine-specific
+/// symbols" shape `CEFEngine`/`CEFTab` established, with WKWebView/
+/// WebKit.framework types standing in for BRW*/CEF ones.
 enum WebKitEngine: BrowserEngine {
     static func bootstrapApplication() {
         // CEF requires BRWApplication -- a custom NSApplication subclass --
@@ -174,7 +175,7 @@ enum WebKitEngine: BrowserEngine {
 
     /// Honoured, unlike setVisualLookUpAvailable above -- this one has a real
     /// destination on this engine: WKDownloadDelegate's
-    /// -download:decideDestinationUsing:... below picks the path itself, so
+    /// -download:decideDestinationUsing:... (WebKitTab+Downloads.swift) picks the path itself, so
     /// it just reads this instead of hardcoding ~/Downloads. That matters
     /// for the same reason as on CEF: an isolated `--profiles-root` test
     /// launch must not write into the real Downloads folder.
@@ -203,8 +204,8 @@ enum WebKitEngine: BrowserEngine {
     /// as a compiled rule list at all. Each WebKitTab instead checks
     /// main-frame navigations against this snapshot itself, in
     /// decidePolicyForNavigationAction, and loads the interstitial via
-    /// threatInterstitialBuilder if it matches -- see WebKitTab's own
-    /// implementation.
+    /// threatInterstitialBuilder if it matches -- see
+    /// WebKitTab+Navigation.swift.
     static func shouldWarn(host: String, profileName: String) -> Bool {
         guard !hasThreatSessionBypass(host: host, profileName: profileName) else { return false }
         guard threatProfileSettings[profileName]?.enabled == true else { return false }
@@ -229,7 +230,7 @@ enum WebKitEngine: BrowserEngine {
 /// the WebKit-side counterpart of CEFEngineAdapter.swift's CEFTab. `final`,
 /// not `private`, only so it can be held in the NSHashTable registry above
 /// (private types can't satisfy NSHashTable's ObjC-visible generic
-/// constraint); still not exported from this file's actual API surface --
+/// constraint); still not part of the engine's API surface --
 /// nothing outside WebKitEngine ever sees a WebKitTab, only the EngineTab
 /// protocol WebKitEngine.createTab(s) return.
 final class WebKitTab: NSObject, EnginePopupTab {
