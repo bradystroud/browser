@@ -23,13 +23,17 @@ final class WebKitNavigationState {
     /// looping.
     var lastCrashReload: Date?
 
-    /// The navigation loading the threat interstitial, until it commits.
-    var pendingThreatInterstitial: WKNavigation?
+    /// The navigation loading the threat interstitial, and the URL it
+    /// guards, until it commits.
+    var pendingThreatInterstitial: (navigation: WKNavigation, guardedURL: String)?
 
-    /// History entries showing the threat interstitial. Keyed by entry
-    /// rather than by URL, because a page can put any URL it likes on
-    /// screen but cannot make its own entry one we loaded as a warning.
-    let threatInterstitialItems = NSHashTable<WKBackForwardListItem>.weakObjects()
+    /// History entries showing the threat interstitial, each mapped to the
+    /// exact URL it is warning about. Keyed by entry rather than by URL,
+    /// because a page can put any URL it likes on screen but cannot make its
+    /// own entry one we loaded as a warning. An entry's guarded URL is
+    /// removed once its continue link is used, as CEF's
+    /// BRWThreatListConsumeContinue does.
+    let threatInterstitialGuards = NSMapTable<WKBackForwardListItem, NSString>.weakToStrongObjects()
 }
 
 extension WebKitTab: WKNavigationDelegate {
@@ -52,7 +56,9 @@ extension WebKitTab: WKNavigationDelegate {
            let dataURLString = WebKitEngine.interstitialDataURL(host: host, originalURL: url.absoluteString),
            let dataURL = URL(string: dataURLString) {
             decisionHandler(.cancel)
-            navigationState.pendingThreatInterstitial = webView.load(URLRequest(url: dataURL))
+            if let navigation = webView.load(URLRequest(url: dataURL)) {
+                navigationState.pendingThreatInterstitial = (navigation, url.absoluteString)
+            }
             return
         }
         // Cmd/Cmd+Shift/Shift/middle-click on an ordinary <a href> -- the
@@ -65,6 +71,12 @@ extension WebKitTab: WKNavigationDelegate {
         if let disposition = Self.clickDisposition(for: navigationAction),
            let url = navigationAction.request.url {
             decisionHandler(.cancel)
+            // The new tab is loaded by the browser, which the engine's own
+            // limits on page-initiated data:/file: navigations don't cover.
+            guard PopupTargetPolicy.isAllowed(targetURL: url.absoluteString, openerOrigin: Self.sourceOrigin(of: navigationAction)) else {
+                NSLog("Browser: refused a new tab for %@", Self.schemeForLog(url.absoluteString))
+                return
+            }
             delegate?.engineTabDidRequestNewTab(url: url.absoluteString, disposition: disposition)
             return
         }
@@ -81,21 +93,24 @@ extension WebKitTab: WKNavigationDelegate {
     /// BRWClientHandler::OnBeforeResourceLoad's interception of the same
     /// marker URL. Any page can link to the marker, so a bypass is recorded
     /// only for a main-frame navigation away from a page this tab loaded as
-    /// the interstitial, and only for an http(s) target. Anything else --
-    /// an iframe, a link on an ordinary page -- is cancelled and records
-    /// nothing, so no site can switch off the warning for itself or another.
-    /// The bypass lasts for the rest of the session, per profile, and covers
-    /// the host and its subdomains, as on CEF.
+    /// the interstitial, only for exactly the URL that interstitial was
+    /// guarding, only once, and only for an http(s) target. Anything else --
+    /// an iframe, a link on an ordinary page, a doctored `url=` -- is
+    /// cancelled and records nothing, so no site can switch off the warning
+    /// for itself or another. The bypass lasts for the rest of the session,
+    /// per profile, and covers the host and its subdomains, as on CEF.
     private func continueToThreatenedSite(_ originalURL: String, navigationAction: WKNavigationAction) {
         guard navigationAction.targetFrame?.isMainFrame == true,
               let currentItem = webView.backForwardList.currentItem,
-              navigationState.threatInterstitialItems.contains(currentItem),
+              let guardedURL = navigationState.threatInterstitialGuards.object(forKey: currentItem) as String?,
+              guardedURL == originalURL,
               let target = URL(string: originalURL),
               let scheme = target.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = target.host, !host.isEmpty else {
             NSLog("Browser: ignored a threat-warning continue link outside the warning page")
             return
         }
+        navigationState.threatInterstitialGuards.removeObject(forKey: currentItem)
         WebKitEngine.addThreatSessionBypass(host: host, profileName: profileName)
         loadURL(originalURL)
     }
@@ -144,10 +159,10 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        if navigation === navigationState.pendingThreatInterstitial {
+        if let pending = navigationState.pendingThreatInterstitial, navigation === pending.navigation {
             navigationState.pendingThreatInterstitial = nil
             if let item = webView.backForwardList.currentItem {
-                navigationState.threatInterstitialItems.add(item)
+                navigationState.threatInterstitialGuards.setObject(pending.guardedURL as NSString, forKey: item)
             }
         }
         if navigation !== navigationState.errorPageNavigation {
