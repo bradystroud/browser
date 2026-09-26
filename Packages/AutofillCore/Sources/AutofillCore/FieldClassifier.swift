@@ -37,6 +37,8 @@ public enum DetectedFieldKind: Equatable, Sendable {
     case givenName
     case familyName
     case fullName
+    case organization
+    case jobTitle
 }
 
 /// Which stored-data group a detected field kind belongs to -- used by the
@@ -53,6 +55,15 @@ public enum AutofillGroup: Equatable, Sendable {
     /// Could belong to either a card or an address form on its own --
     /// `.email`, `.tel`, `.givenName`, `.familyName`, `.fullName`.
     case ambiguous
+}
+
+/// Which kind of contact details a form asks for, when it says: an
+/// `autocomplete` section token (`work email`, `home tel`), or wording in
+/// the field's name/id/placeholder (`work_phone`, `personalEmail`). Used to
+/// choose between a contact card's home and work values.
+public enum ContactContext: String, Equatable, Sendable {
+    case home
+    case work
 }
 
 public enum FieldClassifier {
@@ -84,6 +95,8 @@ public enum FieldClassifier {
         "given-name": .givenName,
         "family-name": .familyName,
         "name": .fullName,
+        "organization": .organization,
+        "organization-title": .jobTitle,
     ]
 
     /// Classifies one field from its own attributes. `autocomplete` may
@@ -195,6 +208,14 @@ public enum FieldClassifier {
             return .streetAddress
         }
 
+        // After the address checks, so "company_address" stays an address.
+        if contains("company", "organisation", "organization", "employer", "business") {
+            return .organization
+        }
+        if contains("jobtitle", "occupation", "jobrole") {
+            return .jobTitle
+        }
+
         if contains("firstname", "givenname") || hasToken("fname") {
             return .givenName
         }
@@ -216,8 +237,33 @@ public enum FieldClassifier {
             return .card
         case .streetAddress, .addressLine2, .addressLevel1, .addressLevel2, .postalCode, .country:
             return .address
-        case .tel, .email, .givenName, .familyName, .fullName:
+        case .tel, .email, .givenName, .familyName, .fullName, .organization, .jobTitle:
             return .ambiguous
         }
+    }
+
+    /// The fill group a whole form belongs to, from its fields' kinds:
+    /// `card` or `address` when any field is unambiguously one; otherwise
+    /// `identity` when it asks for a name together with some other contact
+    /// detail (a sign-up or contact form); nil for anything else -- an
+    /// email-only sign-in step is not an identity form.
+    public static func formGroup(kinds: [DetectedFieldKind]) -> String? {
+        if kinds.contains(where: { group(for: $0) == .card }) { return "card" }
+        if kinds.contains(where: { group(for: $0) == .address }) { return "address" }
+        let hasName = kinds.contains { [.fullName, .givenName, .familyName].contains($0) }
+        let hasOther = kinds.contains { [.email, .tel, .organization, .jobTitle].contains($0) }
+            || (kinds.contains(.givenName) && kinds.contains(.familyName))
+        return hasName && hasOther ? "identity" : nil
+    }
+
+    /// See ContactContext. An explicit autocomplete token wins over wording.
+    public static func contactContext(autocomplete: String?, name: String?, id: String?, placeholder: String?) -> ContactContext? {
+        let tokens = (autocomplete ?? "").lowercased().split(separator: " ")
+        if tokens.contains("work") { return .work }
+        if tokens.contains("home") { return .home }
+        let compact = [name, id, placeholder].compactMap { $0?.lowercased() }.joined().filter { $0.isLetter }
+        if compact.contains("work") || compact.contains("business") || compact.contains("office") { return .work }
+        if compact.contains("home") || compact.contains("personal") { return .home }
+        return nil
     }
 }

@@ -71,7 +71,9 @@ enum PaymentAddressDetectionScript {
         'email': 'email',
         'given-name': 'givenName',
         'family-name': 'familyName',
-        'name': 'fullName'
+        'name': 'fullName',
+        'organization': 'organization',
+        'organization-title': 'jobTitle'
       };
 
       function classify(el) {
@@ -116,6 +118,9 @@ enum PaymentAddressDetectionScript {
         if (has('zip', 'postal')) { return 'postalCode'; }
         if (has('street', 'address1', 'addr1', 'address')) { return 'streetAddress'; }
 
+        if (has('company', 'organisation', 'organization', 'employer', 'business')) { return 'organization'; }
+        if (has('jobtitle', 'occupation', 'jobrole')) { return 'jobTitle'; }
+
         if (has('firstname', 'givenname') || hasToken('fname')) { return 'givenName'; }
         if (has('lastname', 'surname', 'familyname') || hasToken('lname')) { return 'familyName'; }
         if (has('fullname') || compact === 'name') { return 'fullName'; }
@@ -124,6 +129,8 @@ enum PaymentAddressDetectionScript {
 
       var CARD_KINDS = { ccNumber: 1, ccName: 1, ccExpMonth: 1, ccExpYear: 1, ccExpCombined: 1, ccCSC: 1 };
       var ADDRESS_KINDS = { streetAddress: 1, addressLine2: 1, addressLevel1: 1, addressLevel2: 1, postalCode: 1, country: 1 };
+      var NAME_KINDS = { fullName: 1, givenName: 1, familyName: 1 };
+      var CONTACT_KINDS = { email: 1, tel: 1, organization: 1, jobTitle: 1 };
 
       // Which group (card/address) a <form> (or the whole document, for
       // fields with no enclosing form) belongs to -- an ambiguous field
@@ -131,16 +138,41 @@ enum PaymentAddressDetectionScript {
       // be at least one unambiguous card- or address-specific field
       // present too.
       function groupForScope(scope) {
+        // Mirrors FieldClassifier.formGroup(kinds:): an identity form asks
+        // for a name together with some other contact detail.
         var inputs = scope.querySelectorAll('input, select');
-        var sawCard = false, sawAddress = false;
+        var sawCard = false, sawAddress = false, sawName = false, sawContact = false, sawGiven = false, sawFamily = false;
         for (var i = 0; i < inputs.length; i++) {
           var kind = classify(inputs[i]);
           if (CARD_KINDS[kind]) { sawCard = true; }
           if (ADDRESS_KINDS[kind]) { sawAddress = true; }
+          if (NAME_KINDS[kind]) { sawName = true; }
+          if (CONTACT_KINDS[kind]) { sawContact = true; }
+          if (kind === 'givenName') { sawGiven = true; }
+          if (kind === 'familyName') { sawFamily = true; }
         }
         if (sawCard) { return 'card'; }
         if (sawAddress) { return 'address'; }
+        if (sawName && (sawContact || (sawGiven && sawFamily))) { return 'identity'; }
         return null;
+      }
+
+      // Mirrors FieldClassifier.contactContext: whether the form asks for
+      // home or work details, from the first field that says.
+      function contextForScope(scope) {
+        var inputs = scope.querySelectorAll('input, select');
+        for (var i = 0; i < inputs.length; i++) {
+          var el = inputs[i];
+          if (!classify(el)) { continue; }
+          var tokens = (el.getAttribute('autocomplete') || '').toLowerCase().split(' ');
+          if (tokens.indexOf('work') !== -1) { return 'work'; }
+          if (tokens.indexOf('home') !== -1) { return 'home'; }
+          var compact = ((el.getAttribute('name') || '') + (el.getAttribute('id') || '') +
+            (el.getAttribute('placeholder') || '')).toLowerCase().replace(/[^a-z]/g, '');
+          if (/work|business|office/.test(compact)) { return 'work'; }
+          if (/home|personal/.test(compact)) { return 'home'; }
+        }
+        return '';
       }
 
       function valueFor(scope, kind) {
@@ -176,9 +208,10 @@ enum PaymentAddressDetectionScript {
         var group = groupForScope(scope);
         if (!group) { return; }
         window.__brwAutofillLastScope = scope;
-        if (group === lastReportedGroup) { return; }
-        lastReportedGroup = group;
-        send({ type: 'autofillFieldFocused', origin: location.origin, group: group });
+        var context = contextForScope(scope);
+        if (group + '|' + context === lastReportedGroup) { return; }
+        lastReportedGroup = group + '|' + context;
+        send({ type: 'autofillFieldFocused', origin: location.origin, group: group, context: context });
       }
 
       function handleFocusOut(event) {

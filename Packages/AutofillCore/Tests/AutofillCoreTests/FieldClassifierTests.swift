@@ -87,5 +87,35 @@ final class FieldClassifierTests: XCTestCase {
         XCTAssertEqual(FieldClassifier.group(for: .postalCode), .address)
         XCTAssertEqual(FieldClassifier.group(for: .email), .ambiguous)
         XCTAssertEqual(FieldClassifier.group(for: .fullName), .ambiguous)
+        XCTAssertEqual(FieldClassifier.group(for: .organization), .ambiguous)
+    }
+
+    func testOrganizationAndJobTitle() {
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: "organization", name: nil, id: nil, placeholder: nil), .organization)
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: "work organization-title", name: nil, id: nil, placeholder: nil), .jobTitle)
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: nil, name: "company_name", id: nil, placeholder: nil), .organization)
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: nil, name: nil, id: "jobTitle", placeholder: nil), .jobTitle)
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: nil, name: "company_address", id: nil, placeholder: nil), .streetAddress,
+                       "an address field that mentions the company is still an address")
+        XCTAssertEqual(FieldClassifier.classify(autocomplete: nil, name: "business_email", id: nil, placeholder: nil), .email)
+    }
+
+    func testFormGroup() {
+        XCTAssertEqual(FieldClassifier.formGroup(kinds: [.fullName, .streetAddress]), "address")
+        XCTAssertEqual(FieldClassifier.formGroup(kinds: [.ccNumber, .streetAddress]), "card")
+        XCTAssertEqual(FieldClassifier.formGroup(kinds: [.fullName, .email]), "identity")
+        XCTAssertEqual(FieldClassifier.formGroup(kinds: [.givenName, .familyName]), "identity")
+        XCTAssertEqual(FieldClassifier.formGroup(kinds: [.givenName, .organization, .jobTitle]), "identity")
+        XCTAssertNil(FieldClassifier.formGroup(kinds: [.email]), "an email-only sign-in step is not an identity form")
+        XCTAssertNil(FieldClassifier.formGroup(kinds: [.email, .tel]))
+        XCTAssertNil(FieldClassifier.formGroup(kinds: [.fullName]))
+    }
+
+    func testContactContext() {
+        XCTAssertEqual(FieldClassifier.contactContext(autocomplete: "section-a work email", name: "home", id: nil, placeholder: nil), .work)
+        XCTAssertEqual(FieldClassifier.contactContext(autocomplete: "home tel", name: nil, id: nil, placeholder: nil), .home)
+        XCTAssertEqual(FieldClassifier.contactContext(autocomplete: nil, name: "work_phone", id: nil, placeholder: nil), .work)
+        XCTAssertEqual(FieldClassifier.contactContext(autocomplete: nil, name: nil, id: nil, placeholder: "Personal email"), .home)
+        XCTAssertNil(FieldClassifier.contactContext(autocomplete: "email", name: "email", id: nil, placeholder: nil))
     }
 }
