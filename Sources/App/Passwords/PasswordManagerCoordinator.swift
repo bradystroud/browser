@@ -381,6 +381,15 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
         tab.executeJavaScript(AutofillScript.fillScript(username: credential.username, password: credential.password, expectedOrigin: origin))
     }
 
+    /// Whether the page now in `tab` has a password field and a saved
+    /// credential for its origin -- the password manager fills that form, so
+    /// email suggestions stand aside there. Reads only the cache (kicking
+    /// off a background lookup the first time), never the Keychain.
+    func offersSavedCredential(in tab: Tab) -> Bool {
+        guard let origin = WebOrigin(urlString: tab.urlString), hasPasswordField(tab, at: origin) else { return false }
+        return cachedCredential(profileName: tab.profileName, origin: origin) != nil
+    }
+
     /// Whether the document now at `origin` in this tab reported a password
     /// field. A report from a document on any other origin -- the previous
     /// page, still live while the tab's URL already shows the next one --

@@ -98,3 +98,99 @@ enum ContactsAutofillSource {
         return results.sorted { $0.displayName < $1.displayName }
     }
 }
+
+/// One labelled value from a contact card: an email, phone or address, with
+/// Contacts' own label (`home`, `work`, a custom one) made readable.
+struct MeCardValue<Value> {
+    let label: String
+    /// Contacts' raw label (`CNLabelHome`, `CNLabelWork`, ...), for choosing
+    /// by form context.
+    let rawLabel: String?
+    let value: Value
+}
+
+struct MeCardAddress: Equatable {
+    let streetAddress: String
+    let addressLine2: String
+    let city: String
+    let state: String
+    let postalCode: String
+    let country: String
+
+    var summary: String {
+        [streetAddress, city, postalCode].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
+}
+
+/// The user's own contact card ("Me" in Contacts.app), read fresh every
+/// time it is needed and never stored.
+struct MeCard {
+    let givenName: String
+    let familyName: String
+    let organization: String
+    let jobTitle: String
+    let emails: [MeCardValue<String>]
+    let phones: [MeCardValue<String>]
+    let addresses: [MeCardValue<MeCardAddress>]
+
+    var fullName: String {
+        [givenName, familyName].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    var displayName: String {
+        fullName.isEmpty ? (emails.first?.value ?? "My Card") : fullName
+    }
+}
+
+extension ContactsAutofillSource {
+    /// True only when access has already been granted. Reading the status
+    /// never prompts.
+    static var isAuthorized: Bool {
+        CNContactStore.authorizationStatus(for: .contacts) == .authorized
+    }
+
+    static var authorizationStatus: CNAuthorizationStatus {
+        CNContactStore.authorizationStatus(for: .contacts)
+    }
+
+    private static let meCardKeys: [CNKeyDescriptor] = [
+        CNContactGivenNameKey as CNKeyDescriptor,
+        CNContactFamilyNameKey as CNKeyDescriptor,
+        CNContactOrganizationNameKey as CNKeyDescriptor,
+        CNContactJobTitleKey as CNKeyDescriptor,
+        CNContactPostalAddressesKey as CNKeyDescriptor,
+        CNContactPhoneNumbersKey as CNKeyDescriptor,
+        CNContactEmailAddressesKey as CNKeyDescriptor,
+    ]
+
+    /// The Me card, or nil when access is not granted, there is no Me card,
+    /// or Contacts fails. Never asks for access. May block briefly on the
+    /// Contacts database, so callers run it off the main thread where they
+    /// can.
+    static func meCard() -> MeCard? {
+        guard isAuthorized,
+              let contact = try? CNContactStore().unifiedMeContactWithKeys(toFetch: meCardKeys)
+        else { return nil }
+        func label(_ raw: String?) -> String {
+            guard let raw, !raw.isEmpty else { return "other" }
+            return CNLabeledValue<NSString>.localizedString(forLabel: raw)
+        }
+        return MeCard(
+            givenName: contact.givenName,
+            familyName: contact.familyName,
+            organization: contact.organizationName,
+            jobTitle: contact.jobTitle,
+            emails: contact.emailAddresses.map { MeCardValue(label: label($0.label), rawLabel: $0.label, value: String($0.value)) },
+            phones: contact.phoneNumbers.map { MeCardValue(label: label($0.label), rawLabel: $0.label, value: $0.value.stringValue) },
+            addresses: contact.postalAddresses.map { labeled in
+                let postal = labeled.value
+                let lines = postal.street.components(separatedBy: "\n")
+                return MeCardValue(label: label(labeled.label), rawLabel: labeled.label, value: MeCardAddress(
+                    streetAddress: lines.first ?? "",
+                    addressLine2: lines.dropFirst().joined(separator: ", "),
+                    city: postal.city, state: postal.state, postalCode: postal.postalCode, country: postal.country
+                ))
+            }
+        )
+    }
+}

@@ -35,6 +35,7 @@ final class BrowserWindow: NSWindow {
         PasswordManagerCoordinator.shared.activate()
         // Same reasoning, for card/address autofill (browser-ojh.2).
         PaymentAddressAutofillCoordinator.shared.activate()
+        EmailAutofillCoordinator.shared.activate()
         // Same reasoning, for the per-tab audio indicator (browser-rhi.4).
         TabAudioCoordinator.shared.activate()
         // Same reasoning, for the start page gear button (browser-ymx).

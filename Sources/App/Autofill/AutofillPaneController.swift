@@ -13,6 +13,7 @@ final class AutofillPaneController: NSObject, SettingsPaneController {
     private let passwordsPane = PasswordsPaneController()
     private let cardsPane = CardsPaneController()
     private let addressesPane = AddressesPaneController()
+    private let emailsPane = EmailAutofillPaneController()
     private let tabView = NSTabView()
 
     override init() {
@@ -24,6 +25,7 @@ final class AutofillPaneController: NSObject, SettingsPaneController {
         passwordsPane.reload()
         cardsPane.reload()
         addressesPane.reload()
+        emailsPane.reload()
     }
 
     /// Test-only entry point for the `--show-settings-tab
@@ -54,7 +56,12 @@ final class AutofillPaneController: NSObject, SettingsPaneController {
 
         tabView.addTabViewItem(passwordsItem)
         tabView.addTabViewItem(cardsItem)
+        let emailsItem = NSTabViewItem(identifier: "autofill-emails")
+        emailsItem.label = "Emails"
+        emailsItem.view = emailsPane.view
+
         tabView.addTabViewItem(addressesItem)
+        tabView.addTabViewItem(emailsItem)
         view.addSubview(tabView)
     }
 }

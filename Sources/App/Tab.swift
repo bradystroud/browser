@@ -764,6 +764,10 @@ final class Tab: NSObject, EngineTabDelegate {
         // readable/testable even though they share the same delivery
         // mechanism.
         executeJavaScript(PaymentAddressDetectionScript.source)
+        // Email suggestions (EmailAutofillCoordinator): its own script and
+        // message types, for the email-only sign-in steps neither script
+        // above recognizes.
+        executeJavaScript(EmailFieldDetectionScript.source)
         // Separate script again, same reasoning (browser-rhi.4) -- reports
         // through TabAudioCoordinator's poll (getPageSource + marker
         // attribute), not the cefQuery channel the two scripts above use,

@@ -139,6 +139,11 @@ set(BROWSER_SWIFT_SRCS
   Autofill/AddressesPaneController.swift
   Autofill/AutofillPaneController.swift
   Autofill/ContactsAutofillSource.swift
+  Autofill/EmailFieldDetectionScript.swift
+  Autofill/EmailSuggestionPopup.swift
+  Autofill/EmailAutofillPreferences.swift
+  Autofill/EmailAutofillCoordinator.swift
+  Autofill/EmailAutofillPaneController.swift
   Reader/ReaderScripts.swift
   Reader/ReaderPreferences.swift
   Reader/ReaderTemplate.swift
@@ -231,6 +236,10 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariProfileDiscovery.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/PasswordCSVParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/RegistrableDomain.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/IdentityProviderHints.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailSuggestionRanker.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailAutofillStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteError.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/Statement.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteConnection.swift
