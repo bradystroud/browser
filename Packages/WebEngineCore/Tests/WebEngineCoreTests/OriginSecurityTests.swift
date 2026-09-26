@@ -94,6 +94,27 @@ final class PageMessagePolicyTests: XCTestCase {
         }
     }
 
+    func testEmailFieldMessagesAreMainFrameOnly() {
+        let types = ["emailFieldFocused", "emailFieldInput", "emailFieldBlurred", "emailFieldSubmitted"]
+        let main = PageMessageSource(isMainFrame: true, frameURL: "https://bank.example/login")
+        // A same-origin iframe is still refused: only the address bar's
+        // document may ask for the profile's email addresses.
+        let iframe = PageMessageSource(isMainFrame: false, frameURL: "https://bank.example/login")
+        let startPage = PageMessageTabState(engineURL: "data:text/html,start", isShowingStartPage: true)
+        for type in types {
+            XCTAssertEqual(PageMessagePolicy.rules[type], .mainFrame, type)
+            XCTAssertEqual(PageMessagePolicy.evaluate(type: type, source: main, tab: tab),
+                           .allow(origin: WebOrigin(urlString: "https://bank.example")), type)
+            guard case .reject = PageMessagePolicy.evaluate(type: type, source: iframe, tab: tab) else {
+                return XCTFail("\(type) accepted from an iframe")
+            }
+            let startSource = PageMessageSource(isMainFrame: true, frameURL: "data:text/html,start")
+            guard case .reject = PageMessagePolicy.evaluate(type: type, source: startSource, tab: startPage) else {
+                return XCTFail("\(type) accepted from the start page")
+            }
+        }
+    }
+
     func testEveryRegisteredTypeIsMainFrameOnly() {
         XCTAssertTrue(PageMessagePolicy.rules.values.allSatisfy { $0 == .mainFrame || $0 == .startPage })
         XCTAssertEqual(PageMessagePolicy.rule(forType: "unknown"), .mainFrame)
