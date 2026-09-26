@@ -3,7 +3,8 @@ import PackageDescription
 
 // Runs the app's real WebKit engine adapter inside XCTest, against a real
 // WKWebView. The WebKitAdapter target holds no logic of its own: its
-// Engine/, PageZoom.swift and WebEngineCore/ entries are symlinks to the very
+// Engine/, PageZoom.swift, EmailFieldDetectionScript.swift and WebEngineCore/
+// entries are symlinks to the very
 // files Sources/App/CMakeLists.txt compiles into Browser.app, so a new
 // Engine/WebKit*.swift file is picked up here with no change to this package.
 // The only real source in the target is AppShims.swift, which stands in for
