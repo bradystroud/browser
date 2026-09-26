@@ -199,13 +199,6 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
 
     // MARK: - Sources
 
-    /// Which profile's data a tab's suggestions read. A private window has
-    /// nothing of its own, so it borrows the first profile's, read-only.
-    private func sourceProfile(for tab: Tab) -> (id: String, name: String)? {
-        guard tab.isPrivate else { return (tab.profileId, tab.profileName) }
-        return ProfileManager.shared.profiles.first.map { ($0.id, $0.name) }
-    }
-
     private func candidates(for tab: Tab, field: FocusedEmailField) -> (emails: [String], sources: [String: String]) {
         var emails: [String] = []
         var sources: [String: String] = [:]
@@ -214,7 +207,7 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
             if sources[email] == nil { sources[email] = source; emails.append(email) }
         }
         field.meCardEmails.forEach { add($0, "My Card") }
-        if let profile = sourceProfile(for: tab) {
+        if let profile = EmailAutofillStoreManager.readableProfile(for: tab) {
             let store = EmailAutofillStoreManager.store(forProfileId: profile.id)
             store.data.addresses.forEach { add($0, "Your address") }
             AddressStoreManager.shared.store(forProfileId: profile.id).all().forEach { add($0.email, "Saved address") }
@@ -224,8 +217,7 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
     }
 
     private func usageAndRules(for tab: Tab) -> ([EmailUsageRecord], [EmailRule]) {
-        guard let profile = sourceProfile(for: tab) else { return ([], []) }
-        let data = EmailAutofillStoreManager.store(forProfileId: profile.id).data
+        let data = EmailAutofillStoreManager.readableData(for: tab)
         return (data.usage, data.rules)
     }
 

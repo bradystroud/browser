@@ -81,6 +81,37 @@ enum AutofillFillScript {
         """
     }
 
+    /// Fills every recognized field in the last-focused form from
+    /// `values`, keyed by the detection script's field kinds (`fullName`,
+    /// `givenName`, `email`, `organization`, ...). Used for the contact
+    /// card, which carries more than a saved address does. Does nothing
+    /// unless it runs in the top frame of a document at `expectedOrigin`,
+    /// the same guard AutofillScript uses: the card is only ever written
+    /// into the page the user chose it on.
+    static func fillFieldsScript(values: [String: String], expectedOrigin: WebOrigin) -> String {
+        let valuesJSON = (try? JSONEncoder().encode(values)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return """
+        (function(values, expectedOrigin) {
+          if (window.top !== window || location.origin !== expectedOrigin) { return; }
+          var scope = window.__brwAutofillLastScope || document;
+          var classify = window.__brwAutofillClassify;
+          if (!classify) { return; }
+          var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+          function setValue(el, value) {
+            if (!el || !value) { return; }
+            if (el.tagName === 'INPUT') { setter.call(el, value); } else { el.value = value; }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          var inputs = scope.querySelectorAll('input, select');
+          for (var i = 0; i < inputs.length; i++) {
+            var kind = classify(inputs[i]);
+            if (kind && Object.prototype.hasOwnProperty.call(values, kind)) { setValue(inputs[i], values[kind]); }
+          }
+        })(\(valuesJSON), \(jsonStringLiteral(expectedOrigin.serialized)));
+        """
+    }
+
     private static func jsonStringLiteral(_ value: String) -> String {
         guard let data = try? JSONEncoder().encode(value), let json = String(data: data, encoding: .utf8) else {
             return "\"\""

@@ -17,6 +17,11 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
     private var selectedProfile: Profile?
     private var addresses: [StoredAddress] = []
     private var profileChangeObserver: NSObjectProtocol?
+    private var appActiveObserver: NSObjectProtocol?
+
+    private let meCardCheckbox = NSButton(checkboxWithTitle: "Fill from my contact card", target: nil, action: nil)
+    private let meCardStatusLabel = NSTextField(labelWithString: "")
+    private let meCardActionButton = NSButton(title: "", target: nil, action: nil)
 
     override init() {
         super.init()
@@ -27,11 +32,18 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         ) { [weak self] _ in
             self?.reload()
         }
+        // Coming back from System Settings is how access usually changes.
+        appActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.updateMeCardRow()
+        }
     }
 
     func reload() {
         selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadAddressesForSelectedProfile()
+        updateMeCardRow()
     }
 
     // MARK: - View setup
@@ -64,7 +76,27 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(deleteButton)
 
-        let profileRowY = margin + buttonRowHeight + rowGap
+        let meCardRowY = margin + buttonRowHeight + rowGap
+        meCardCheckbox.frame = NSRect(x: margin, y: meCardRowY + 4, width: 190, height: 20)
+        meCardCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
+        meCardCheckbox.target = self
+        meCardCheckbox.action = #selector(meCardPreferenceChanged)
+        view.addSubview(meCardCheckbox)
+
+        meCardStatusLabel.font = .systemFont(ofSize: 11)
+        meCardStatusLabel.textColor = .secondaryLabelColor
+        meCardStatusLabel.lineBreakMode = .byTruncatingTail
+        meCardStatusLabel.frame = NSRect(x: margin + 194, y: meCardRowY + 6, width: view.bounds.width - margin * 2 - 194 - 170, height: 16)
+        meCardStatusLabel.autoresizingMask = [.width, .maxYMargin]
+        view.addSubview(meCardStatusLabel)
+
+        meCardActionButton.frame = NSRect(x: view.bounds.width - margin - 166, y: meCardRowY, width: 166, height: buttonRowHeight)
+        meCardActionButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        meCardActionButton.target = self
+        meCardActionButton.action = #selector(meCardActionTapped)
+        view.addSubview(meCardActionButton)
+
+        let profileRowY = meCardRowY + buttonRowHeight + rowGap
         let profileLabel = NSTextField(labelWithString: "Profile:")
         profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
         profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
@@ -110,6 +142,43 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         addresses = AddressStoreManager.shared.store(forProfileId: profile.id).all()
             .sorted { $0.fullName == $1.fullName ? $0.streetAddress < $1.streetAddress : $0.fullName < $1.fullName }
         addressesTableView.reloadData()
+    }
+
+    // MARK: - Contact card
+
+    /// The switch, a one-line note on Contacts access, and the one action
+    /// that note calls for: asking for access (only from this click, never
+    /// on its own), or opening System Settings after a denial.
+    private func updateMeCardRow() {
+        meCardCheckbox.state = EmailAutofillPreferences.fillFromMeCard ? .on : .off
+        switch ContactsAutofillSource.authorizationStatus {
+        case .authorized:
+            meCardStatusLabel.stringValue = "Your Me card in Contacts is offered first."
+            meCardActionButton.isHidden = true
+        case .notDetermined:
+            meCardStatusLabel.stringValue = "Needs access to Contacts."
+            meCardActionButton.title = "Allow Access…"
+            meCardActionButton.isHidden = false
+        default:
+            meCardStatusLabel.stringValue = "Contacts access is off."
+            meCardActionButton.title = "Open System Settings…"
+            meCardActionButton.isHidden = false
+        }
+    }
+
+    @objc private func meCardPreferenceChanged() {
+        EmailAutofillPreferences.fillFromMeCard = meCardCheckbox.state == .on
+    }
+
+    @objc private func meCardActionTapped() {
+        switch ContactsAutofillSource.authorizationStatus {
+        case .notDetermined:
+            ContactsAutofillSource.requestAccessIfNeeded { [weak self] _ in self?.updateMeCardRow() }
+        case .authorized:
+            break
+        default:
+            MeCardAutofill.openContactsPrivacySettings()
+        }
     }
 
     // MARK: - Actions

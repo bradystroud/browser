@@ -139,6 +139,7 @@ set(BROWSER_SWIFT_SRCS
   Autofill/AddressesPaneController.swift
   Autofill/AutofillPaneController.swift
   Autofill/ContactsAutofillSource.swift
+  Autofill/MeCardAutofill.swift
   Autofill/EmailFieldDetectionScript.swift
   Autofill/EmailSuggestionPopup.swift
   Autofill/EmailAutofillPreferences.swift

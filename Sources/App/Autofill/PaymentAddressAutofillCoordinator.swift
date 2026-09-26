@@ -47,6 +47,9 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     /// the tab navigates (a brand-new document has nothing focused until it
     /// says otherwise).
     private var focusedGroup = NSMapTable<Tab, NSString>.weakToStrongObjects()
+    /// "home"/"work" when the focused form says which it wants (see
+    /// FieldClassifier.contactContext), for choosing the contact card's values.
+    private var focusedContext = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
     private var fillButtons = NSMapTable<NSView, NSButton>.weakToWeakObjects()
     private var windowForFillButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
@@ -131,6 +134,7 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
             // injected script says so. (The poll never did this, so a stale
             // icon could survive a navigation until the next blur.)
             focusedGroup.removeObject(forKey: tab)
+            focusedContext.removeObject(forKey: tab)
             updateFillButton(for: controller)
         case .opened, .finishedLoading, .closed:
             break
@@ -157,9 +161,11 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
         case "autofillFieldFocused":
             guard let payload = try? JSONDecoder().decode([String: String].self, from: data), let group = payload["group"] else { return }
             focusedGroup.setObject(group as NSString, forKey: tab)
+            focusedContext.setObject((payload["context"] ?? "") as NSString, forKey: tab)
             updateFillButtonForWindow(of: tab)
         case "autofillFieldBlurred":
             focusedGroup.removeObject(forKey: tab)
+            focusedContext.removeObject(forKey: tab)
             updateFillButtonForWindow(of: tab)
         case "paymentFormSubmit":
             guard let payload = try? JSONDecoder().decode(PaymentFormSubmitPayload.self, from: data) else { return }
@@ -317,9 +323,12 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
             setFillButtonVisible(false, in: contentView, window: window, group: nil, controller: controller)
             return
         }
+        // Address and identity forms: saved addresses, or the contact card
+        // (or the offer to use it). A private window reads no saved
+        // addresses, so nothing is ever created under its profile id.
         let hasSaved = group == "card"
             ? !cachedCards(profileName: tab.profileName).isEmpty
-            : !AddressStoreManager.shared.store(forProfileId: tab.profileId).all().isEmpty
+            : MeCardAutofill.isOffered || (!tab.isPrivate && !AddressStoreManager.shared.store(forProfileId: tab.profileId).all().isEmpty)
         setFillButtonVisible(hasSaved, in: contentView, window: window, group: group, controller: controller)
     }
 
@@ -342,7 +351,8 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
             fillButtons.setObject(button, forKey: contentView)
         }
         if let group {
-            button.image = NSImage(systemSymbolName: group == "card" ? "creditcard" : "mappin.and.ellipse", accessibilityDescription: "Autofill")
+            let symbol = group == "card" ? "creditcard" : (group == "identity" ? "person.crop.circle" : "mappin.and.ellipse")
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Autofill")
         }
         windowForFillButton.setObject(window, forKey: button)
         button.isHidden = !visible
@@ -377,7 +387,13 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
                 menu.addItem(item)
             }
         } else {
-            for address in AddressStoreManager.shared.store(forProfileId: tab.profileId).all() {
+            // The contact card first: it is the user's own identity.
+            addMeCardItems(to: menu, tab: tab)
+            let savedAddresses = tab.isPrivate ? [] : AddressStoreManager.shared.store(forProfileId: tab.profileId).all()
+            if !menu.items.isEmpty, !savedAddresses.isEmpty {
+                menu.addItem(.separator())
+            }
+            for address in savedAddresses {
                 let title = [address.fullName, address.streetAddress, address.city].filter { !$0.isEmpty }.joined(separator: ", ")
                 let item = NSMenuItem(title: title.isEmpty ? "Saved address" : title, action: #selector(fillAddress(_:)), keyEquivalent: "")
                 item.target = self
@@ -446,6 +462,121 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: button.bounds.midX, y: 0), in: button)
+    }
+
+    // MARK: - Contact card (Me)
+
+    private func context(for tab: Tab) -> ContactContext? {
+        (focusedContext.object(forKey: tab) as String?).flatMap(ContactContext.init(rawValue:))
+    }
+
+    /// The card's items, read fresh from Contacts now that the user opened
+    /// the menu: one item that fills its default values, a submenu for
+    /// choosing another email, phone or address, or -- before access is
+    /// granted -- the offer to use it. Never asks for access by itself.
+    private func addMeCardItems(to menu: NSMenu, tab: Tab) {
+        guard EmailAutofillPreferences.fillFromMeCard else { return }
+        switch ContactsAutofillSource.authorizationStatus {
+        case .notDetermined:
+            let offer = NSMenuItem(title: "Use Your Contact Card (Me) to Fill Forms…", action: #selector(allowMeCardTapped(_:)), keyEquivalent: "")
+            offer.target = self
+            offer.representedObject = tab
+            offer.image = NSImage(systemSymbolName: "person.crop.circle.badge.plus", accessibilityDescription: nil)
+            menu.addItem(offer)
+        case .authorized:
+            guard let card = ContactsAutofillSource.meCard() else { return }
+            let selection = MeCardAutofill.defaultSelection(for: card, context: context(for: tab), tab: tab)
+            let item = NSMenuItem(title: selection.menuTitle, action: #selector(fillMeCard(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = (tab, selection)
+            item.image = NSImage(systemSymbolName: "person.crop.circle", accessibilityDescription: "My Card")
+            item.toolTip = "Your contact card (Me) in Contacts"
+            menu.addItem(item)
+            if let submenu = meCardChoicesMenu(card: card, base: selection, tab: tab) {
+                let choose = NSMenuItem(title: "Fill My Card With", action: nil, keyEquivalent: "")
+                choose.submenu = submenu
+                menu.addItem(choose)
+            }
+        default:
+            let note = NSMenuItem(title: "Contacts access is off for your contact card", action: nil, keyEquivalent: "")
+            note.isEnabled = false
+            menu.addItem(note)
+            let open = NSMenuItem(title: "Open Contacts Privacy Settings…", action: #selector(openContactsPrivacySettings), keyEquivalent: "")
+            open.target = self
+            menu.addItem(open)
+        }
+    }
+
+    /// Only when the card has a choice to make: every email, phone and
+    /// address, each filling the default selection with that one swapped in.
+    private func meCardChoicesMenu(card: MeCard, base: MeCardSelection, tab: Tab) -> NSMenu? {
+        guard card.emails.count > 1 || card.phones.count > 1 || card.addresses.count > 1 else { return nil }
+        let menu = NSMenu()
+        func section(_ title: String) {
+            if !menu.items.isEmpty { menu.addItem(.separator()) }
+            let header = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+        }
+        func add(_ title: String, _ selection: MeCardSelection, current: Bool) {
+            let item = NSMenuItem(title: title, action: #selector(fillMeCard(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = (tab, selection)
+            item.state = current ? .on : .off
+            menu.addItem(item)
+        }
+        func variant() -> MeCardSelection {
+            MeCardSelection(card: card, email: base.email, phone: base.phone, address: base.address)
+        }
+        if card.emails.count > 1 {
+            section("Email")
+            for value in card.emails {
+                let selection = variant()
+                selection.email = value.value
+                add("\(value.value) (\(value.label))", selection, current: value.value == base.email)
+            }
+        }
+        if card.phones.count > 1 {
+            section("Phone")
+            for value in card.phones {
+                let selection = variant()
+                selection.phone = value.value
+                add("\(value.value) (\(value.label))", selection, current: value.value == base.phone)
+            }
+        }
+        if card.addresses.count > 1 {
+            section("Address")
+            for value in card.addresses {
+                let selection = variant()
+                selection.address = value.value
+                add("\(value.value.summary) (\(value.label))", selection, current: value.value == base.address)
+            }
+        }
+        return menu
+    }
+
+    /// The one place access is ever requested: the user chose the offer.
+    /// Granted, the card fills straight away -- that is what they asked for.
+    @objc private func allowMeCardTapped(_ sender: NSMenuItem) {
+        guard let tab = sender.representedObject as? Tab else { return }
+        ContactsAutofillSource.requestAccessIfNeeded { [weak self, weak tab] granted in
+            guard let self, let tab, granted, let card = ContactsAutofillSource.meCard() else { return }
+            self.fill(MeCardAutofill.defaultSelection(for: card, context: self.context(for: tab), tab: tab), into: tab)
+        }
+    }
+
+    @objc private func fillMeCard(_ sender: NSMenuItem) {
+        guard let (tab, selection) = sender.representedObject as? (Tab, MeCardSelection) else { return }
+        fill(selection, into: tab)
+    }
+
+    private func fill(_ selection: MeCardSelection, into tab: Tab) {
+        guard let origin = WebOrigin(urlString: tab.urlString) else { return }
+        tab.executeJavaScript(AutofillFillScript.fillFieldsScript(values: selection.fieldValues, expectedOrigin: origin))
+    }
+
+    @objc private func openContactsPrivacySettings() {
+        MeCardAutofill.openContactsPrivacySettings()
     }
 
     @objc private func fillFromContact(_ sender: NSMenuItem) {

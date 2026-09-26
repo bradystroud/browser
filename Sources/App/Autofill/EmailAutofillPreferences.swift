@@ -44,6 +44,17 @@ enum EmailAutofillStoreManager {
         return store
     }
 
+    /// Which profile's data a tab's suggestions read. A private window has
+    /// nothing of its own, so it borrows the first profile's, read-only.
+    static func readableProfile(for tab: Tab) -> (id: String, name: String)? {
+        guard tab.isPrivate else { return (tab.profileId, tab.profileName) }
+        return ProfileManager.shared.profiles.first.map { ($0.id, $0.name) }
+    }
+
+    static func readableData(for tab: Tab) -> EmailAutofillData {
+        readableProfile(for: tab).map { store(forProfileId: $0.id).data } ?? EmailAutofillData()
+    }
+
     /// Posted after Settings or a learned use changes a profile's data.
     static let didChangeNotification = Notification.Name("EmailAutofillStoreDidChange")
 }
