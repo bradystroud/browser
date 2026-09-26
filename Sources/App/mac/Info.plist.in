@@ -77,6 +77,6 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Websites you visit can request your location.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Used to fill your saved contact info into address forms when you choose "Fill from Contacts".</string>
+	<string>Used to fill forms with your own contact card (Me), and with a contact you pick from "Fill from Contacts", only when you choose to fill.</string>
 </dict>
 </plist>

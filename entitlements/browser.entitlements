@@ -22,5 +22,11 @@
 	     after the user allows it. -->
 	<key>com.apple.security.personal-information.location</key>
 	<true/>
+	<!-- Same for Contacts: under the hardened runtime with a real
+	     signature, filling from the Me card or "Fill from Contacts" gets no
+	     permission prompt and no data without it -- only the app process
+	     reads Contacts, so the helpers do not carry it. -->
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
 </dict>
 </plist>
