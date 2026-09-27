@@ -1,7 +1,7 @@
 import AppKit
 
-/// Owns the one page-initiated sheet (JS alert/confirm/prompt, or a file
-/// picker) a WebKitTab may have up at a time, and guarantees WebKit's
+/// Owns the one page-initiated sheet (JS alert/confirm/prompt, a file picker,
+/// or a print panel) a WebKitTab may have up at a time, and guarantees WebKit's
 /// completion handler for it runs exactly once.
 ///
 /// WebKit asserts, and the page's script stays blocked forever, if a
@@ -33,8 +33,9 @@ final class WebKitPageSheetGuard: NSView {
     /// Presents `sheet` on `window` via `start`, which must begin the sheet
     /// and route its own completion into the closure it is given. `finish`
     /// runs exactly once, with `.cancel` when the sheet is torn down rather
-    /// than answered.
-    func present(sheet: NSWindow, on window: NSWindow,
+    /// than answered. A nil `sheet` is for sheets AppKit builds itself (a
+    /// print panel): whatever `start` attached to the window is adopted.
+    func present(sheet: NSWindow?, on window: NSWindow,
                  start: (@escaping (NSApplication.ModalResponse) -> Void) -> Void,
                  finish: @escaping (NSApplication.ModalResponse) -> Void) {
         self.parentWindow = window
@@ -42,6 +43,9 @@ final class WebKitPageSheetGuard: NSView {
         self.finish = finish
         start { [weak self] response in
             self?.complete(response)
+        }
+        if isPresenting, self.sheet == nil {
+            self.sheet = window.attachedSheet
         }
     }
 

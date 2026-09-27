@@ -86,6 +86,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitContentBlocking.swift
   Engine/WebKitTab+Navigation.swift
   Engine/WebKitTab+UIDelegate.swift
+  Engine/WebKitTab+Printing.swift
   Engine/WebKitTab+Downloads.swift
   Engine/WebKitTab+Scripts.swift
   Engine/WebKitFindScript.swift
