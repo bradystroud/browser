@@ -4,7 +4,7 @@ import SecurityInterface
 /// A small window for a link from another app: one page, under a thin header
 /// with the site, the profile's dot and "Open in Browser" (⌘O). ⌘W closes
 /// it, and so does Escape when the page itself does not have focus (see
-/// handleKeyDown). Opened by RoutingCoordinator when LinkOpening resolves to
+/// EscapeDismissal). Opened by RoutingCoordinator when LinkOpening resolves to
 /// `.littleWindow`, and by `browser open --little`.
 ///
 /// The page is an ordinary Tab, owned here rather than by a
@@ -275,14 +275,11 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-        if event.keyCode == 53, flags.isEmpty {
-            // A page uses Escape to leave video fullscreen or dismiss its own
-            // dialog, and closing the window there would throw away the page
-            // and anything typed into it. So Escape closes only when the
-            // focus is outside the page, the window is not fullscreen and no
-            // permission prompt is up.
-            guard let window, !window.styleMask.contains(.fullScreen), !permissionPrompt.isShowing else { return false }
-            if let responder = window.firstResponder as? NSView, responder.isDescendant(of: tab.hostView) { return false }
+        if event.keyCode == 53 {
+            // Besides the shared rule, a fullscreen window or an open
+            // permission prompt keeps Escape for itself.
+            guard let window, EscapeDismissal.shouldDismiss(for: event, in: window, pageHost: tab.hostView),
+                  !window.styleMask.contains(.fullScreen), !permissionPrompt.isShowing else { return false }
             window.performClose(nil)
             return true
         }

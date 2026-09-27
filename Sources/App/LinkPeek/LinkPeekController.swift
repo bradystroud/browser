@@ -229,7 +229,7 @@ final class LinkPeekController: TabLifecycleObserver {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, self.isShowing, event.window === self.windowController?.window else { return event }
             let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
-            if event.keyCode == 53, flags.isEmpty, !self.pageOrTextHasFocus(in: event.window) {
+            if EscapeDismissal.shouldDismiss(for: event, in: event.window, pageHost: self.peekTab?.hostView) {
                 self.dismiss()
                 return nil
             }
@@ -244,17 +244,6 @@ final class LinkPeekController: TabLifecycleObserver {
     private func removeKeyMonitor() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
-    }
-
-    /// Escape belongs to whatever has focus when that is the peeked page (a
-    /// modal of its own, an IME composition) or a native text field such as
-    /// the omnibox. It closes the peek only from the panel itself -- after a
-    /// click on its header, say -- or when nothing else wants it.
-    private func pageOrTextHasFocus(in window: NSWindow?) -> Bool {
-        guard let responder = window?.firstResponder else { return false }
-        if (responder as? NSTextView)?.isFieldEditor == true { return true }
-        guard let view = responder as? NSView, let pageHost = peekTab?.hostView else { return false }
-        return view.isDescendant(of: pageHost)
     }
 
     // MARK: - Test hook

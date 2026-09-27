@@ -61,6 +61,7 @@ set(BROWSER_SWIFT_SRCS
   TabStripOrientationPreference.swift
   PageZoom.swift
   WindowToast.swift
+  EscapeDismissal.swift
   SiteCard/SiteCardController.swift
   Profile.swift
   ProfileDotView.swift
