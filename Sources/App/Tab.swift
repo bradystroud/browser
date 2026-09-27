@@ -819,6 +819,13 @@ final class Tab: NSObject, EngineTabDelegate {
         // arbitrates registrations by message type, unlike earlier this
         // session).
         executeJavaScript(NotificationOverrideScript.source)
+        if SwipeScrollProbeScript.isNeeded {
+            SwipeNavigationController.shared.documentDidStart(in: self)
+            executeJavaScript(SwipeScrollProbeScript.source)
+        }
+        if AutoScrollPreference.isEnabled {
+            executeJavaScript(AutoScrollScript.source)
+        }
     }
 
     func engineTabDidCommitNavigation(_ url: String) {

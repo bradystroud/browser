@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // browser-7jz.3 -- registers with PageMessageDispatcher and
         // UNUserNotificationCenter before any tab can navigate.
         WebPushCoordinator.shared.activate()
+        SwipeNavigationController.shared.start()
         // browser-5kq.2 -- a Mac hardware/OS capability check, done once
         // here rather than per tab because the engine keeps it as one
         // process-wide flag; see BrowserEngine.setVisualLookUpAvailable(_:).

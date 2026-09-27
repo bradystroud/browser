@@ -59,7 +59,8 @@ enum WebKitEngine: BrowserEngine {
             perTabCPUUsage: false,
             perTabAudioMute: true,
             customContextMenuItems: false,
-            backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable)
+            backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable,
+            nativeSwipeNavigation: true)
     }
 
     static var contentRuleListStore: WKContentRuleListStore?

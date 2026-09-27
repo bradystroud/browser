@@ -207,6 +207,11 @@ set(BROWSER_SWIFT_SRCS
   Notifications/NotificationOverrideScript.swift
   Notifications/WebPushCoordinator.swift
   Audio/AudioStateScript.swift
+  Gestures/AutoScrollPreference.swift
+  Gestures/AutoScrollScript.swift
+  Gestures/SwipeIndicatorView.swift
+  Gestures/SwipeNavigationController.swift
+  Gestures/SwipeScrollProbeScript.swift
   Audio/TabAudioCoordinator.swift
   CLI/CLIServer.swift
   Update/UpdateCoordinator.swift
@@ -388,6 +393,18 @@ set(BROWSER_SESSION_CORE_SRCS
   )
 source_group(SessionCore FILES ${BROWSER_SESSION_CORE_SRCS})
 
+# GestureCore holds the pointer-gesture logic behind two-finger swipe
+# navigation and middle-click autoscroll -- the swipe tracker's thresholds,
+# axis lock and arm/flick rules, the indicator geometry and the autoscroll
+# speed curve -- so `cd Packages/GestureCore && swift test` covers it without
+# a trackpad. Same "one copy of the logic, two ways to build it" reasoning as
+# every *_CORE_SRCS block above.
+set(BROWSER_GESTURE_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/GestureCore/Sources/GestureCore/SwipeNavigationTracker.swift
+  ${CMAKE_SOURCE_DIR}/Packages/GestureCore/Sources/GestureCore/AutoScrollCurve.swift
+  )
+source_group(GestureCore FILES ${BROWSER_GESTURE_CORE_SRCS})
+
 set(BROWSER_SRCS
   ${BROWSER_BRIDGE_SRCS}
   ${BROWSER_SWIFT_SRCS}
@@ -399,6 +416,7 @@ set(BROWSER_SRCS
   ${BROWSER_CLI_PROTOCOL_SRCS}
   ${BROWSER_SEARCH_CORE_SRCS}
   ${BROWSER_SESSION_CORE_SRCS}
+  ${BROWSER_GESTURE_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS

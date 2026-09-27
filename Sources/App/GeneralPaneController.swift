@@ -81,6 +81,13 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         label.textColor = .secondaryLabelColor
         return label
     }()
+    private let autoScrollCheckbox = NSButton()
+    private let autoScrollHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "Middle-click an empty part of a page, then move the pointer to scroll. Click again, press Escape or scroll to stop. Middle-clicking a link still opens it in a new tab.")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
     private static let searchEngineOrder: [SearchEngineChoice] = [.google, .duckDuckGo, .bing, .kagi, .custom]
 
     /// Engine choice (browser-2a7). Restart-only by nature -- see
@@ -138,6 +145,8 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         suggestionsCheckbox.state = SearchEnginePreference.suggestionsEnabled ? .on : .off
         quickSiteCheckbox.state = SearchEnginePreference.quickSiteSearchEnabled ? .on : .off
         updateSearchRow()
+
+        autoScrollCheckbox.state = AutoScrollPreference.isEnabled ? .on : .off
 
         let engine = EnginePreference.current
         if let index = Self.engineOrder.firstIndex(of: engine) {
@@ -219,6 +228,13 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         quickSiteCheckbox.action = #selector(quickSiteToggled)
         view.addSubview(quickSiteCheckbox)
         view.addSubview(quickSiteHelpLabel)
+
+        autoScrollCheckbox.setButtonType(.switch)
+        autoScrollCheckbox.title = "Scroll with the middle button"
+        autoScrollCheckbox.target = self
+        autoScrollCheckbox.action = #selector(autoScrollToggled)
+        view.addSubview(autoScrollCheckbox)
+        view.addSubview(autoScrollHelpLabel)
 
         for engine in Self.engineOrder {
             enginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: engine), action: nil, keyEquivalent: ""))
@@ -310,6 +326,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         place(quickSiteCheckbox, height: Self.checkboxHeight)
         y += Self.checkboxHeight + 6
         placeHelp(quickSiteHelpLabel, indent: Self.checkboxIndent)
+
+        y += rowGap
+        place(autoScrollCheckbox, height: Self.checkboxHeight)
+        y += Self.checkboxHeight + 6
+        placeHelp(autoScrollHelpLabel, indent: Self.checkboxIndent)
 
         y += rowGap
         placeLabeledRow(engineLabel, [(enginePopup, 0, 200)])
@@ -472,6 +493,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     @objc private func suggestionsToggled() {
         SearchEnginePreference.suggestionsEnabled = suggestionsCheckbox.state == .on
         updateSearchRow()
+    }
+
+    @objc private func autoScrollToggled() {
+        AutoScrollPreference.isEnabled = autoScrollCheckbox.state == .on
     }
 
     @objc private func quickSiteToggled() {

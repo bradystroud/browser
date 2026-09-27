@@ -82,6 +82,7 @@ public enum PageMessagePolicy {
         "readingListArticle": .mainFrame,
         "elementHiderPicked": .mainFrame,
         "elementHiderEnded": .mainFrame,
+        "swipeScrollState": .mainFrame,
         "openStartPageSettings": .startPage,
     ]
 

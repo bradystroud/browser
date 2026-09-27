@@ -396,6 +396,9 @@ struct EngineCapabilities {
     /// setBackgroundTabPolicy(_:) changes how hidden tabs are treated. When
     /// false the engine has no such control, and the setting is not offered.
     var backgroundTabPolicy: Bool = false
+    /// The engine's own view turns a two-finger trackpad swipe into back
+    /// and forward. When false, SwipeNavigationController does it instead.
+    var nativeSwipeNavigation: Bool = false
 }
 
 /// How hard the engine works to save memory in tabs the user can't see.
