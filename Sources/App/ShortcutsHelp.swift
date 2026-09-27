@@ -69,6 +69,8 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.inspectElements(_:)): .developer,
         #selector(AppDelegate.toggleDeviceToolbar(_:)): .developer,
         #selector(BrowserWindow.printPage(_:)): .general,
+        #selector(ElementHiderCoordinator.toggleHidingMode(_:)): .general,
+        #selector(ElementHiderCoordinator.showHiddenElements(_:)): .general,
         #selector(BrowserWindowController.showKeyboardShortcuts(_:)): .general,
         #selector(NSApplication.terminate(_:)): .general,
     ]

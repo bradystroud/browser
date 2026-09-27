@@ -1,0 +1,1 @@
+../../../../Sources/App/ElementHider/ElementHiderScript.swift

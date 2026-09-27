@@ -103,7 +103,7 @@ protocol EngineTabDelegate: AnyObject {
     func engineTabDidReceivePageMessage(_ request: String, requestId: Int64, source: PageMessageSource)
 
     /// Fires once per top-level navigation at "document-start" timing --
-    /// see BRWBrowser.h's -browserDidStartMainFrameLoad for the exact CEF
+    /// see BRWBrowser.h's -browserDidStartMainFrameLoadWithURL: for the exact CEF
     /// guarantee (after commit, before the new document's own scripts run).
     /// The right moment to executeJavaScript(_:) a script that needs to run
     /// before the page's own code does.
@@ -337,6 +337,14 @@ protocol EngineTab: AnyObject {
     /// -executeJavaScript: for why this genuinely has no result path at all
     /// (browser-5kq.1).
     func executeJavaScript(_ code: String)
+
+    /// Stylesheets keyed by site (a registrable domain such as
+    /// `example.com`, covering its subdomains too). Every main-frame document
+    /// this tab loads from then on gets its site's sheet from document start,
+    /// before first paint wherever the engine can promise that; the current
+    /// document is updated straight away. Replaces any earlier call's map --
+    /// pass [:] to remove them all. See SiteStyleSheetScript.
+    func setSiteStyleSheets(_ sheetsBySite: [String: String])
 
     /// Retrieves the current page's serialized HTML source -- see
     /// BRWBrowser.h's -getPageSourceWithCompletion: for the real, native CEF

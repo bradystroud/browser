@@ -63,7 +63,7 @@ public enum PageMessagePolicy {
     /// Every type a feature registers for. Nothing is allowed from a
     /// subframe: each of these either acts for "the site in the address
     /// bar" (passwords, card/address saving, email suggestions, notifications, reading-list
-    /// capture) or is the app's own UI (the start page).
+    /// capture, the element hider) or is the app's own UI (the start page).
     public static let rules: [String: PageMessageFrameRule] = [
         "passwordFormSubmit": .mainFrame,
         "passwordCredentialCandidate": .mainFrame,
@@ -80,6 +80,8 @@ public enum PageMessagePolicy {
         "notificationWaitForEvent": .mainFrame,
         "notificationClose": .mainFrame,
         "readingListArticle": .mainFrame,
+        "elementHiderPicked": .mainFrame,
+        "elementHiderEnded": .mainFrame,
         "openStartPageSettings": .startPage,
     ]
 

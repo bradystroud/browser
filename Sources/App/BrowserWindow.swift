@@ -49,6 +49,7 @@ final class BrowserWindow: NSWindow {
         StartPageSettingsCoordinator.shared.activate()
         // Same reasoning, for reading-list article capture (browser-56p).
         ReadingListCoordinator.shared.activate()
+        ElementHiderCoordinator.shared.activate()
     }
 
     required init?(coder: NSCoder) {

@@ -163,8 +163,10 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// script via -executeJavaScript: that needs to run before the page's own
 /// code does (browser-ojh.1's password-form-detection script is the first
 /// user). Not fired for same-document navigations (fragments, history
-/// state) or sub-frame loads.
-- (void)browserDidStartMainFrameLoad;
+/// state) or sub-frame loads. `url` is the committed document's own URL,
+/// which a navigation that never committed (a download, a 204) cannot have
+/// left stale.
+- (void)browserDidStartMainFrameLoadWithURL:(NSString *)url;
 
 /// The user chose "Look Up Image" from the native right-click context menu
 /// over an `<img>` element (browser-5kq.2) -- only ever fires when

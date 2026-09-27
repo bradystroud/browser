@@ -367,8 +367,8 @@ void BRWClientHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
   if (!frame->IsMain()) {
     return;
   }
-  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidStartMainFrameLoad)]) {
-    [delegate_ browserDidStartMainFrameLoad];
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidStartMainFrameLoadWithURL:)]) {
+    [delegate_ browserDidStartMainFrameLoadWithURL:ToNSString(frame->GetURL())];
   }
 }
 

@@ -236,6 +236,22 @@ final class MainMenuBuilder {
         // BrowserWindowController -- see BrowserWindow.toggleFindBar:'s own
         // doc comment for why (browser-5kq.5).
         menu.addItem(withTitle: "Find…", action: #selector(BrowserWindow.toggleFindBar(_:)), keyEquivalent: "f")
+        menu.addItem(.separator())
+        // Targeted at the coordinator singleton, like Settings for This
+        // Website, so its validation can grey both out on a page with no
+        // site (the start page) and tick the first while pick mode is on.
+        let hideItem = menu.addItem(
+            withTitle: "Hide Elements on Page",
+            action: #selector(ElementHiderCoordinator.toggleHidingMode(_:)),
+            keyEquivalent: "h")
+        hideItem.keyEquivalentModifierMask = [.command, .shift]
+        hideItem.target = ElementHiderCoordinator.shared
+        let hiddenItem = menu.addItem(
+            withTitle: "Show Hidden Elements on This Site…",
+            action: #selector(ElementHiderCoordinator.showHiddenElements(_:)),
+            keyEquivalent: "u")
+        hiddenItem.keyEquivalentModifierMask = [.command, .shift]
+        hiddenItem.target = ElementHiderCoordinator.shared
         return menu
     }
 

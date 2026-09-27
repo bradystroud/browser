@@ -114,7 +114,7 @@ class BRWClientHandler : public CefClient,
   // begins loading contents in the frame" (CEF's own doc comment) -- i.e.
   // before the new document's own scripts run. This is the "document-start"
   // hook browser-ojh.1's password-form-detection script needs (via
-  // -browserDidStartMainFrameLoad on the delegate), not OnLoadingStateChange
+  // -browserDidStartMainFrameLoadWithURL: on the delegate), not OnLoadingStateChange
   // above, which fires browser-wide rather than per-frame and doesn't
   // guarantee the new frame/document already exists.
   void OnLoadStart(CefRefPtr<CefBrowser> browser,

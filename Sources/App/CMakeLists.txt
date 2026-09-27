@@ -100,6 +100,8 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitInspector.swift
   Engine/WebKitResponsiveDesign.swift
   Engine/WebKitTab+DevTools.swift
+  Engine/SiteStyleSheetScript.swift
+  Engine/WebKitSiteStyleSheets.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
@@ -169,6 +171,9 @@ set(BROWSER_SWIFT_SRCS
   SiteSettings/SiteSettingsStore.swift
   SiteSettings/SiteSettingsSheetController.swift
   SiteSettings/SiteSettingsEnforcer.swift
+  ElementHider/ElementHiderScript.swift
+  ElementHider/ElementHiderCoordinator.swift
+  ElementHider/HiddenElementsSheetController.swift
   StartPage/StartPageSettings.swift
   StartPage/StartPageBackgroundImageStore.swift
   StartPage/StartPageSections.swift
@@ -255,6 +260,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumPasswordDecryptor.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumProfileReaders.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/RegistrableDomain.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HiddenElementStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/IdentityProviderHints.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailSuggestionRanker.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailAutofillStore.swift

@@ -84,6 +84,12 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     weak var delegate: EngineTabDelegate?
     private let browser: BRWBrowser
 
+    private var siteStyleSheets: [String: String] = [:]
+    /// The URL of the document the main frame actually holds, as OnLoadStart
+    /// reported it. Not OnAddressChange's URL: that already shows a pending
+    /// navigation's destination while the old document is still live.
+    private var currentMainFrameURL: String?
+
     init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
         browser = BRWBrowser(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
         super.init()
@@ -157,6 +163,21 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func executeJavaScript(_ code: String) {
         browser.executeJavaScript(code)
     }
+
+    /// CEF offers no document-start user script without renderer-side code,
+    /// so the sheet goes in at OnLoadStart -- after commit, before the new
+    /// document has painted. Only the matching site's sheet is ever sent to
+    /// the page, never the whole map: this runs in the page's own world.
+    func setSiteStyleSheets(_ sheetsBySite: [String: String]) {
+        siteStyleSheets = sheetsBySite
+        browser.executeJavaScript(SiteStyleSheetScript.apply(css: siteStyleSheetCSS(for: currentMainFrameURL)))
+    }
+
+    private func siteStyleSheetCSS(for url: String?) -> String {
+        guard !siteStyleSheets.isEmpty, let url, let host = URL(string: url)?.host else { return "" }
+        return SiteStyleSheetScript.css(forHost: host, in: siteStyleSheets)
+    }
+
     func getPageSource(completion: @escaping (String?) -> Void) {
         browser.getPageSource(completion: completion)
     }
@@ -227,7 +248,12 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
             request, requestId: requestId, source: PageMessageSource(isMainFrame: isMainFrame, frameURL: frameURL))
     }
 
-    func browserDidStartMainFrameLoad() {
+    func browserDidStartMainFrameLoad(withURL url: String) {
+        currentMainFrameURL = url
+        let css = siteStyleSheetCSS(for: url)
+        if !css.isEmpty {
+            browser.executeJavaScript(SiteStyleSheetScript.apply(css: css))
+        }
         delegate?.engineTabDidStartMainFrameLoad()
     }
 

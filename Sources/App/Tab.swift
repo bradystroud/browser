@@ -439,7 +439,20 @@ final class Tab: NSObject, EngineTabDelegate {
             : ActiveEngine.createTab(profileName: profileName, profileId: profileId, hostView: devTools.pageView, initialURL: engineURLString)
         browser.delegate = self
         devTools.attach(to: browser)
+        if !siteStyleSheets.isEmpty {
+            browser.setSiteStyleSheets(siteStyleSheets)
+        }
         self.browser = browser
+    }
+
+    /// Per-site stylesheets this tab's documents get from document start --
+    /// see EngineTab.setSiteStyleSheets(_:). Kept here as well as in the
+    /// engine so a browser created later (or recreated) starts with them.
+    var siteStyleSheets: [String: String] = [:] {
+        didSet {
+            guard siteStyleSheets != oldValue else { return }
+            browser?.setSiteStyleSheets(siteStyleSheets)
+        }
     }
 
     func load(url: String) {

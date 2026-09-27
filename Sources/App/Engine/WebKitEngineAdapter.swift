@@ -259,6 +259,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
     private let findFrames = WebKitFindFrameRegistry()
     let navigationState = WebKitNavigationState()
     let audioMute = WebKitAudioMute()
+    let siteStyleSheets = WebKitSiteStyleSheets()
     /// Non-nil only while Responsive Design Mode is on.
     private(set) var responsiveDesign: WebKitResponsiveDesign?
     /// Shows a print operation as a sheet on the window and calls its closure
