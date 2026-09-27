@@ -45,6 +45,16 @@ enum StartPageRenderer {
         return "data:text/html;charset=utf-8;base64,\(base64)"
     }
 
+    /// The part of a start-page data: URL that identifies it, independent of
+    /// how an engine re-reports it: the media-type parameters and percent-
+    /// encoding of the payload can both differ from what dataURL produced.
+    /// Nil for anything that is not a data: URL.
+    static func payloadKey(_ url: String) -> String? {
+        guard url.lowercased().hasPrefix("data:"), let comma = url.firstIndex(of: ",") else { return nil }
+        let payload = String(url[url.index(after: comma)...])
+        return payload.removingPercentEncoding ?? payload
+    }
+
     private static func renderHTML(profileId: String) -> String {
         let settings = StartPageSettingsStore.load(forProfileId: profileId)
         // Content (and its empty-state wording) comes from StartPageSections,

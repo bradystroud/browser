@@ -132,8 +132,16 @@ final class Tab: NSObject, EngineTabDelegate {
     /// StartPageRenderer) rather than something the user actually
     /// navigated to. Cleared the moment engineTabDidChangeURL reports any
     /// other URL (a real navigation, e.g. clicking a Favorites/Frequently
-    /// Visited tile).
+    /// Visited tile), and set again when the engine reports one of this
+    /// tab's own start pages (going Back to it).
     private(set) var isShowingStartPage: Bool
+
+    /// Payloads of the start pages this tab has loaded (see
+    /// StartPageRenderer.payloadKey). Kept so going Back to an earlier start
+    /// page, or an engine reporting the data: URL in a re-encoded form, is
+    /// still recognised as the start page rather than shown as a raw data:
+    /// URL. Newest last, capped.
+    private var startPagePayloadKeys: [String] = []
 
     private(set) var faviconURL: String?
     private(set) var isLoading = false
@@ -388,6 +396,7 @@ final class Tab: NSObject, EngineTabDelegate {
         self.title = resolved.isStartPage ? StartPageRenderer.tabTitle : initialURL
         super.init()
         hostView.wantsLayer = true
+        if resolved.isStartPage { rememberStartPage(resolved.url) }
     }
 
     /// A tab around a popup the engine already created and is loading --
@@ -436,6 +445,7 @@ final class Tab: NSObject, EngineTabDelegate {
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
+        if resolved.isStartPage { rememberStartPage(resolved.url) }
         isCurrentURLCommitted = false
         // Set synchronously rather than waiting for the page's own title
         // event to round-trip back from CEF -- anything reading `title`
@@ -457,6 +467,17 @@ final class Tab: NSObject, EngineTabDelegate {
     /// StartPageRenderer bakes its HTML into a `data:` URL once, at navigation
     /// time, so reloading that URL faithfully re-displays the *stale* copy --
     /// only navigating again picks up a changed background or section toggle.
+    private func rememberStartPage(_ url: String) {
+        guard let key = StartPageRenderer.payloadKey(url), !startPagePayloadKeys.contains(key) else { return }
+        startPagePayloadKeys.append(key)
+        if startPagePayloadKeys.count > 8 { startPagePayloadKeys.removeFirst() }
+    }
+
+    private func isOwnStartPage(_ url: String) -> Bool {
+        guard let key = StartPageRenderer.payloadKey(url) else { return false }
+        return startPagePayloadKeys.contains(key)
+    }
+
     func reloadStartPage() {
         guard isShowingStartPage else { return }
         load(url: Self.blankPageSentinel)
@@ -677,7 +698,7 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDidChangeURL(_ url: String) {
         let changed = url != engineURLString
         if changed {
-            isShowingStartPage = false
+            isShowingStartPage = isOwnStartPage(url)
         }
         engineURLString = url
         delegate?.tabDidChangeDisplayState(self)
