@@ -62,8 +62,10 @@ struct SavedCredential: Equatable {
 /// section for why that default is the right call here rather than a
 /// stricter/looser one.
 enum PasswordStore {
+    /// Scoped to this launch's --profiles-root as well as the profile; see
+    /// KeychainNamespace.
     private static func securityDomain(profileName: String) -> String {
-        "dev.stroud.browser.password.\(profileName)"
+        KeychainNamespace.passwordSecurityDomain(profileName: profileName)
     }
 
     private static func keychainProtocol(forScheme scheme: String) -> CFString? {

@@ -649,7 +649,17 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                                              CefRefPtr<CefFrame> frame,
                                              CefRefPtr<CefContextMenuParams> params,
                                              CefRefPtr<CefMenuModel> model) {
-  if (params->HasImageContents()) {
+  // The image items fetch, copy or save the image's address from the
+  // browser process, where the page's own limits don't apply -- so only an
+  // address a page could itself load qualifies, never another app's scheme
+  // a page merely names, and file: only on a page that is itself a local
+  // file the user opened.
+  const std::string image_url = params->GetSourceUrl().ToString();
+  const bool page_is_file = params->GetPageUrl().ToString().rfind("file:", 0) == 0;
+  const bool image_url_allowed = image_url.rfind("http:", 0) == 0 || image_url.rfind("https:", 0) == 0 ||
+                                 image_url.rfind("data:", 0) == 0 || image_url.rfind("blob:", 0) == 0 ||
+                                 (page_is_file && image_url.rfind("file:", 0) == 0);
+  if (params->HasImageContents() && image_url_allowed) {
     if (model->GetCount() > 0) {
       model->AddSeparator();
     }

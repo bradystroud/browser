@@ -50,6 +50,11 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     /// "home"/"work" when the focused form says which it wants (see
     /// FieldClassifier.contactContext), for choosing the contact card's values.
     private var focusedContext = NSMapTable<Tab, NSString>.weakToStrongObjects()
+    /// The origin of the page each tab's fill menu was last opened for. A
+    /// pick from that menu (or from the Contacts picker it leads to) is
+    /// filled only into a top-frame document at this origin, however the
+    /// tab has moved in the meantime.
+    private var offeredOrigins = NSMapTable<Tab, NSString>.weakToStrongObjects()
 
     private var fillButtons = NSMapTable<NSView, NSButton>.weakToWeakObjects()
     private var windowForFillButton = NSMapTable<NSButton, NSWindow>.weakToWeakObjects()
@@ -370,10 +375,12 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
         guard let window = windowForFillButton.object(forKey: sender),
               let controller = window.windowController as? BrowserWindowController,
               let tab = controller.activeTab,
-              let group = focusedGroup.object(forKey: tab) as String?
+              let group = focusedGroup.object(forKey: tab) as String?,
+              let origin = WebOrigin(urlString: tab.urlString)
         else {
             return
         }
+        offeredOrigins.setObject(origin.serialized as NSString, forKey: tab)
 
         let menu = NSMenu()
         if group == "card" {
@@ -468,6 +475,18 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
 
     private func context(for tab: Tab) -> ContactContext? {
         (focusedContext.object(forKey: tab) as String?).flatMap(ContactContext.init(rawValue:))
+    }
+
+    /// The origin the tab's fill menu was offered for, only while the tab
+    /// is still showing that origin.
+    private func fillOrigin(for tab: Tab) -> WebOrigin? {
+        guard let offered = (offeredOrigins.object(forKey: tab) as String?).flatMap({ WebOrigin(urlString: $0) }),
+              WebOrigin(urlString: tab.urlString) == offered
+        else {
+            NSLog("Browser: dropped an autofill pick for a page the tab has left")
+            return nil
+        }
+        return offered
     }
 
     /// The card's items, read fresh from Contacts now that the user opened
@@ -571,7 +590,7 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     }
 
     private func fill(_ selection: MeCardSelection, into tab: Tab) {
-        guard let origin = WebOrigin(urlString: tab.urlString) else { return }
+        guard let origin = fillOrigin(for: tab) else { return }
         tab.executeJavaScript(AutofillFillScript.fillFieldsScript(values: selection.fieldValues, expectedOrigin: origin))
     }
 
@@ -580,17 +599,20 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     }
 
     @objc private func fillFromContact(_ sender: NSMenuItem) {
-        guard let (tab, candidate) = sender.representedObject as? (Tab, ContactFillCandidate) else { return }
+        guard let (tab, candidate) = sender.representedObject as? (Tab, ContactFillCandidate),
+              let origin = fillOrigin(for: tab)
+        else { return }
         tab.executeJavaScript(AutofillFillScript.fillAddressScript(
             fullName: candidate.fullName, streetAddress: candidate.streetAddress, addressLine2: candidate.addressLine2,
             city: candidate.city, state: candidate.state, postalCode: candidate.postalCode, country: candidate.country,
-            phone: candidate.phone, email: candidate.email
+            phone: candidate.phone, email: candidate.email, expectedOrigin: origin
         ))
     }
 
     @objc private func fillCard(_ sender: NSMenuItem) {
         guard let (tab, cardId) = sender.representedObject as? (Tab, String),
-              let summary = cachedCards(profileName: tab.profileName).first(where: { $0.id == cardId })
+              let summary = cachedCards(profileName: tab.profileName).first(where: { $0.id == cardId }),
+              let origin = fillOrigin(for: tab)
         else {
             return
         }
@@ -600,14 +622,15 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
         // page. SECURITY: `number` only ever flows into the fill script;
         // never logged, never written anywhere.
         let profileName = tab.profileName
-        keychainQueue.async { [weak tab] in
+        keychainQueue.async { [weak self, weak tab] in
             guard let number = CardStore.cardNumber(profileName: profileName, id: cardId) else { return }
             DispatchQueue.main.async {
-                guard let tab else { return }
+                guard let tab, let self, self.fillOrigin(for: tab) == origin else { return }
                 tab.executeJavaScript(AutofillFillScript.fillCardScript(
                     cardholderName: summary.cardholderName, cardNumber: number,
                     expMonth: String(format: "%02d", summary.expMonth), expYear: String(summary.expYear),
-                    combinedExpiry: String(format: "%02d/%02d", summary.expMonth, summary.expYear % 100)
+                    combinedExpiry: String(format: "%02d/%02d", summary.expMonth, summary.expYear % 100),
+                    expectedOrigin: origin
                 ))
             }
         }
@@ -615,14 +638,15 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
 
     @objc private func fillAddress(_ sender: NSMenuItem) {
         guard let (tab, addressId) = sender.representedObject as? (Tab, String),
-              let address = AddressStoreManager.shared.store(forProfileId: tab.profileId).all().first(where: { $0.id == addressId })
+              let address = AddressStoreManager.shared.store(forProfileId: tab.profileId).all().first(where: { $0.id == addressId }),
+              let origin = fillOrigin(for: tab)
         else {
             return
         }
         tab.executeJavaScript(AutofillFillScript.fillAddressScript(
             fullName: address.fullName, streetAddress: address.streetAddress, addressLine2: address.addressLine2,
             city: address.city, state: address.state, postalCode: address.postalCode, country: address.country,
-            phone: address.phone, email: address.email
+            phone: address.phone, email: address.email, expectedOrigin: origin
         ))
     }
 }

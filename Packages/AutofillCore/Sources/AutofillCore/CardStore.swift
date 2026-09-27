@@ -1,5 +1,10 @@
 import Foundation
 import Security
+// The app compiles this file into the same module as BrowserCore's
+// sources; only the standalone package has a BrowserCore module to import.
+#if canImport(BrowserCore)
+import BrowserCore
+#endif
 
 /// A saved card's non-secret display info -- cardholder name, last 4
 /// digits, expiry -- never the full card number. See
@@ -63,8 +68,10 @@ private struct CardMetadata: Codable {
 ///   - kSecValueData = the actual card number, UTF-8 encoded -- the one
 ///     secret this store protects.
 public enum CardStore {
+    /// Scoped to this launch's --profiles-root as well as the profile; see
+    /// KeychainNamespace.
     private static func service(profileName: String) -> String {
-        "dev.stroud.browser.card.\(profileName)"
+        KeychainNamespace.cardService(profileName: profileName)
     }
 
     /// Saves a new card, or overwrites an existing one if `id` matches one

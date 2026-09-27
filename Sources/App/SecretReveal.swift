@@ -6,10 +6,6 @@ import LocalAuthentication
 /// cardNumber) perform no check of their own, so this gate is the only thing
 /// standing between a saved secret and the screen.
 enum SecretReveal {
-    /// Marks pasteboard content as sensitive, per the nspasteboard.org
-    /// convention clipboard managers follow to skip recording it.
-    static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
-
     /// Runs a fresh LocalAuthentication check (Touch ID, falling back to the
     /// account password, as `.deviceOwnerAuthentication` does) and calls
     /// `onSuccess` on the main queue only if it passes. `noun` names what is
@@ -42,14 +38,7 @@ enum SecretReveal {
         alert.addButton(withTitle: copyButtonTitle)
         alert.addButton(withTitle: "Close")
         if alert.runModal() == .alertFirstButtonReturn {
-            copyConcealed(secret)
+            SensitivePasteboard.copy(secret)
         }
-    }
-
-    static func copyConcealed(_ secret: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.declareTypes([.string, concealedType], owner: nil)
-        pasteboard.setString(secret, forType: .string)
-        pasteboard.setData(Data(), forType: concealedType)
     }
 }

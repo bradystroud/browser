@@ -21,9 +21,15 @@ enum AutofillFillScript {
     /// formatted by the caller); `combinedExpiry` is what's written into a
     /// single combined expiry field, if the form has one instead of
     /// separate fields.
-    static func fillCardScript(cardholderName: String, cardNumber: String, expMonth: String, expYear: String, combinedExpiry: String) -> String {
+    ///
+    /// Like every fill script here, does nothing unless it runs in the top
+    /// frame of a document at `expectedOrigin` -- the page the user picked
+    /// the card for. The script is evaluated asynchronously, after a
+    /// Keychain read, and the tab may have moved on by then.
+    static func fillCardScript(cardholderName: String, cardNumber: String, expMonth: String, expYear: String, combinedExpiry: String, expectedOrigin: WebOrigin) -> String {
         """
-        (function(cardholderName, cardNumber, expMonth, expYear, combinedExpiry) {
+        (function(cardholderName, cardNumber, expMonth, expYear, combinedExpiry, expectedOrigin) {
+          if (window.top !== window || location.origin !== expectedOrigin) { return; }
           var scope = window.__brwAutofillLastScope || document;
           var classify = window.__brwAutofillClassify;
           if (!classify) { return; }
@@ -46,16 +52,18 @@ enum AutofillFillScript {
             else if (kind === 'ccExpYear') { setValue(inputs[i], expYear); }
             else if (kind === 'ccExpCombined') { setValue(inputs[i], combinedExpiry); }
           }
-        })(\(jsonStringLiteral(cardholderName)), \(jsonStringLiteral(cardNumber)), \(jsonStringLiteral(expMonth)), \(jsonStringLiteral(expYear)), \(jsonStringLiteral(combinedExpiry)));
+        })(\(jsonStringLiteral(cardholderName)), \(jsonStringLiteral(cardNumber)), \(jsonStringLiteral(expMonth)), \(jsonStringLiteral(expYear)), \(jsonStringLiteral(combinedExpiry)), \(jsonStringLiteral(expectedOrigin.serialized)));
         """
     }
 
     static func fillAddressScript(
         fullName: String, streetAddress: String, addressLine2: String, city: String,
-        state: String, postalCode: String, country: String, phone: String, email: String
+        state: String, postalCode: String, country: String, phone: String, email: String,
+        expectedOrigin: WebOrigin
     ) -> String {
         """
-        (function(fullName, streetAddress, addressLine2, city, state, postalCode, country, phone, email) {
+        (function(fullName, streetAddress, addressLine2, city, state, postalCode, country, phone, email, expectedOrigin) {
+          if (window.top !== window || location.origin !== expectedOrigin) { return; }
           var scope = window.__brwAutofillLastScope || document;
           var classify = window.__brwAutofillClassify;
           if (!classify) { return; }
@@ -77,7 +85,7 @@ enum AutofillFillScript {
             var kind = classify(inputs[i]);
             if (values.hasOwnProperty(kind)) { setValue(inputs[i], values[kind]); }
           }
-        })(\(jsonStringLiteral(fullName)), \(jsonStringLiteral(streetAddress)), \(jsonStringLiteral(addressLine2)), \(jsonStringLiteral(city)), \(jsonStringLiteral(state)), \(jsonStringLiteral(postalCode)), \(jsonStringLiteral(country)), \(jsonStringLiteral(phone)), \(jsonStringLiteral(email)));
+        })(\(jsonStringLiteral(fullName)), \(jsonStringLiteral(streetAddress)), \(jsonStringLiteral(addressLine2)), \(jsonStringLiteral(city)), \(jsonStringLiteral(state)), \(jsonStringLiteral(postalCode)), \(jsonStringLiteral(country)), \(jsonStringLiteral(phone)), \(jsonStringLiteral(email)), \(jsonStringLiteral(expectedOrigin.serialized)));
         """
     }
 

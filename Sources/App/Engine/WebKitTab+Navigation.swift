@@ -34,6 +34,12 @@ final class WebKitNavigationState {
     /// removed once its continue link is used, as CEF's
     /// BRWThreatListConsumeContinue does.
     let threatInterstitialGuards = NSMapTable<WKBackForwardListItem, NSString>.weakToStrongObjects()
+
+    /// An "Open in another app?" sheet is up for this tab.
+    var externalAppPromptShowing = false
+    /// The user said Cancel to one; the page gets no more until it commits
+    /// a new navigation, so a page looping on the redirect can't keep asking.
+    var externalAppPromptsSuppressed = false
 }
 
 extension WebKitTab: WKNavigationDelegate {
@@ -168,6 +174,7 @@ extension WebKitTab: WKNavigationDelegate {
         if navigation !== navigationState.errorPageNavigation {
             navigationState.failedURL = nil
         }
+        navigationState.externalAppPromptsSuppressed = false
         // CEF's OnLoadStart, which fires after commit but before the new
         // document's own scripts run. didCommit is the closest WebKit hook:
         // the response has started arriving and the old document is gone,
@@ -298,33 +305,93 @@ extension WebKitTab: WKNavigationDelegate {
         return !webSchemes.contains(scheme)
     }
 
-    /// A click on a link opens the other app straight away, as any browser
-    /// does. A page redirecting itself there (Zoom's and Teams' join pages do
-    /// exactly this) is asked about first, and only for the main frame, so a
-    /// hidden ad iframe can't launch apps or spam prompts.
+    /// ExternalSchemePolicy decides: a clicked mailto:/tel: link opens
+    /// straight away, every other app is asked about first (Zoom's and
+    /// Teams' join pages redirecting themselves included), and a subframe
+    /// nobody clicked in can't launch apps or spam prompts.
     private func openExternally(_ url: URL, navigationAction: WKNavigationAction) {
         guard let appURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
             NSLog("Browser: no application to open %@", url.scheme ?? "")
             return
         }
-        switch navigationAction.navigationType {
-        case .linkActivated, .formSubmitted:
+        let decision = ExternalSchemePolicy.decide(
+            scheme: url.scheme ?? "",
+            userClicked: Self.isUserClick(navigationAction),
+            isMainFrame: Self.isMainFrameNavigation(navigationAction))
+        switch decision {
+        case .ignore:
+            NSLog("Browser: ignored a subframe's unclicked link to %@", url.scheme ?? "")
+        case .openDirectly:
             NSWorkspace.shared.open(url)
-        default:
-            guard navigationAction.targetFrame?.isMainFrame != false else { return }
+        case .askFirst:
+            // Only as a sheet on the tab's own window, one at a time, and not
+            // again after a Cancel. A background tab has no window, and the
+            // app-modal fallback would block the whole app for a page the
+            // user can't even see.
+            guard let window = webView.window else {
+                NSLog("Browser: ignored a background tab's link to %@", url.scheme ?? "")
+                return
+            }
+            guard !navigationState.externalAppPromptsSuppressed,
+                  !navigationState.externalAppPromptShowing,
+                  window.attachedSheet == nil
+            else { return }
+            navigationState.externalAppPromptShowing = true
             let appName = FileManager.default.displayName(atPath: appURL.path)
             let alert = NSAlert()
             alert.messageText = "Open \u{201C}\(appName)\u{201D}?"
-            let site = webView.url?.host ?? "This page"
+            let site = Self.requestingHost(of: navigationAction) ?? webView.url?.host ?? "This page"
             alert.informativeText = "\(site) wants to open a link in \(appName)."
             alert.addButton(withTitle: "Open")
             alert.addButton(withTitle: "Cancel")
-            present(alert) { response in
+            alert.beginSheetModal(for: window) { [weak self] response in
+                self?.navigationState.externalAppPromptShowing = false
                 if response == .alertFirstButtonReturn {
                     NSWorkspace.shared.open(url)
+                } else {
+                    self?.navigationState.externalAppPromptsSuppressed = true
                 }
             }
         }
+    }
+
+    /// A click on a link or a form's submit button, as the engine saw it.
+    /// WebKit reports a script's `a.click()` or `form.submit()` the same
+    /// way, so where the private `_isUserInitiated` (WebKit's own
+    /// user-gesture flag) is present it must also agree; without it, the
+    /// navigation type alone is the best there is. A server redirect keeps
+    /// the click's type and gesture, but the redirect's target was chosen by
+    /// the server, not the user, so the private `_isRedirect` rules it out.
+    static func isUserClick(_ navigationAction: WKNavigationAction) -> Bool {
+        switch navigationAction.navigationType {
+        case .linkActivated, .formSubmitted: break
+        default: return false
+        }
+        if privateFlag("_isRedirect", of: navigationAction) == true { return false }
+        return privateFlag("_isUserInitiated", of: navigationAction) ?? true
+    }
+
+    /// A private boolean on WKNavigationAction, or nil when this WebKit
+    /// doesn't have it.
+    private static func privateFlag(_ name: String, of navigationAction: WKNavigationAction) -> Bool? {
+        guard navigationAction.responds(to: NSSelectorFromString(name)) else { return nil }
+        return (navigationAction.value(forKey: name) as? Bool) ?? false
+    }
+
+    /// The host of the frame that asked -- an iframe's own, not the page
+    /// around it, so the prompt names who is really asking.
+    static func requestingHost(of navigationAction: WKNavigationAction) -> String? {
+        guard let source = navigationAction.value(forKey: "sourceFrame") as? WKFrameInfo else { return nil }
+        let host = source.securityOrigin.host
+        return host.isEmpty ? nil : host
+    }
+
+    /// Both the frame asking and the frame being navigated are the top
+    /// frame -- an iframe navigating the top page doesn't count.
+    static func isMainFrameNavigation(_ navigationAction: WKNavigationAction) -> Bool {
+        guard navigationAction.targetFrame?.isMainFrame != false else { return false }
+        guard let source = navigationAction.value(forKey: "sourceFrame") as? WKFrameInfo else { return true }
+        return source.isMainFrame
     }
 
     // MARK: - HTTP authentication
