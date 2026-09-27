@@ -122,6 +122,17 @@ protocol EngineTabDelegate: AnyObject {
     /// new tab.
     func engineTabDidRequestViewSource(pageURL: String)
 
+    /// The user chose "Site Information…" from the engine's native context
+    /// menu. The handler shows the site card for this tab. Only engines with
+    /// EngineCapabilities.customContextMenuItems ever send it.
+    func engineTabDidRequestSiteInformation()
+
+    /// What EngineTab.securityStatus() would report has changed outside a
+    /// loading-state change -- insecure content that arrived after the page
+    /// finished loading, say. Only engines that can observe that send it;
+    /// CEF has no such callback, so its status is re-read on load changes.
+    func engineTabDidChangeSecurityState()
+
     /// The user chose "Copy Image" from the native context menu over an image
     /// (browser-5kq.13) -- see BRWBrowser.h's
     /// -browserDidRequestCopyImageForImageURL:pageURL:. The handler is
@@ -297,6 +308,13 @@ protocol EngineTab: AnyObject {
     /// -zoomLevel. 0 (i.e. 100%) when there's no engine-side browser yet.
     func zoomLevel() -> Double
 
+    /// How the visible page arrived, as far as the engine knows. nil when
+    /// the engine has nothing to say (no page yet, or not an http(s) page).
+    /// A snapshot, read on demand. Changes arrive as
+    /// EngineTabDelegate.engineTabDidChangeSecurityState() where the engine
+    /// can observe them, and otherwise with each loading-state change.
+    func securityStatus() -> EngineSecurityStatus?
+
     /// Opens the engine's native print dialog for this tab's current page --
     /// see BRWBrowser.h's -print for what "native" actually means in this
     /// Alloy-style app (browser-5kq.6).
@@ -366,6 +384,21 @@ protocol EnginePopupTab: EngineTab {
     /// Puts the tab's view into `hostView`, sized to fill it and tracking
     /// its size from then on. Called once, by whoever adopts the popup.
     func attach(to hostView: NSView)
+}
+
+/// The engine's own account of the visible page's connection -- see
+/// EngineTab.securityStatus(). What it means to the user is BrowserCore's
+/// ConnectionSecurity's decision, not the engine's.
+struct EngineSecurityStatus {
+    /// The page came over TLS.
+    var isSecureConnection: Bool
+    /// The engine judged the server's certificate not valid.
+    var hasCertificateError: Bool
+    /// Some of the page was fetched over plain http.
+    var hasInsecureContent: Bool
+    /// The server's certificate chain, for the system certificate viewer.
+    /// nil when the connection was not secure or the engine can't supply it.
+    var serverTrust: SecTrust?
 }
 
 /// What the running engine can actually do, for UI that would otherwise

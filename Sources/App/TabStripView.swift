@@ -11,6 +11,9 @@ protocol TabStripViewDelegate: AnyObject {
     /// Tab strip's context menu -- "Close Other Tabs".
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int)
 
+    /// Tab strip's context menu -- "Duplicate Tab".
+    func tabStripView(_ tabStripView: TabStripView, didRequestDuplicateAt index: Int)
+
     /// Speaker icon click, or context menu's "Mute Tab"/"Unmute Tab"
     /// (browser-rhi.4, see TabButtonView).
     func tabStripView(_ tabStripView: TabStripView, didRequestMuteToggleAt index: Int)
@@ -508,6 +511,10 @@ final class TabStripView: NSView {
             button.onCloseOthers = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestCloseOthersAt: index)
+            }
+            button.onDuplicate = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestDuplicateAt: index)
             }
             button.onMuteToggle = { [weak self] in
                 guard let self else { return }

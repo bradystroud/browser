@@ -637,6 +637,7 @@ const int kCopyImageLinkCommandId = MENU_ID_USER_FIRST + 2;
 const int kDownloadImageCommandId = MENU_ID_USER_FIRST + 3;
 const int kViewSourceCommandId = MENU_ID_USER_FIRST + 4;
 const int kInspectElementCommandId = MENU_ID_USER_FIRST + 5;
+const int kSiteInformationCommandId = MENU_ID_USER_FIRST + 20;
 }  // namespace
 
 // static
@@ -692,6 +693,10 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
   }
   model->AddItem(kViewSourceCommandId, "View Page Source");
   model->AddItem(kInspectElementCommandId, "Inspect Element");
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestSiteInformation)]) {
+    model->AddSeparator();
+    model->AddItem(kSiteInformationCommandId, "Site Information…");
+  }
 }
 
 bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
@@ -730,6 +735,11 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       if (delegate_ &&
           [delegate_ respondsToSelector:@selector(browserDidRequestViewSourceForPageURL:)]) {
         [delegate_ browserDidRequestViewSourceForPageURL:ToNSString(params->GetPageUrl())];
+      }
+      return true;
+    case kSiteInformationCommandId:
+      if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidRequestSiteInformation)]) {
+        [delegate_ browserDidRequestSiteInformation];
       }
       return true;
     case kInspectElementCommandId: {

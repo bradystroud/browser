@@ -143,6 +143,23 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func setZoomLevel(_ level: Double) { browser.setZoomLevel(level) }
     func zoomLevel() -> Double { browser.zoomLevel() }
     func print() { browser.print() }
+
+    /// Chromium already judged the certificate (hasCertificateError), so the
+    /// trust built here is only for showing the chain in the system's
+    /// certificate viewer; nothing evaluates it.
+    func securityStatus() -> EngineSecurityStatus? {
+        guard let status = browser.securityStatus() else { return nil }
+        let certificates = status.certificateChain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) }
+        var trust: SecTrust?
+        if !certificates.isEmpty {
+            SecTrustCreateWithCertificates(certificates as CFArray, SecPolicyCreateSSL(true, nil), &trust)
+        }
+        return EngineSecurityStatus(
+            isSecureConnection: status.isSecureConnection,
+            hasCertificateError: status.hasCertificateError,
+            hasInsecureContent: status.hasInsecureContent,
+            serverTrust: trust)
+    }
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         browser.printToPDF(withPath: path, completion: completion)
     }
@@ -263,6 +280,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidRequestViewSource(forPageURL pageURL: String) {
         delegate?.engineTabDidRequestViewSource(pageURL: pageURL)
+    }
+
+    func browserDidRequestSiteInformation() {
+        delegate?.engineTabDidRequestSiteInformation()
     }
 
     func browserDidRequestCopyImage(forImageURL imageURL: String, pageURL: String) {

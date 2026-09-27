@@ -1,4 +1,5 @@
 import AppKit
+import SecurityInterface
 
 /// One native window, belonging to exactly one profile (per-window profile
 /// identity, see docs/plans/2026-07-27-browser-plan.md). Owns a tab strip, an
@@ -257,6 +258,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// blockedRequestCount when non-zero, icon-only otherwise.
     private let contentBlockerButton = NSButton()
     private let contentBlockerPopover = ContentBlockerToolbarController()
+    /// The pill's leading-edge site button: its symbol says how the page
+    /// arrived, and a click opens the site card (see presentSiteCard).
+    private let siteButton = NSButton()
+    private let siteCard = SiteCardController()
+    private let toast = WindowToast()
     /// Per-tab page thumbnails for the Tab Overview grid (browser-rhi.3) --
     /// see TabThumbnailCache's doc comment for why capture only ever
     /// happens at deactivation time (captureThumbnail(for:), called from
@@ -726,6 +732,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // protocol, matching OmniboxField's own doc comment.
         omniboxField.onBuildContextMenu = { [weak self] menu in
             guard let self else { return }
+            self.insertPasteAndGoItem(into: menu)
             menu.addItem(.separator())
             menu.addItem(self.moveToProfileMenuItem())
         }
@@ -747,6 +754,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentBlockerButton.action = #selector(toggleContentBlockerPopover(_:))
         contentBlockerButton.isHidden = true
         omniboxContainerView.contentContainer.addSubview(contentBlockerButton)
+
+        siteButton.applyChromeAppearance(.inline)
+        siteButton.imagePosition = .imageOnly
+        siteButton.toolTip = "Site Information"
+        siteButton.target = self
+        siteButton.action = #selector(showSiteInformation(_:))
+        siteButton.isHidden = true
+        omniboxContainerView.contentContainer.addSubview(siteButton)
 
         reloadButton.applyChromeAppearance(.inline)
         reloadButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Reload")
@@ -893,12 +908,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // (see refreshContentBlockerButton) -- otherwise 0-width so the
         // field's leading edge doesn't leave an empty gap on an ordinary
         // page with nothing blocked.
+        let siteWidth: CGFloat = siteButton.isHidden ? 0 : 20
+        let siteFrame = NSRect(x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2, width: siteWidth, height: 20)
+        let blockerX = innerMargin + siteWidth + (siteWidth > 0 ? 2 : 0)
         let blockerWidth = contentBlockerButton.isHidden ? 0 : contentBlockerButton.frame.width
         let blockerFrame = NSRect(
-            x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2,
+            x: blockerX, y: (Self.omniboxPillHeight - 20) / 2,
             width: blockerWidth, height: 20
         )
-        let fieldX = innerMargin + blockerWidth + (blockerWidth > 0 ? 4 : 0)
+        let fieldX = blockerX + blockerWidth + (blockerWidth > 0 ? 4 : 0)
         // A borderless NSTextField draws its single line at the top of an
         // oversized frame. Size the field to its real one-line height, then
         // center that frame in the pill so both the empty placeholder and
@@ -910,11 +928,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         )
         guard animated else {
             reloadButton.frame = reloadFrame
+            siteButton.frame = siteFrame
             contentBlockerButton.frame = blockerFrame
             omniboxField.frame = fieldFrame
             return
         }
         reloadButton.animator().frame = reloadFrame
+        siteButton.animator().frame = siteFrame
         contentBlockerButton.animator().frame = blockerFrame
         omniboxField.animator().frame = fieldFrame
     }
@@ -1651,6 +1671,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
         updateChromeTint(for: tab)
         refreshContentBlockerButton(for: tab)
+        refreshSiteButton(for: tab)
+        if siteCard.isStale(for: tab) {
+            siteCard.close()
+        }
+    }
+
+    /// Hidden on a page with no address (the start page); otherwise the
+    /// symbol for how the page arrived. Read fresh on every toolbar refresh,
+    /// which every navigation and load-state change already goes through.
+    private func refreshSiteButton(for tab: Tab) {
+        let wasHidden = siteButton.isHidden
+        if tab.urlString.isEmpty {
+            siteButton.isHidden = true
+        } else {
+            let security = tab.connectionSecurity().security
+            siteButton.image = NSImage(systemSymbolName: security.symbolName, accessibilityDescription: security.title)
+            siteButton.contentTintColor = security.isWarning ? .systemOrange : .secondaryLabelColor
+            siteButton.isHidden = false
+        }
+        if siteButton.isHidden != wasHidden {
+            layoutOmniboxInnerContent()
+        }
     }
 
     /// Drives the thin loading-progress bar below the omnibox pill
@@ -1825,6 +1867,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabs[index].toggleMuted()
     }
 
+    func tabStripView(_ tabStripView: TabStripView, didRequestDuplicateAt index: Int) {
+        duplicateTab(at: index)
+    }
+
     func tabStripView(_ tabStripView: TabStripView, didRequestCloseOthersAt index: Int) {
         closeOtherTabs(keeping: index)
     }
@@ -1950,6 +1996,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     @objc func focusOmnibox(_ sender: Any?) {
+        siteCard.close()
         // Put the full, editable URL in before taking focus: once the field
         // editor exists, controlTextDidBeginEditing deliberately leaves the
         // text alone so a keystroke-initiated edit isn't clobbered, so this
@@ -1984,7 +2031,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// same value). Rapid repeat presses cancel and restart the same
     /// timer rather than stacking reverts.
     private func showCopiedFeedback(for tab: Tab) {
-        guard !isOmniboxFocused else { return }
+        // The pill can't say it while it is being edited, so the page says it
+        // instead: an in-window view, never a window of its own.
+        guard !isOmniboxFocused, omniboxField.currentEditor() == nil else {
+            if let contentView = window?.contentView {
+                toast.show("Copied to Clipboard", symbolName: "doc.on.clipboard", in: contentView, belowY: contentAreaTopY)
+            }
+            return
+        }
         copiedFeedbackWorkItem?.cancel()
         omniboxField.stringValue = "Copied to Clipboard"
         let workItem = DispatchWorkItem { [weak self] in
@@ -2047,6 +2101,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             return activeTab != nil
         case #selector(showJavaScriptConsole(_:)), #selector(inspectElements(_:)):
             return activeTab != nil
+        case #selector(pasteAndGo(_:)):
+            let text = NSPasteboard.general.string(forType: .string)
+            menuItem.title = PasteAndGo.menuTitle(for: text)
+            return activeTab != nil && PasteAndGo.action(for: text) != nil
+        case #selector(duplicateTab(_:)), #selector(showSiteInformation(_:)):
+            return activeTab.map { !$0.urlString.isEmpty } ?? false
         default:
             return true
         }
@@ -2441,6 +2501,121 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func tabDidRequestClose(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
         closeTab(at: index)
+    }
+
+    func tabDidRequestSiteInformation(_ tab: Tab) {
+        guard tab === activeTab else { return }
+        showSiteInformation(nil)
+    }
+
+    // MARK: - Site card, Paste and Go, Duplicate Tab
+
+    /// The site button, or the page's "Site Information…" context-menu item.
+    /// A second click on the button closes the card.
+    @objc func showSiteInformation(_ sender: Any?) {
+        if siteCard.isShown {
+            siteCard.close()
+            return
+        }
+        guard let tab = activeTab, !tab.urlString.isEmpty else { return }
+        // The card is a popover, and a popover is a window: ordering one on
+        // screen while the omnibox's field editor is live crashes AppKit
+        // (CLAUDE.md, "Never order a window on screen while the omnibox has
+        // focus"). So the edit is abandoned first, and the card only comes up
+        // a run-loop turn later -- after the field editor, and the system
+        // completion view attached to it, have been torn down -- and only if
+        // the omnibox really did let go.
+        if omniboxField.currentEditor() != nil {
+            autocomplete.dismiss()
+            window?.makeFirstResponder(nil)
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.presentSiteCard(for: tab)
+        }
+    }
+
+    private func presentSiteCard(for tab: Tab) {
+        guard let window, window.isVisible, tab === activeTab, !siteCard.isShown,
+              omniboxField.currentEditor() == nil else { return }
+        let anchor: NSView = siteButton.isHidden ? omniboxContainerView : siteButton
+        let hasSite = SiteIdentity.host(forURLString: tab.urlString) != nil
+        siteCard.show(for: tab, relativeTo: anchor, actions: SiteCardActions(
+            copyAddress: { [weak self] in self?.copyCurrentURL(nil) },
+            print: { [weak self] in self?.activeTab?.print() },
+            showSiteSettings: hasSite ? { [weak self] in
+                guard let self else { return }
+                SiteSettingsSheetController.shared.present(in: self)
+            } : nil,
+            showCertificate: { [weak self] trust in
+                guard let window = self?.window else { return }
+                SFCertificatePanel.shared().beginSheet(
+                    for: window, modalDelegate: nil, didEnd: nil, contextInfo: nil, trust: trust, showGroup: true)
+            }
+        ))
+    }
+
+    /// ⇧⌘V, and the omnibox's context menu: navigate the active tab to the
+    /// clipboard's text, as a URL or as a search.
+    ///
+    /// As a key press, ⇧⌘V navigates only from the omnibox or from native
+    /// chrome. With the page focused, or any other text field (the find
+    /// bar), it keeps its everyday meaning there -- paste without formatting
+    /// -- and never navigates. Whether the page's caret is in an editable
+    /// element can't be told reliably from outside it (a password field
+    /// reports no input context in Chromium), and guessing wrong would send
+    /// the clipboard, possibly a password, to the search engine.
+    @objc func pasteAndGo(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .keyDown, let responder = window?.firstResponder {
+            let isOmnibox = omniboxField.currentEditor().map { $0 === responder } ?? false
+            let isInPage = activeTab.map { tab in
+                (responder as? NSView)?.isDescendant(of: tab.hostView) ?? false
+            } ?? false
+            if !isOmnibox && (isInPage || responder is NSText) {
+                pasteAsPlainTextInPlace(sender)
+                return
+            }
+        }
+        guard let text = NSPasteboard.general.string(forType: .string).flatMap(PasteAndGo.normalize),
+              let resolved = OmniboxSubmission.resolve(text, profile: profile) else {
+            NSSound.beep()
+            return
+        }
+        commitOmniboxNavigation(to: resolved)
+    }
+
+    private func pasteAsPlainTextInPlace(_ sender: Any?) {
+        if !NSApp.sendAction(#selector(NSTextView.pasteAsPlainText(_:)), to: nil, from: sender) {
+            NSApp.sendAction(Selector(("pasteAndMatchStyle:")), to: nil, from: sender)
+        }
+    }
+
+    /// Adds Paste and Go / Paste and Search directly under the field's own
+    /// Paste, or at the top when AppKit's menu has none.
+    private func insertPasteAndGoItem(into menu: NSMenu) {
+        let text = NSPasteboard.general.string(forType: .string)
+        guard PasteAndGo.action(for: text) != nil else { return }
+        let item = NSMenuItem(title: PasteAndGo.menuTitle(for: text), action: #selector(pasteAndGo(_:)), keyEquivalent: "")
+        item.target = self
+        let pasteIndex = menu.items.firstIndex { $0.action == #selector(NSText.paste(_:)) }
+        menu.insertItem(item, at: pasteIndex.map { $0 + 1 } ?? 0)
+    }
+
+    /// File > Duplicate Tab, and the tab's context menu: the same address in
+    /// a new foreground tab beside this one. The back/forward history is not
+    /// carried over; neither engine exposes it.
+    @objc func duplicateTab(_ sender: Any?) {
+        guard let index = activeTabIndex else { return }
+        duplicateTab(at: index)
+    }
+
+    private func duplicateTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        let url = tabs[index].urlString
+        guard !url.isEmpty else {
+            newTab(nil)
+            return
+        }
+        openTabForLinkClick(url: url, afterIndex: index, foreground: true)
     }
 
     private func dismissPermissionPromptIfShowing() {

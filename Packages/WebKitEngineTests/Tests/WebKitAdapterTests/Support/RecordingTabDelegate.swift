@@ -88,6 +88,9 @@ final class RecordingTabDelegate: EngineTabDelegate {
 
     func engineTabDidRequestVisualLookUp(imageURL: String, pageURL: String) {}
     func engineTabDidRequestViewSource(pageURL: String) {}
+    func engineTabDidRequestSiteInformation() {}
+    var securityStateChanges = 0
+    func engineTabDidChangeSecurityState() { securityStateChanges += 1 }
     func engineTabDidRequestCopyImage(imageURL: String, pageURL: String) {}
     func engineTabDidRequestCopyImageLink(imageURL: String) {}
     func engineTabDidRequestDownloadImage(imageURL: String) {}

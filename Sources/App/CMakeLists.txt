@@ -60,6 +60,8 @@ set(BROWSER_SWIFT_SRCS
   SearchEnginePreference.swift
   TabStripOrientationPreference.swift
   PageZoom.swift
+  WindowToast.swift
+  SiteCard/SiteCardController.swift
   Profile.swift
   ProfileDotView.swift
   ProfileManager.swift
@@ -266,6 +268,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumProfileReaders.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/RegistrableDomain.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HiddenElementStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ConnectionSecurity.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/IdentityProviderHints.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailSuggestionRanker.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailAutofillStore.swift
@@ -376,6 +379,7 @@ set(BROWSER_SEARCH_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/QuickSiteSearch.swift
   ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/SearchEngine.swift
   ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/SearchSuggestionParser.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SearchCore/Sources/SearchCore/PasteAndGo.swift
   )
 source_group(SearchCore FILES ${BROWSER_SEARCH_CORE_SRCS})
 

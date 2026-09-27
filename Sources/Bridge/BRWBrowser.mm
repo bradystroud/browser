@@ -5,9 +5,11 @@
 #include "include/cef_browser.h"
 #include "include/cef_image.h"
 #include "include/cef_request_context.h"
+#include "include/cef_ssl_status.h"
 #include "include/cef_string_visitor.h"
 #include "include/cef_task_manager.h"
 #include "include/cef_values.h"
+#include "include/cef_x509_certificate.h"
 
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
@@ -106,6 +108,48 @@ class DownloadImageCallback : public CefDownloadImageCallback {
   void (^completion_)(NSData *_Nullable pngData, NSInteger httpStatusCode);
   IMPLEMENT_REFCOUNTING(DownloadImageCallback);
 };
+}  // namespace
+
+@implementation BRWSecurityStatus
+
+@synthesize isSecureConnection = _isSecureConnection;
+@synthesize hasCertificateError = _hasCertificateError;
+@synthesize hasInsecureContent = _hasInsecureContent;
+@synthesize certificateChain = _certificateChain;
+
+- (instancetype)initWithSecureConnection:(BOOL)isSecureConnection
+                        certificateError:(BOOL)hasCertificateError
+                         insecureContent:(BOOL)hasInsecureContent
+                        certificateChain:(NSArray<NSData *> *)certificateChain {
+  if ((self = [super init])) {
+    _isSecureConnection = isSecureConnection;
+    _hasCertificateError = hasCertificateError;
+    _hasInsecureContent = hasInsecureContent;
+    _certificateChain = [certificateChain copy];
+  }
+  return self;
+}
+
+@end
+
+namespace {
+NSData *ToNSData(CefRefPtr<CefBinaryValue> value) {
+  if (!value || value->GetSize() == 0) {
+    return nil;
+  }
+  NSMutableData *data = [NSMutableData dataWithLength:value->GetSize()];
+  value->GetData(data.mutableBytes, data.length, 0);
+  return data;
+}
+
+// Chromium's net::IsCertStatusError: bits 0-15 are errors, except the two
+// revocation-check bits it calls minor (net::IsCertStatusMinorError), which
+// never turn its own lock red either.
+bool IsCertStatusError(cef_cert_status_t status) {
+  const uint32_t all_errors = 0xFFFF;
+  const uint32_t minor = CERT_STATUS_NO_REVOCATION_MECHANISM | CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+  return (static_cast<uint32_t>(status) & all_errors & ~minor) != 0;
+}
 }  // namespace
 
 @implementation BRWBrowser {
@@ -310,6 +354,39 @@ class DownloadImageCallback : public CefDownloadImageCallback {
     return 0.0;
   }
   return _handler->GetBrowser()->GetHost()->GetZoomLevel();
+}
+
+- (BRWSecurityStatus *)securityStatus {
+  if (!_handler || !_handler->GetBrowser()) {
+    return nil;
+  }
+  CefRefPtr<CefNavigationEntry> entry = _handler->GetBrowser()->GetHost()->GetVisibleNavigationEntry();
+  if (!entry || !entry->IsValid()) {
+    return nil;
+  }
+  CefRefPtr<CefSSLStatus> ssl = entry->GetSSLStatus();
+  if (!ssl) {
+    return nil;
+  }
+  NSMutableArray<NSData *> *chain = [NSMutableArray array];
+  if (CefRefPtr<CefX509Certificate> certificate = ssl->GetX509Certificate()) {
+    if (NSData *leaf = ToNSData(certificate->GetDEREncoded())) {
+      [chain addObject:leaf];
+      CefX509Certificate::IssuerChainBinaryList issuers;
+      certificate->GetDEREncodedIssuerChain(issuers);
+      for (const auto &issuer : issuers) {
+        if (NSData *data = ToNSData(issuer)) {
+          [chain addObject:data];
+        }
+      }
+    }
+  }
+  const int content = ssl->GetContentStatus();
+  return [[BRWSecurityStatus alloc]
+      initWithSecureConnection:ssl->IsSecureConnection()
+              certificateError:IsCertStatusError(ssl->GetCertStatus())
+               insecureContent:(content & (SSL_CONTENT_DISPLAYED_INSECURE_CONTENT | SSL_CONTENT_RAN_INSECURE_CONTENT)) != 0
+              certificateChain:chain];
 }
 
 - (void)print {

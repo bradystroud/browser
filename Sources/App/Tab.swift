@@ -54,6 +54,10 @@ protocol TabDelegate: AnyObject {
 
     /// The page called window.close() -- close exactly this tab.
     func tabDidRequestClose(_ tab: Tab)
+
+    /// "Site Information…" from the page's context menu -- show the site
+    /// card for this tab.
+    func tabDidRequestSiteInformation(_ tab: Tab)
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -326,6 +330,20 @@ final class Tab: NSObject, EngineTabDelegate {
     var zoomFactor: Double {
         guard let browser else { return PageZoom.defaultFactor }
         return PageZoom.factor(forLevel: browser.zoomLevel())
+    }
+
+    /// How the page on screen arrived, read fresh from the engine each time
+    /// (it changes with every navigation and nothing pushes it), plus the
+    /// server's certificate chain when there is one to show.
+    func connectionSecurity() -> (security: ConnectionSecurity, serverTrust: SecTrust?) {
+        let status = browser?.securityStatus()
+        let report = status.map {
+            ConnectionSecurity.EngineReport(
+                isSecureConnection: $0.isSecureConnection,
+                hasCertificateError: $0.hasCertificateError,
+                hasInsecureContent: $0.hasInsecureContent)
+        }
+        return (ConnectionSecurity.classify(urlString: urlString, report: report), status?.serverTrust)
     }
 
     /// "100%", "125%" -- for anything that wants to show the current zoom.
@@ -631,6 +649,14 @@ final class Tab: NSObject, EngineTabDelegate {
         if #available(macOS 13.0, *) {
             VisualLookUpController.handleRequest(imageURL: imageURL, pageURL: pageURL)
         }
+    }
+
+    func engineTabDidRequestSiteInformation() {
+        delegate?.tabDidRequestSiteInformation(self)
+    }
+
+    func engineTabDidChangeSecurityState() {
+        delegate?.tabDidChangeDisplayState(self)
     }
 
     /// "View Page Source" from the native context menu. Opens Chromium's own

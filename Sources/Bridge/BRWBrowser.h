@@ -218,6 +218,10 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// removes CEF's own menu item pointing at it.
 - (void)browserDidRequestViewSourceForPageURL:(NSString *)pageURL;
 
+/// The user chose "Site Information…" from the context menu. The delegate
+/// shows the site card for this browser's page.
+- (void)browserDidRequestSiteInformation;
+
 /// The engine wants `url` opened somewhere other than the current tab.
 ///
 /// Two distinct CEF callbacks feed this, and both matter:
@@ -296,6 +300,27 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// itself, in the last container it was embedded in, or CEF's own separate
 /// window if it never was.
 - (void)browserDidRequestInspectElementAtPoint:(NSPoint)point;
+@end
+
+/// What Chromium recorded about how the visible page arrived, read from its
+/// visible navigation entry's CefSSLStatus. A snapshot: it does not update.
+@interface BRWSecurityStatus : NSObject
+/// CefSSLStatus::IsSecureConnection -- the page came over TLS.
+@property (nonatomic, readonly) BOOL isSecureConnection;
+/// Any of the certificate status bits Chromium counts as an error. The two
+/// revocation-check bits it treats as minor (no mechanism, unable to check)
+/// are left out, as Chromium's own security indicator leaves them out.
+@property (nonatomic, readonly) BOOL hasCertificateError;
+/// The page displayed or ran something fetched over plain http.
+@property (nonatomic, readonly) BOOL hasInsecureContent;
+/// The server's certificate followed by its issuer chain, each DER-encoded.
+/// Empty when the connection was not secure.
+@property (nonatomic, readonly, copy) NSArray<NSData *> *certificateChain;
+- (instancetype)initWithSecureConnection:(BOOL)isSecureConnection
+                        certificateError:(BOOL)hasCertificateError
+                         insecureContent:(BOOL)hasInsecureContent
+                        certificateChain:(NSArray<NSData *> *)certificateChain NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
 @end
 
 /// One Alloy-style CEF browser hosted inside a caller-supplied NSView, backed
@@ -463,6 +488,12 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// there's no engine-side browser yet, which is also the correct default for
 /// a browser that hasn't been created.
 - (double)zoomLevel;
+
+/// The visible page's connection security, or nil when there is no browser
+/// or navigation entry yet, or the entry carries no SSL status (a page that
+/// is not http(s), or one still committing). UI thread only, like every
+/// CefBrowserHost navigation-entry read -- always the main thread here.
+- (nullable BRWSecurityStatus *)securityStatus;
 
 /// Opens CEF's native print dialog for this tab's current page (see
 /// BRWBrowser.mm's -print for what "native" actually means in this Alloy-

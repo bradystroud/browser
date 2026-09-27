@@ -10,6 +10,9 @@ final class WebKitNavigationState {
     /// superseded by the next one.
     var generation = 0
 
+    /// A main-frame navigation has started and not yet committed or failed.
+    var isProvisional = false
+
     /// The navigation that loads our own error/crash page. Its commit and
     /// finish are not a visit: the page is ours, not the site's.
     var errorPageNavigation: WKNavigation?
@@ -153,6 +156,8 @@ extension WebKitTab: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         navigationState.generation += 1
+        navigationState.isProvisional = true
+        delegate?.engineTabDidChangeSecurityState()
         guard let url = webView.url?.absoluteString else { return }
         delegate?.engineTabWillStartMainFrameNavigation(url)
     }
@@ -165,6 +170,8 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        navigationState.isProvisional = false
+        delegate?.engineTabDidChangeSecurityState()
         if let pending = navigationState.pendingThreatInterstitial, navigation === pending.navigation {
             navigationState.pendingThreatInterstitial = nil
             if let item = webView.backForwardList.currentItem {
@@ -211,6 +218,8 @@ extension WebKitTab: WKNavigationDelegate {
     /// TLS failure. Without this the tab keeps showing the previous page (or
     /// stays blank) with nothing explaining why.
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        navigationState.isProvisional = false
+        delegate?.engineTabDidChangeSecurityState()
         if navigation === navigationState.errorPageNavigation {
             navigationState.errorPageNavigation = nil
             return

@@ -33,6 +33,8 @@ final class TabButtonView: NSView {
     var onPinToggle: (() -> Void)?
     /// Context menu's "Close Other Tabs".
     var onCloseOthers: (() -> Void)?
+    /// Context menu's "Duplicate Tab".
+    var onDuplicate: (() -> Void)?
     /// Context menu's "Move to Group > <existing group>" -- the chosen
     /// group's id.
     var onMoveToGroup: ((UUID) -> Void)?
@@ -602,6 +604,8 @@ final class TabButtonView: NSView {
         }
 
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Duplicate Tab", action: #selector(duplicateTapped), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Close Tab", action: #selector(closeTapped), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close Other Tabs", action: #selector(closeOthersTapped), keyEquivalent: "").target = self
         NSMenu.popUpContextMenu(menu, with: event, for: self)
@@ -652,6 +656,10 @@ final class TabButtonView: NSView {
 
     @objc private func closeOthersTapped() {
         onCloseOthers?()
+    }
+
+    @objc private func duplicateTapped() {
+        onDuplicate?()
     }
 
     @objc private func moveToExistingGroupTapped(_ sender: NSMenuItem) {

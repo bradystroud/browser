@@ -160,6 +160,11 @@ final class MainMenuBuilder {
         menu.addItem(withTitle: "New Private Window", action: #selector(AppDelegate.newPrivateWindow(_:)), keyEquivalent: "n")
             .keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(withTitle: "New Tab", action: #selector(BrowserWindowController.newTab(_:)), keyEquivalent: "t")
+        // ⌘D is Add Bookmark and ⇧⌘D Add to Reading List, and macOS itself
+        // takes ⌥⌘D (Dock hiding) before any app sees it -- so the free
+        // chord in the D family is ⌥⇧⌘D.
+        menu.addItem(withTitle: "Duplicate Tab", action: #selector(BrowserWindowController.duplicateTab(_:)), keyEquivalent: "d")
+            .keyEquivalentModifierMask = [.command, .option, .shift]
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Tab", action: #selector(BrowserWindowController.closeTab(_:)), keyEquivalent: "w")
         menu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
@@ -230,6 +235,10 @@ final class MainMenuBuilder {
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        // Retitled Paste and Search by BrowserWindowController's validation
+        // when the clipboard holds words rather than an address.
+        menu.addItem(withTitle: "Paste and Go", action: #selector(BrowserWindowController.pasteAndGo(_:)), keyEquivalent: "v")
+            .keyEquivalentModifierMask = [.command, .shift]
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         menu.addItem(.separator())
         // Targets BrowserWindow (the NSWindow itself), not
