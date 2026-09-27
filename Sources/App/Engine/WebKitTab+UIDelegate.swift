@@ -20,6 +20,14 @@ extension WebKitTab: WKUIDelegate {
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let delegate else { return nil }
         let target = navigationAction.request.url?.absoluteString ?? ""
+        if consumeLinkPeekMenuArming() {
+            // "Peek Link" borrowed WebKit's Open Link in New Window to learn
+            // the link; see WebKitLinkPeekMenu.
+            if PopupTargetPolicy.isAllowed(targetURL: target, openerOrigin: Self.sourceOrigin(of: navigationAction)) {
+                delegate.engineTabDidRequestPeekLink(url: target)
+            }
+            return nil
+        }
         guard PopupTargetPolicy.isAllowed(targetURL: target, openerOrigin: Self.sourceOrigin(of: navigationAction)) else {
             NSLog("Browser: refused a page-opened window for %@", Self.schemeForLog(target))
             return nil

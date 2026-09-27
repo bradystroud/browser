@@ -133,6 +133,10 @@ protocol EngineTabDelegate: AnyObject {
     /// CEF has no such callback, so its status is re-read on load changes.
     func engineTabDidChangeSecurityState()
 
+    /// The user chose "Peek Link" from the engine's context menu over a link.
+    /// The handler opens `url` in a peek over this tab's page.
+    func engineTabDidRequestPeekLink(url: String)
+
     /// The user chose "Copy Image" from the native context menu over an image
     /// (browser-5kq.13) -- see BRWBrowser.h's
     /// -browserDidRequestCopyImageForImageURL:pageURL:. The handler is

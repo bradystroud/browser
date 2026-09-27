@@ -263,6 +263,8 @@ final class WebKitTab: NSObject, EnginePopupTab {
     let siteStyleSheets = WebKitSiteStyleSheets()
     /// Non-nil only while Responsive Design Mode is on.
     private(set) var responsiveDesign: WebKitResponsiveDesign?
+    /// When "Peek Link" was last chosen -- see WebKitLinkPeekMenu.
+    var linkPeekMenuArmedAt: Date?
     /// Shows a print operation as a sheet on the window and calls its closure
     /// once the sheet has gone. The adapter tests swap it out, since a real
     /// print panel would block the run loop they spin.
@@ -287,7 +289,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
         }
         config.applicationNameForUserAgent = SafariUserAgent.applicationName
-        webView = WKWebView(frame: hostView.bounds, configuration: config)
+        webView = WebKitContentView(frame: hostView.bounds, configuration: config)
         super.init()
         finishInit(hostView: hostView, initialURL: initialURL, config: config)
     }
@@ -304,7 +306,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.applicationNameForUserAgent = SafariUserAgent.applicationName
-        webView = WKWebView(frame: hostView.bounds, configuration: config)
+        webView = WebKitContentView(frame: hostView.bounds, configuration: config)
         super.init()
         finishInit(hostView: hostView, initialURL: initialURL, config: config)
     }
@@ -318,7 +320,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
     init(popupConfiguration config: WKWebViewConfiguration, profileName: String) {
         self.profileName = profileName
         config.userContentController = WKUserContentController()
-        webView = WKWebView(frame: .zero, configuration: config)
+        webView = WebKitContentView(frame: .zero, configuration: config)
         super.init()
         finishInit(hostView: nil, initialURL: nil, config: config)
     }
@@ -335,6 +337,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         webView.uiDelegate = self
         webView.autoresizingMask = [.width, .height]
         webView.allowsBackForwardNavigationGestures = true
+        installLinkPeekMenu()
         // Pinch is WebKit's visual magnification, on top of (not instead of)
         // the pageZoom the zoom menu drives -- the same split Safari has.
         // setZoomLevel(_:) resets it, so a zoom command always leaves the page

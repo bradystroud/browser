@@ -58,6 +58,10 @@ protocol TabDelegate: AnyObject {
     /// "Site Information…" from the page's context menu -- show the site
     /// card for this tab.
     func tabDidRequestSiteInformation(_ tab: Tab)
+
+    /// The engine's context-menu "Peek Link" -- open `url` in a peek over
+    /// this tab (see LinkPeekController).
+    func tab(_ tab: Tab, didRequestPeekForURL url: String)
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -753,6 +757,11 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDidRequestViewSource(pageURL: String) {
         guard !pageURL.isEmpty else { return }
         delegate?.tab(self, didRequestNewTabForURL: "view-source:\(pageURL)", foreground: true)
+    }
+
+    func engineTabDidRequestPeekLink(url: String) {
+        guard !url.isEmpty else { return }
+        delegate?.tab(self, didRequestPeekForURL: url)
     }
 
     /// "Copy Image" from the native context menu (browser-5kq.13). Passes

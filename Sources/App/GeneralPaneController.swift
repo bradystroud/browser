@@ -88,6 +88,14 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         label.textColor = .secondaryLabelColor
         return label
     }()
+    private let linkPeekCheckbox = NSButton()
+    private let linkPeekHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString:
+            "Opens the link in a panel over the page, which you can keep as a tab. Without this, ⌥⇧-click opens a new window like ⇧-click.")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
     private static let searchEngineOrder: [SearchEngineChoice] = [.google, .duckDuckGo, .bing, .kagi, .custom]
 
     /// Engine choice (browser-2a7). Restart-only by nature -- see
@@ -158,6 +166,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         customTemplateField.stringValue = SearchEnginePreference.customTemplate
         suggestionsCheckbox.state = SearchEnginePreference.suggestionsEnabled ? .on : .off
         quickSiteCheckbox.state = SearchEnginePreference.quickSiteSearchEnabled ? .on : .off
+        linkPeekCheckbox.state = LinkPeekPreference.isEnabled ? .on : .off
         updateSearchRow()
         updateTabSleepRow()
 
@@ -265,6 +274,13 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         view.addSubview(autoScrollCheckbox)
         view.addSubview(autoScrollHelpLabel)
 
+        linkPeekCheckbox.setButtonType(.switch)
+        linkPeekCheckbox.title = "Peek at links with ⌥⇧-click"
+        linkPeekCheckbox.target = self
+        linkPeekCheckbox.action = #selector(linkPeekToggled)
+        view.addSubview(linkPeekCheckbox)
+        view.addSubview(linkPeekHelpLabel)
+
         for engine in Self.engineOrder {
             enginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: engine), action: nil, keyEquivalent: ""))
         }
@@ -360,6 +376,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         place(autoScrollCheckbox, height: Self.checkboxHeight)
         y += Self.checkboxHeight + 6
         placeHelp(autoScrollHelpLabel, indent: Self.checkboxIndent)
+
+        y += rowGap
+        place(linkPeekCheckbox, height: Self.checkboxHeight)
+        y += Self.checkboxHeight + 6
+        placeHelp(linkPeekHelpLabel, indent: Self.checkboxIndent)
 
         y += rowGap
         placeLabeledRow(engineLabel, [(enginePopup, 0, 200)])
@@ -539,6 +560,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
 
     @objc private func autoScrollToggled() {
         AutoScrollPreference.isEnabled = autoScrollCheckbox.state == .on
+    }
+
+    @objc private func linkPeekToggled() {
+        LinkPeekPreference.isEnabled = linkPeekCheckbox.state == .on
     }
 
     @objc private func quickSiteToggled() {

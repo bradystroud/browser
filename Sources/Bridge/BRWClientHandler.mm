@@ -637,7 +637,20 @@ const int kCopyImageLinkCommandId = MENU_ID_USER_FIRST + 2;
 const int kDownloadImageCommandId = MENU_ID_USER_FIRST + 3;
 const int kViewSourceCommandId = MENU_ID_USER_FIRST + 4;
 const int kInspectElementCommandId = MENU_ID_USER_FIRST + 5;
+const int kPeekLinkCommandId = MENU_ID_USER_FIRST + 6;
 const int kSiteInformationCommandId = MENU_ID_USER_FIRST + 20;
+
+// The peek loads its link as a browser-initiated navigation, so a link the
+// page could not have opened in a new tab (file:, data:, chrome:...) must
+// not reach it this way either.
+bool PeekableLink(CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params) {
+  if (!(params->GetTypeFlags() & CM_TYPEFLAG_LINK)) {
+    return false;
+  }
+  const std::string link_url = params->GetLinkUrl().ToString();
+  const std::string frame_url = frame ? frame->GetURL().ToString() : std::string();
+  return !link_url.empty() && BRWPopupTargetAllowed(link_url, frame_url);
+}
 }  // namespace
 
 // static
@@ -650,6 +663,14 @@ void BRWClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
                                              CefRefPtr<CefFrame> frame,
                                              CefRefPtr<CefContextMenuParams> params,
                                              CefRefPtr<CefMenuModel> model) {
+  // First, as Safari and Arc put their own link-opening items at the top.
+  if (PeekableLink(frame, params)) {
+    model->InsertItemAt(0, kPeekLinkCommandId, "Peek Link");
+    if (model->GetCount() > 1) {
+      model->InsertSeparatorAt(1);
+    }
+  }
+
   // The image items fetch, copy or save the image's address from the
   // browser process, where the page's own limits don't apply -- so only an
   // address a page could itself load qualifies, never another app's scheme
@@ -729,6 +750,12 @@ bool BRWClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       if (delegate_ &&
           [delegate_ respondsToSelector:@selector(browserDidRequestDownloadImageForImageURL:)]) {
         [delegate_ browserDidRequestDownloadImageForImageURL:ToNSString(params->GetSourceUrl())];
+      }
+      return true;
+    case kPeekLinkCommandId:
+      if (PeekableLink(frame, params) && delegate_ &&
+          [delegate_ respondsToSelector:@selector(browserDidRequestPeekLinkForURL:)]) {
+        [delegate_ browserDidRequestPeekLinkForURL:ToNSString(params->GetLinkUrl())];
       }
       return true;
     case kViewSourceCommandId:

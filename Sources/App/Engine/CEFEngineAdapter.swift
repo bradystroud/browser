@@ -286,6 +286,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         delegate?.engineTabDidRequestSiteInformation()
     }
 
+    func browserDidRequestPeekLink(forURL linkURL: String) {
+        delegate?.engineTabDidRequestPeekLink(url: linkURL)
+    }
+
     func browserDidRequestCopyImage(forImageURL imageURL: String, pageURL: String) {
         delegate?.engineTabDidRequestCopyImage(imageURL: imageURL, pageURL: pageURL)
     }

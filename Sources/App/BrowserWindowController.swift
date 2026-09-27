@@ -274,6 +274,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// time this first actually runs (lazy), even though it's referenced
     /// in its own initializer.
     private lazy var tabOverview = TabOverviewController(windowController: self)
+    /// The link peek panel over this window's page -- see LinkPeekController.
+    private(set) lazy var linkPeek = LinkPeekController(windowController: self, container: contentContainerView)
     /// The tab + promptId a permission request is currently showing UI for,
     /// so a CEF-initiated dismiss (engineTabDidDismissPermissionRequest) for
     /// an unrelated/stale promptId doesn't tear down a newer prompt.
@@ -390,6 +392,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         } else {
             window?.makeKeyAndOrderFront(nil)
         }
+        linkPeek.windowDidShow()
         guard tabs.isEmpty else { return }
 
         if let popup = pendingPopupTab {
@@ -1818,7 +1821,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // MARK: - TabDelegate
 
     func tabDidChangeDisplayState(_ tab: Tab) {
-        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else {
+            linkPeek.peekedTabDidChangeDisplayState(tab)
+            return
+        }
         // displayTitle, not title (browser-7z5) -- shows the target host as
         // a placeholder while loading and before a real title has arrived
         // for the current navigation, instead of the previous page's now-
@@ -2495,6 +2501,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// wouldn't be Swift-owned (no toolbar/tab strip/session-restore/quit-
     /// sequencing integration).
     func tab(_ tab: Tab, didRequestNewWindowForURL url: String) {
+        if linkPeek.takeNewWindowRequest(url: url, from: tab) { return }
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url, isPrivate: isPrivate)
     }
 
@@ -2502,6 +2509,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// opener. Placed exactly where a URL-only request would have put it.
     func tab(_ tab: Tab, didOpenPopup popup: Tab, inNewWindow: Bool, foreground: Bool) {
         if inNewWindow {
+            if linkPeek.takePopup(popup, from: tab) { return }
             WindowManager.shared.openNewWindow(profile: profile, adoptingPopup: popup, isPrivate: isPrivate)
             return
         }
@@ -2512,7 +2520,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// window.close() from the page. Closes only that tab; the window goes
     /// too only when it was the last one, as with any other tab close.
     func tabDidRequestClose(_ tab: Tab) {
-        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else {
+            linkPeek.peekedTabDidRequestClose(tab)
+            return
+        }
         closeTab(at: index)
     }
 
@@ -2631,6 +2642,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         openTabForLinkClick(url: url, afterIndex: index, foreground: true)
     }
 
+    /// Context-menu "Peek Link", from any tab in this window.
+    func tab(_ tab: Tab, didRequestPeekForURL url: String) {
+        linkPeek.show(url: url)
+    }
+
+    /// "Open as Tab" from the link peek: the peeked Tab, already loaded,
+    /// joins the strip next to the current tab as the active one.
+    func adoptPeekedTab(_ tab: Tab) {
+        let index = activeTabIndex.map { insertionIndex(afterOpenerAt: $0) } ?? tabs.count
+        insert(tab, makeActive: true, at: index, focusOmnibox: false)
+    }
+
     private func dismissPermissionPromptIfShowing() {
         guard pendingPermissionRequest != nil else { return }
         pendingPermissionRequest = nil
@@ -2640,6 +2663,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        linkPeek.dismiss()
         autocomplete.dismiss()
         dismissPermissionPromptIfShowing()
         tabOverview.dismiss()

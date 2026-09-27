@@ -451,6 +451,12 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
         if foreground { controller.window?.makeKeyAndOrderFront(nil) }
     }
 
+    /// A peek belongs to a browser window's content area, and a little window
+    /// is already a quick look at one page, so the link opens as a tab there.
+    func tab(_ tab: Tab, didRequestPeekForURL url: String) {
+        self.tab(tab, didRequestNewTabForURL: url, foreground: true)
+    }
+
     func tab(_ tab: Tab, didRequestNewWindowForURL url: String) {
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
     }

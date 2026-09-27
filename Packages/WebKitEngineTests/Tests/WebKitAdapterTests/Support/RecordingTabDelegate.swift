@@ -54,6 +54,7 @@ final class RecordingTabDelegate: EngineTabDelegate {
     func engineTabDidUpdateLoadingProgress(_ progress: Double) { events.append("progress:\(progress)") }
     func engineTabDidCommitNavigation(_ url: String) { events.append("commit:\(url)") }
     func engineTabDidStartMainFrameLoad() { events.append("didStartLoad") }
+    func engineTabDidRequestPeekLink(url: String) { events.append("peekLink:\(url)") }
     func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition) {
         events.append("popup")
         popups.append(popup)

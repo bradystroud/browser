@@ -104,6 +104,11 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitTab+DevTools.swift
   Engine/SiteStyleSheetScript.swift
   Engine/WebKitSiteStyleSheets.swift
+  Engine/WebKitLinkPeekMenu.swift
+  LinkPeek/LinkPeekPreference.swift
+  LinkPeek/LinkPeekGesture.swift
+  LinkPeek/LinkPeekOverlayView.swift
+  LinkPeek/LinkPeekController.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift

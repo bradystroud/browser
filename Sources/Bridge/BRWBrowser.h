@@ -222,6 +222,11 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// shows the site card for this browser's page.
 - (void)browserDidRequestSiteInformation;
 
+/// The user chose "Peek Link" from the context menu over a link -- `linkURL`
+/// is `CefContextMenuParams::GetLinkUrl()`. The delegate is expected to open
+/// it in a peek over this browser's page, in the same profile.
+- (void)browserDidRequestPeekLinkForURL:(NSString *)linkURL;
+
 /// The engine wants `url` opened somewhere other than the current tab.
 ///
 /// Two distinct CEF callbacks feed this, and both matter:
