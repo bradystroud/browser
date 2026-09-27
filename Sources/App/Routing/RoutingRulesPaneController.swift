@@ -16,6 +16,11 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
 
     private let tableView = NSTableView()
     private let defaultProfilePopup = NSPopUpButton()
+    private let littleWindowCheckbox = NSButton(
+        checkboxWithTitle: "Open links from other apps in a little window",
+        target: nil,
+        action: nil
+    )
     private var profileChangeObserver: NSObjectProtocol?
 
     /// "Test" affordance (browser-ymx): Brady pastes a URL (and optionally
@@ -46,6 +51,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
     func reload() {
         tableView.reloadData()
         reloadDefaultProfilePopup()
+        littleWindowCheckbox.state = LinkHandlingPreferences.littleWindowForExternalLinks ? .on : .off
     }
 
     // MARK: - View setup
@@ -84,7 +90,16 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         defaultProfilePopup.action = #selector(defaultProfileChanged)
         view.addSubview(defaultProfilePopup)
 
-        let buttonRowY = defaultRowY + defaultRowHeight + rowGap
+        // A rule's own "Open in" overrides this in either direction.
+        let littleWindowRowY = defaultRowY + defaultRowHeight + rowGap
+        let littleWindowRowHeight: CGFloat = 20
+        littleWindowCheckbox.target = self
+        littleWindowCheckbox.action = #selector(littleWindowToggled)
+        littleWindowCheckbox.frame = NSRect(x: margin, y: littleWindowRowY, width: view.bounds.width - margin * 2, height: littleWindowRowHeight)
+        littleWindowCheckbox.autoresizingMask = [.width, .maxYMargin]
+        view.addSubview(littleWindowCheckbox)
+
+        let buttonRowY = littleWindowRowY + littleWindowRowHeight + rowGap
         let addButton = NSButton(title: "＋", target: self, action: #selector(addRule))
         addButton.frame = NSRect(x: margin, y: buttonRowY, width: 32, height: buttonRowHeight)
         addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
@@ -277,6 +292,10 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         tableView.selectRowIndexes([index + 1], byExtendingSelection: false)
     }
 
+    @objc private func littleWindowToggled() {
+        LinkHandlingPreferences.littleWindowForExternalLinks = littleWindowCheckbox.state == .on
+    }
+
     @objc private func defaultProfileChanged() {
         guard let profile = defaultProfilePopup.selectedItem?.representedObject as? Profile else { return }
         RoutingRulesStore.shared.setDefaultProfileId(profile.id)
@@ -339,6 +358,14 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
             tableView.deselectAll(nil)
         }
 
+        let opening = LinkOpening.resolve(
+            evaluation: evaluation,
+            preferLittleWindowForExternalLinks: LinkHandlingPreferences.littleWindowForExternalLinks
+        )
+        if opening.openIn == .littleWindow {
+            lines.append("From another app, this opens in a little window.")
+        }
+
         testResultLabel.stringValue = lines.joined(separator: "\n")
     }
 
@@ -357,7 +384,12 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         case "match":
             text = matchSummary(for: rule.match)
         case "profile":
-            text = ProfileManager.shared.profile(id: rule.action.profileId)?.name ?? "(unknown profile)"
+            let name = ProfileManager.shared.profile(id: rule.action.profileId)?.name ?? "(unknown profile)"
+            switch rule.action.openIn {
+            case .littleWindow: text = "\(name) · little window"
+            case .browser: text = "\(name) · browser"
+            case nil: text = name
+            }
         default:
             text = ""
         }

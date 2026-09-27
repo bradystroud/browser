@@ -192,6 +192,9 @@ final class Tab: NSObject, EngineTabDelegate {
     private var lastCommittedURL: String?
     private var isCurrentURLCommitted = false
 
+    /// False until a real page (not the start page) has committed here.
+    var hasCommittedPage: Bool { lastCommittedURL != nil }
+
     /// What the tab strip/toolbar should show as this tab's title right now
     /// (browser-7z5) -- the real title once one has arrived for the current
     /// navigation, otherwise the target host as a placeholder. Falls back to

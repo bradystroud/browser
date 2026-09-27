@@ -23,8 +23,13 @@ public struct RouteTestOutput: Codable, Equatable {
     public let matchedRuleSummary: String?
     public let profileId: String
     public let profileName: String
+    /// `RoutingRule.OpenIn`'s raw value -- `browser` or `littleWindow` --
+    /// for a link clicked in another app, which is what route-test models.
+    public let openIn: String
+    /// `LinkOpening.Reason`'s raw value: `rule`, `preference` or `default`.
+    public let openInReason: String
 
-    public init(url: String, effectiveURL: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String) {
+    public init(url: String, effectiveURL: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String, openIn: String = RoutingRule.OpenIn.browser.rawValue, openInReason: String = LinkOpening.Reason.default.rawValue) {
         self.url = url
         self.effectiveURL = effectiveURL
         self.fromApp = fromApp
@@ -32,6 +37,8 @@ public struct RouteTestOutput: Codable, Equatable {
         self.matchedRuleSummary = matchedRuleSummary
         self.profileId = profileId
         self.profileName = profileName
+        self.openIn = openIn
+        self.openInReason = openInReason
     }
 }
 
@@ -68,7 +75,8 @@ public enum RouteTestEngine {
         effectiveURL: String,
         fromApp: String?,
         configuration: RoutingConfiguration,
-        profiles: [ProfileRecord]
+        profiles: [ProfileRecord],
+        littleWindowForExternalLinks: Bool = false
     ) throws -> RouteTestOutput {
         guard !profiles.isEmpty else { throw RouteTestError.noProfilesFound }
 
@@ -80,6 +88,7 @@ public enum RouteTestEngine {
             ?? RoutingConfigurationStore.implicitFallback(in: profiles)
         let profileId = resolvedProfile?.id ?? evaluation.profileId
         let profileName = resolvedProfile?.name ?? "(unknown profile id \(evaluation.profileId))"
+        let opening = LinkOpening.resolve(evaluation: evaluation, preferLittleWindowForExternalLinks: littleWindowForExternalLinks)
 
         switch evaluation {
         case .matched(let rule, _):
@@ -90,7 +99,9 @@ public enum RouteTestEngine {
                 matchedRuleIndex: configuration.rules.firstIndex(of: rule).map { $0 + 1 },
                 matchedRuleSummary: summarize(rule.match),
                 profileId: profileId,
-                profileName: profileName
+                profileName: profileName,
+                openIn: opening.openIn.rawValue,
+                openInReason: opening.reason.rawValue
             )
         case .noMatch:
             return RouteTestOutput(
@@ -100,7 +111,9 @@ public enum RouteTestEngine {
                 matchedRuleIndex: nil,
                 matchedRuleSummary: nil,
                 profileId: profileId,
-                profileName: profileName
+                profileName: profileName,
+                openIn: opening.openIn.rawValue,
+                openInReason: opening.reason.rawValue
             )
         }
     }

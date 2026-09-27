@@ -186,20 +186,38 @@ final class CLIServer {
     /// attributable source app), so rules keyed on `sourceBundleIds` never
     /// match a CLI-issued open -- consistent with "no source" already
     /// meaning "don't match those rules" elsewhere (RuleMatcher.matches).
+    ///
+    /// `--little` opens a little window (LittleWindowController) instead of a
+    /// tab, and `--new-window` a brand-new normal window. With neither, a
+    /// routed open follows the matched rule's own `openIn`, but not the
+    /// global "links from other apps" preference: a CLI call is an explicit
+    /// request, not a link clicked somewhere else.
     private static func handleOpen(_ request: CLIRequest) -> CLIResponse {
         guard let url = request.args["url"], !url.isEmpty else {
             return .failure("open requires a url")
         }
+        let forceLittleWindow = request.args["little"] == "true"
         let forceNewWindow = request.args["new-window"] == "true"
+        if forceLittleWindow && forceNewWindow {
+            return .failure("--little and --new-window can't be combined")
+        }
+        let forced: Placement? = forceLittleWindow ? .littleWindow : (forceNewWindow ? .newWindow : nil)
 
         if let profileName = request.args["profile"] {
             let profile = ProfileManager.shared.profileOrCreate(named: profileName)
-            let placement = open(url, in: profile, forceNewWindow: forceNewWindow)
-            return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (explicit --profile, \(placement)).")
+            let placement = open(url, in: profile, placement: forced ?? .tab)
+            return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (explicit --profile, \(placement.phrase)).")
         }
 
         let (profile, resolution) = RoutingCoordinator.shared.resolveProfile(url: url, sourceBundleId: nil)
-        let placement = open(url, in: profile, forceNewWindow: forceNewWindow)
+        let ruleOpenIn: RoutingRule.OpenIn?
+        if case .matchedRule(let index) = resolution, RoutingRulesStore.shared.rules.indices.contains(index) {
+            ruleOpenIn = RoutingRulesStore.shared.rules[index].action.openIn
+        } else {
+            ruleOpenIn = nil
+        }
+        let routed: Placement = ruleOpenIn == .littleWindow ? .littleWindow : .tab
+        let placement = open(url, in: profile, placement: forced ?? routed)
 
         let matchNote: String
         switch resolution {
@@ -207,27 +225,42 @@ final class CLIServer {
         case .activeWindow: matchNote = "no rule matched, used the frontmost window's profile"
         case .fallbackProfile: matchNote = "no rule matched and no window open, used the fallback profile"
         }
-        return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (\(matchNote), \(placement)).")
+        return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (\(matchNote), \(placement.phrase)).")
     }
 
-    /// `--new-window` deliberately bypasses `RoutingCoordinator.openURL`'s
+    private enum Placement {
+        case tab, newWindow, littleWindow
+
+        /// For the response message.
+        var phrase: String {
+            switch self {
+            case .tab: return "new tab"
+            case .newWindow: return "new window"
+            case .littleWindow: return "little window"
+            }
+        }
+    }
+
+    /// `.newWindow` deliberately bypasses `RoutingCoordinator.openURL`'s
     /// "reuse the frontmost window of this profile" step -- that reuse is
     /// exactly what the flag exists to opt out of -- but keeps everything
     /// upstream of it (profile resolution, routing rules) identical, so the
-    /// only difference between the two placements is where the page lands.
-    /// Returns the phrase describing which happened, for the response
-    /// message. No explicit `NSApp.activate` on the new-window branch:
+    /// only difference between placements is where the page lands. No
+    /// explicit `NSApp.activate` on the new-window branch:
     /// `WindowManager.registerAndShow` already does it (respecting
     /// `--test-no-activate`), which is also why this doesn't just call
     /// `RoutingCoordinator.openURL` and then open a window.
     @discardableResult
-    private static func open(_ url: String, in profile: Profile, forceNewWindow: Bool) -> String {
-        guard forceNewWindow else {
+    private static func open(_ url: String, in profile: Profile, placement: Placement) -> Placement {
+        switch placement {
+        case .tab:
             RoutingCoordinator.shared.openURL(url, in: profile)
-            return "new tab"
+        case .newWindow:
+            WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
+        case .littleWindow:
+            LittleWindowController.open(url: url, profile: profile)
         }
-        WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
-        return "new window"
+        return placement
     }
 
     /// `window new` -- always a brand-new `WindowManager`-owned window, never

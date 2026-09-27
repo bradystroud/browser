@@ -101,6 +101,41 @@ final class RouteTestEngineTests: XCTestCase {
         XCTAssertEqual(result.profileName, "default")
     }
 
+    func testOpenInDefaultsToBrowserWithPreferenceOff() throws {
+        let configuration = RoutingConfiguration(rules: [], defaultProfileId: "default-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
+        XCTAssertEqual(result.openIn, "browser")
+        XCTAssertEqual(result.openInReason, "default")
+    }
+
+    func testOpenInFollowsLittleWindowPreference() throws {
+        let configuration = RoutingConfiguration(rules: [], defaultProfileId: "default-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles, littleWindowForExternalLinks: true)
+        XCTAssertEqual(result.openIn, "littleWindow")
+        XCTAssertEqual(result.openInReason, "preference")
+    }
+
+    func testRuleOpenInOverridesPreference() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "work-id", openIn: .browser))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles, littleWindowForExternalLinks: true)
+        XCTAssertEqual(result.openIn, "browser")
+        XCTAssertEqual(result.openInReason, "rule")
+    }
+
+    func testRuleCanAskForLittleWindow() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "work-id", openIn: .littleWindow))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles)
+        XCTAssertEqual(result.openIn, "littleWindow")
+        XCTAssertEqual(result.openInReason, "rule")
+        XCTAssertEqual(result.profileName, "work")
+    }
+
     func testRoutingConfigurationStoreFallsBackWhenFileMissing() {
         let configuration = RoutingConfigurationStore.load(directory: "/tmp/browser-cli-tests-nonexistent-\(UUID().uuidString)", profiles: profiles)
         XCTAssertTrue(configuration.rules.isEmpty)

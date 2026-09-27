@@ -33,6 +33,10 @@ final class ArgParserTests: XCTestCase {
     }
 
     func testNewWindowSwitchDoesNotConsumeAValue() {
+        let little = ArgParser.parse(["open", "https://example.com", "--little", "--profile", "work"])
+        XCTAssertEqual(little.flags["little"], "")
+        XCTAssertEqual(little.flags["profile"], "work")
+
         let parsed = ArgParser.parse(["open", "https://example.com", "--new-window", "--profile", "work"])
         XCTAssertEqual(parsed.positionals, ["open", "https://example.com"])
         XCTAssertNotNil(parsed.flags["new-window"])

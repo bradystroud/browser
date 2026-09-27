@@ -1,14 +1,17 @@
 import Foundation
 import BrowserCLIProtocol
 
-/// `browser open <url> [--profile <name>] [--new-window]` -- talks to a
+/// `browser open <url> [--profile <name>] [--new-window | --little]` -- talks to a
 /// running instance's `CLIServer` (Sources/App/CLI/CLIServer.swift); there is
 /// no disk-only fallback, since actually opening a window/tab requires the
 /// live app.
 public enum OpenCommand {
     public static func run(args: ParsedArgs) -> Bool {
         guard let url = args.positionals.first else {
-            return Output.emitError("usage: browser open <url> [--profile <name>] [--new-window]", json: args.jsonOutput)
+            return Output.emitError("usage: browser open <url> [--profile <name>] [--new-window | --little]", json: args.jsonOutput)
+        }
+        if args.flags["new-window"] != nil && args.flags["little"] != nil {
+            return Output.emitError("--little and --new-window can't be combined", json: args.jsonOutput)
         }
 
         var requestArgs = ["url": url]
@@ -19,6 +22,9 @@ public enum OpenCommand {
         // comparison. The wire format keeps args a flat [String: String]
         // (see CLIRequest), so "true" is how a boolean travels.
         if args.flags["new-window"] != nil { requestArgs["new-window"] = "true" }
+        // A small single-page window (the app's LittleWindowController)
+        // instead of a tab.
+        if args.flags["little"] != nil { requestArgs["little"] = "true" }
 
         let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {

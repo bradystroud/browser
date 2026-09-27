@@ -36,6 +36,16 @@ enum RoutingRuleEditor {
 
         // Built bottom-up (y = 0 at the bottom), then the whole stack is
         // flipped into top-down reading order by the accessory's final height.
+        let openInPopup = NSPopUpButton(frame: NSRect(x: 0, y: y, width: fieldWidth, height: rowHeight))
+        for (title, openIn) in openInChoices {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.representedObject = openIn?.rawValue
+            openInPopup.menu?.addItem(item)
+        }
+        accessory.addSubview(openInPopup)
+        addLabel("Open links from other apps in", y: y + rowHeight)
+        y += rowHeight + labelHeight + groupGap
+
         let profilePopup = NSPopUpButton(frame: NSRect(x: 0, y: y, width: fieldWidth, height: rowHeight))
         for profile in ProfileManager.shared.profiles {
             let item = NSMenuItem(title: profile.name, action: nil, keyEquivalent: "")
@@ -113,6 +123,9 @@ enum RoutingRuleEditor {
             if let index = ProfileManager.shared.profiles.firstIndex(where: { $0.id == rule.action.profileId }) {
                 profilePopup.selectItem(at: index)
             }
+            if let index = openInChoices.firstIndex(where: { $0.openIn == rule.action.openIn }) {
+                openInPopup.selectItem(at: index)
+            }
         }
         validator.revalidate()
 
@@ -140,13 +153,21 @@ enum RoutingRuleEditor {
             urlRegex: urlRegex,
             sourceBundleIds: sourceBundleId.map { [$0] }
         )
-        let action = RoutingRule.Action(profileId: selectedProfile.id)
+        let openIn = (openInPopup.selectedItem?.representedObject as? String).flatMap(RoutingRule.OpenIn.init(rawValue:))
+        let action = RoutingRule.Action(profileId: selectedProfile.id, openIn: openIn)
 
         if let existingRule {
             return RoutingRule(id: existingRule.id, match: match, action: action)
         }
         return RoutingRule(match: match, action: action)
     }
+
+    /// nil follows the global "little window" setting in the Routing pane.
+    private static let openInChoices: [(title: String, openIn: RoutingRule.OpenIn?)] = [
+        ("Follow the global setting", nil),
+        ("A browser tab", .browser),
+        ("A little window", .littleWindow),
+    ]
 
     private static func comboDisplayString(for entry: RunningApplicationPicker.Entry) -> String {
         "\(entry.displayName) — \(entry.bundleIdentifier)"

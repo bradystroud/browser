@@ -1182,6 +1182,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         insertTab(url: url, makeActive: foreground, at: insertionIndex(afterOpenerAt: openerIndex), focusOmnibox: false)
     }
 
+    /// Moves in a Tab that already has a live engine browser -- a little
+    /// window's page (LittleWindowController) -- without reloading it.
+    /// Lands where a link opened from the active tab would, which is never
+    /// among the pinned tabs.
+    func adoptTab(_ tab: Tab, makeActive: Bool) {
+        let index = activeTabIndex.map { insertionIndex(afterOpenerAt: $0) } ?? tabs.count
+        insert(tab, makeActive: makeActive, at: index, focusOmnibox: false)
+    }
+
     private func insertionIndex(afterOpenerAt openerIndex: Int) -> Int {
         guard tabs.indices.contains(openerIndex) else { return tabs.count }
         let opener = tabs[openerIndex]

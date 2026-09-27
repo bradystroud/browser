@@ -164,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
             }
         }
+        // The routed link that launched the app belongs in front of the
+        // windows restore just put back.
+        LittleWindowController.orderAllFront()
 
         if let tabIdentifier = CommandLineArgs.showSettingsTabIdentifier() {
             SettingsWindowController.shared.showTab(identifier: tabIdentifier)

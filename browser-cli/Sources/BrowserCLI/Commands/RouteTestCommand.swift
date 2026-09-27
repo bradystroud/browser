@@ -28,11 +28,19 @@ public enum RouteTestCommand {
             : url
 
         do {
-            let result = try RouteTestEngine.run(url: url, effectiveURL: effectiveURL, fromApp: fromApp, configuration: configuration, profiles: profiles)
+            let result = try RouteTestEngine.run(
+                url: url,
+                effectiveURL: effectiveURL,
+                fromApp: fromApp,
+                configuration: configuration,
+                profiles: profiles,
+                littleWindowForExternalLinks: LinkHandlingPreferencesReader.littleWindowForExternalLinks(arguments: CommandLine.arguments)
+            )
             return Output.emit(result, json: args.jsonOutput) { output in
                 let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- the frontmost window, or this profile if no window is open"
                 let strippedNote = output.effectiveURL == output.url ? "" : " [tracking params stripped -> \(output.effectiveURL)]"
-                return "\(output.url) -> profile '\(output.profileName)' [\(ruleNote)]\(strippedNote)"
+                let placement = output.openIn == RoutingRule.OpenIn.littleWindow.rawValue ? "little window" : "tab"
+                return "\(output.url) -> profile '\(output.profileName)', \(placement) (\(output.openInReason)) [\(ruleNote)]\(strippedNote)"
             }
         } catch {
             return Output.emitError("\(error)", json: args.jsonOutput)

@@ -161,6 +161,7 @@ final class WindowManager {
         for controller in windowControllers where controller.profile.id == profileId {
             controller.window?.close()
         }
+        LittleWindowController.closeAll(forProfileId: profileId)
     }
 
     /// Registered with BRWEngine (see AppDelegate.applicationDidFinishLaunching)
@@ -195,6 +196,7 @@ final class WindowManager {
         for controller in windowControllers {
             controller.window?.close()
         }
+        LittleWindowController.closeAll()
     }
 
     // MARK: - Session persistence (see SessionStore, docs/ai-tasks/session-restore-notes.md)

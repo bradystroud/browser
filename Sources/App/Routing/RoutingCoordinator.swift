@@ -72,8 +72,26 @@ final class RoutingCoordinator {
         }
     }
 
+    /// A matched rule's own `openIn` wins over the global "links from other
+    /// apps" preference in both directions (LinkOpening.resolve).
     private func routeCleaned(url: String, sourceBundleId: String?) {
-        openURL(url, in: resolveProfile(url: url, sourceBundleId: sourceBundleId).profile)
+        let profile = resolveProfile(url: url, sourceBundleId: sourceBundleId).profile
+        let store = RoutingRulesStore.shared
+        let evaluation = RuleMatcher.evaluate(
+            context: RoutingContext(url: url, sourceBundleId: sourceBundleId),
+            rules: store.rules,
+            defaultProfileId: store.defaultProfileId
+        )
+        let opening = LinkOpening.resolve(
+            evaluation: evaluation,
+            preferLittleWindowForExternalLinks: LinkHandlingPreferences.littleWindowForExternalLinks
+        )
+        switch opening.openIn {
+        case .littleWindow:
+            LittleWindowController.open(url: url, profile: profile)
+        case .browser:
+            openURL(url, in: profile)
+        }
     }
 
     enum Resolution {

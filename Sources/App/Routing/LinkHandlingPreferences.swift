@@ -29,4 +29,16 @@ enum LinkHandlingPreferences {
         get { AppPreferencesStore.current.bool(forKey: unshortenLinksKey) }
         set { AppPreferencesStore.current.set(newValue, forKey: unshortenLinksKey) }
     }
+
+    /// "Open links from other apps in a little window". Defaults to false,
+    /// so a link from another app opens as a tab exactly as it always has
+    /// for anyone who hasn't chosen otherwise. A routing rule's own `openIn`
+    /// overrides this either way (see LinkOpening.resolve). `browser
+    /// route-test` reads the same key; see LinkHandlingPreferencesReader.
+    static let littleWindowForExternalLinksKey = "BrowserLittleWindowForExternalLinks"
+
+    static var littleWindowForExternalLinks: Bool {
+        get { AppPreferencesStore.current.bool(forKey: littleWindowForExternalLinksKey) }
+        set { AppPreferencesStore.current.set(newValue, forKey: littleWindowForExternalLinksKey) }
+    }
 }

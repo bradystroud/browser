@@ -115,6 +115,7 @@ set(BROWSER_SWIFT_SRCS
   Routing/RunningApplicationPicker.swift
   Routing/LinkHandlingPreferences.swift
   Routing/URLUnshortener.swift
+  Routing/LittleWindowController.swift
   ProfilesPaneController.swift
   ProfileSwitcher/ProfileSwitcherListView.swift
   ProfileSwitcher/ProfileSwitcherController.swift
@@ -234,6 +235,7 @@ source_group(App FILES ${BROWSER_SWIFT_SRCS})
 set(BROWSER_ROUTING_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RoutingRule.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RuleMatcher.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/LinkOpening.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamList.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamStripper.swift
   )

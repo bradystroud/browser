@@ -37,6 +37,15 @@ public enum RuleEvaluation: Equatable {
         }
     }
 
+    /// The matched rule's own window choice, or nil when no rule matched
+    /// or the rule leaves it to the global preference.
+    public var openIn: RoutingRule.OpenIn? {
+        switch self {
+        case .matched(let rule, _): return rule.action.openIn
+        case .noMatch: return nil
+        }
+    }
+
     /// The resolved profile if it still exists, else the configured default,
     /// else nil. A rule can outlive the profile it points at, and the app and
     /// `browser route-test` must pick the same replacement.

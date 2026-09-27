@@ -112,7 +112,7 @@ struct BrowserCLIEntry {
         browser -- control a running Browser instance from the terminal
 
         Usage:
-          browser open <url> [--profile <name>] [--new-window]
+          browser open <url> [--profile <name>] [--new-window | --little]
           browser window new [<url>] [--profile <name>]
           browser windows [--profile <name>]
           browser focus [<profile>] [--profile <name>]

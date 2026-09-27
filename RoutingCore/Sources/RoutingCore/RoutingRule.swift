@@ -42,11 +42,40 @@ public struct RoutingRule: Codable, Equatable, Identifiable {
         }
     }
 
+    /// Which kind of window a routed link opens in.
+    public enum OpenIn: String, Codable, Equatable, CaseIterable {
+        /// A tab in the profile's frontmost normal window.
+        case browser
+        /// A small single-page window in front of the app the link came
+        /// from, which can then be moved into the profile's normal window.
+        case littleWindow
+    }
+
     public struct Action: Codable, Equatable {
         public var profileId: String
+        /// nil defers to the global "Open links from other apps in a little
+        /// window" preference; a value overrides it in either direction.
+        /// Omitted from routing.json when nil, so a file without it and a
+        /// build without it both read each other unchanged.
+        public var openIn: OpenIn?
 
-        public init(profileId: String) {
+        public init(profileId: String, openIn: OpenIn? = nil) {
             self.profileId = profileId
+            self.openIn = openIn
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case profileId, openIn
+        }
+
+        /// An `openIn` value this build does not know (written by a newer
+        /// one) decodes as nil rather than failing the whole file, which
+        /// would otherwise drop every rule.
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            profileId = try container.decode(String.self, forKey: .profileId)
+            let rawOpenIn = (try? container.decodeIfPresent(String.self, forKey: .openIn)) ?? nil
+            openIn = rawOpenIn.flatMap(OpenIn.init(rawValue:))
         }
     }
 
