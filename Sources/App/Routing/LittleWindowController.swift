@@ -1,4 +1,5 @@
 import AppKit
+import SecurityInterface
 
 /// A small window for a link from another app: one page, under a thin header
 /// with the site, the profile's dot and "Open in Browser" (⌘O). ⌘W closes
@@ -48,6 +49,7 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
     private let permissionPrompt = PermissionPromptController()
     private var pendingPermissionPromptId: UInt64?
     private var downloadsHoldingWindowOpen: Set<Int64> = []
+    private let siteCard = SiteCardController()
 
     // MARK: - Opening
 
@@ -303,6 +305,7 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
     @objc func openInBrowser(_ sender: Any?) {
         guard !handedOff else { return }
         handedOff = true
+        siteCard.close()
         dismissPermissionPrompt()
         tab.hostView.removeFromSuperview()
         if let controller = WindowManager.shared.frontmostWindowController(forProfileId: profile.id) {
@@ -355,6 +358,7 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
 
     func windowWillClose(_ notification: Notification) {
         dismissPermissionPrompt()
+        siteCard.close()
         if !handedOff {
             tab.hostView.removeFromSuperview()
             tab.close()
@@ -465,6 +469,31 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
     func tabDidRequestClose(_ tab: Tab) {
         guard tab === self.tab else { return }
         window?.close()
+    }
+
+    /// The page's "Site Information…" item. The card hangs from the header's
+    /// host label. Site settings are left out: that sheet belongs to a
+    /// browser window, and "Open in Browser" is one click away.
+    func tabDidRequestSiteInformation(_ tab: Tab) {
+        guard tab === self.tab, !tab.urlString.isEmpty, window?.isVisible == true else { return }
+        if siteCard.isShown {
+            siteCard.close()
+            return
+        }
+        siteCard.show(for: tab, relativeTo: hostLabel, actions: SiteCardActions(
+            copyAddress: { [weak tab] in
+                guard let tab else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(tab.urlString, forType: .string)
+            },
+            print: { [weak tab] in tab?.print() },
+            showSiteSettings: nil,
+            showCertificate: { [weak self] trust in
+                guard let window = self?.window else { return }
+                SFCertificatePanel.shared().beginSheet(
+                    for: window, modalDelegate: nil, didEnd: nil, contextInfo: nil, trust: trust, showGroup: true)
+            }
+        ))
     }
 }
 
