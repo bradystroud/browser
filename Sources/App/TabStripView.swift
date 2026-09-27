@@ -196,7 +196,8 @@ final class TabStripView: NSView {
 
     private let newTabButton: NSButton = {
         let button = NSButton()
-        button.title = ""
+        button.title = "New Tab"
+        button.imagePosition = .imageLeading
         button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
         button.applyChromeAppearance(.glass)
         button.toolTip = "New Tab"
@@ -278,7 +279,6 @@ final class TabStripView: NSView {
     /// and in places overlapping, rather than as a deliberate gap.
     private static let tabSpacing: CGFloat = 7
     private static let sidePadding: CGFloat = 4
-    private static let newTabButtonWidth: CGFloat = 28
 
     // MARK: Vertical (sidebar) metrics
 
@@ -338,6 +338,9 @@ final class TabStripView: NSView {
         _ = glassContentHost
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
+        // Horizontal (the initial orientation) shows no "+" -- see
+        // configureHierarchyForOrientation.
+        newTabButton.isHidden = true
         addSubview(newTabButton)
         configureScrollView()
     }
@@ -595,17 +598,17 @@ final class TabStripView: NSView {
     }
 
     private func configureHierarchyForOrientation() {
+        // The horizontal strip has no "+" of its own: BrowserWindowController
+        // keeps one in the toolbar row, because the strip itself is hidden
+        // whenever a window has a single tab and "+" must stay reachable.
+        newTabButton.isHidden = !isVertical
         if isVertical {
-            newTabButton.title = "New Tab"
-            newTabButton.imagePosition = .imageLeading
             guard scrollView.superview !== self else { return }
             stripContentView.removeFromSuperview()
             stripContentView.autoresizingMask = [.width]
             scrollView.documentView = stripContentView
             addSubview(scrollView, positioned: .below, relativeTo: newTabButton)
         } else {
-            newTabButton.title = ""
-            newTabButton.imagePosition = .imageOnly
             guard stripContentView.superview !== self else { return }
             scrollView.documentView = nil
             scrollView.removeFromSuperview()
@@ -674,15 +677,6 @@ final class TabStripView: NSView {
             } else {
                 view.frame = frames[position]
             }
-        }
-
-        if !isVertical {
-            newTabButton.frame = NSRect(
-                x: bounds.width - Self.newTabButtonWidth - Self.sidePadding,
-                y: (bounds.height - Self.newTabButtonWidth) / 2,
-                width: Self.newTabButtonWidth,
-                height: Self.newTabButtonWidth
-            )
         }
 
         if case .tab(let firstButton)? = stripItems.first {
@@ -892,7 +886,7 @@ final class TabStripView: NSView {
     /// of an expanded group) shares whatever width remains, same
     /// even-width-down-to-a-minimum scheme as before groups existed.
     private func horizontalSlotFrames() -> [NSRect] {
-        let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2 - Self.newTabButtonWidth - Self.sidePadding)
+        let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2)
         let itemCount = stripItems.count
         let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
 
