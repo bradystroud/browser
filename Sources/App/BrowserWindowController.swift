@@ -448,8 +448,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// flipped the chrome order (toolbar/omnibox row now on top, tab strip
     /// below it -- Brady's ask, matching where the traffic lights actually
     /// float once the order changes); TabStripView.leadingInset now stays
-    /// at its default 0.
-    private static let trafficLightReservedWidth: CGFloat = 78
+    /// at its default 0. Zero in fullscreen, where macOS hides the traffic
+    /// lights and the leading controls move over to take their place.
+    private static let trafficLightWidth: CGFloat = 78
+
+    /// Tracked from the will-enter/will-exit delegate calls rather than read
+    /// from styleMask, so the leading controls move at the start of the
+    /// fullscreen transition instead of after it.
+    private var isEnteringOrInFullScreen = false
+
+    private var trafficLightReservedWidth: CGFloat {
+        isEnteringOrInFullScreen ? 0 : Self.trafficLightWidth
+    }
 
     private func setUpViews() {
         guard let window, let contentView = window.contentView else { return }
@@ -457,7 +467,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // Hidden titlebar + full-size content view (browser-qpy): the
         // toolbar row effectively becomes the titlebar area, with the
         // traffic lights floating over its leading edge (see
-        // Self.trafficLightReservedWidth, applied in setUpToolbarContents/
+        // trafficLightReservedWidth, applied in setUpToolbarContents/
         // expandedOmniboxWidth below). True in both orientations -- the
         // sidebar starts below the toolbar row, not beside it, so the
         // traffic lights keep floating over the same band.
@@ -625,7 +635,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // them, not at the bare left margin. Only the leading edge needs
         // this; the trailing edge (privateLabel below) still uses the
         // plain margin.
-        let leadingMargin: CGFloat = margin + Self.trafficLightReservedWidth
+        let leadingMargin: CGFloat = margin + trafficLightReservedWidth
         let gap: CGFloat = 4
         let toolbarHeight = toolbarView.bounds.height
 
@@ -810,7 +820,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let buttonSize: CGFloat = 28
         let gap: CGFloat = 4
         let profilePillReserved = profilePillButton.map { $0.frame.width + gap } ?? 0
-        return margin + Self.trafficLightReservedWidth + (buttonSize + gap) * 2
+        return margin + trafficLightReservedWidth + (buttonSize + gap) * 2
             + profilePillReserved + Self.omniboxHorizontalMargin
     }
 
@@ -2474,6 +2484,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// doesn't hammer disk on every intermediate frame.
     func windowDidMove(_ notification: Notification) {
         WindowManager.shared.scheduleSessionSave()
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        isEnteringOrInFullScreen = true
+        layoutLeadingToolbarControls()
+    }
+
+    func windowWillExitFullScreen(_ notification: Notification) {
+        isEnteringOrInFullScreen = false
+        layoutLeadingToolbarControls()
+    }
+
+    /// Back/forward, the profile pill and the omnibox band all start after
+    /// trafficLightReservedWidth, which changes with fullscreen.
+    private func layoutLeadingToolbarControls() {
+        let buttonSize: CGFloat = 28
+        let gap: CGFloat = 4
+        let leadingMargin: CGFloat = 8 + trafficLightReservedWidth
+        backButton.frame.origin.x = leadingMargin
+        forwardButton.frame.origin.x = leadingMargin + buttonSize + gap
+        layoutProfilePill()
+        layoutOmniboxContainer()
     }
 
     func windowDidResize(_ notification: Notification) {
