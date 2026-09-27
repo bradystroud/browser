@@ -447,7 +447,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 // tabDidChangeDisplayState(_:)'s own comment for why.
                 title: $0.displayTitle, favicon: $0.faviconImage, isPinned: $0.isPinned,
                 groupId: $0.groupId, themeColorHex: $0.themeColorHex,
-                isMuted: $0.isMuted, isAudible: $0.isAudible, isLoading: $0.isLoading)
+                isMuted: $0.isMuted, isAudible: $0.isAudible, isLoading: $0.isLoading,
+                isAsleep: $0.isAsleep)
         }
     }
 
@@ -1818,6 +1819,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabStripView.updateThemeColor(at: index, hex: tab.themeColorHex)
         tabStripView.updateAudioState(at: index, isMuted: tab.isMuted, isAudible: tab.isAudible)
         tabStripView.updateLoadingState(at: index, isLoading: tab.isLoading)
+        tabStripView.updateSleepState(at: index, isAsleep: tab.isAsleep)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
@@ -2107,6 +2109,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             return activeTab != nil && PasteAndGo.action(for: text) != nil
         case #selector(duplicateTab(_:)), #selector(showSiteInformation(_:)):
             return activeTab.map { !$0.urlString.isEmpty } ?? false
+        case #selector(sleepOtherTabs(_:)):
+            return hasTabThatCanSleep
         default:
             return true
         }

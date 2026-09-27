@@ -85,8 +85,9 @@ struct TabDownloadUpdate {
 /// the tab is not the active one in its window -- switching tabs detaches/
 /// reattaches this view from the window's content container rather than
 /// destroying and recreating the underlying EngineTab (see AppDelegate/
-/// BrowserWindowController), matching the plan's requirement that inactive
-/// tabs keep their engine-side browser alive.
+/// BrowserWindowController). The one exception is sleep: a background tab
+/// left unused long enough gives its EngineTab back (see `sleep(scrollY:)`
+/// and TabSleepCoordinator) and gets a fresh one when it is next selected.
 final class Tab: NSObject, EngineTabDelegate {
     let id = UUID()
     let profileName: String
@@ -461,6 +462,86 @@ final class Tab: NSObject, EngineTabDelegate {
             browser.setSiteStyleSheets(siteStyleSheets)
         }
         self.browser = browser
+        if isMuted { browser.setAudioMuted(true) }
+    }
+
+    // MARK: - Sleep
+
+    /// True while this tab holds no engine tab: restored from the last
+    /// session or opened in the background and not looked at yet, or put to
+    /// sleep by TabSleepCoordinator. Its URL, title and favicon stay, and
+    /// becoming the visible tab creates a fresh engine tab at the same URL
+    /// (see BrowserWindowController.activateTab).
+    var isAsleep: Bool { browser == nil }
+
+    /// When this tab was last its window's visible tab -- the idle clock
+    /// TabSleepCoordinator measures against.
+    private(set) var lastUsed = Date()
+
+    func markUsed() { lastUsed = Date() }
+
+    /// Downloads this tab started that haven't finished. Their progress is
+    /// reported through this tab's engine tab, so it must stay awake for them.
+    private var activeDownloadIds = Set<Int64>()
+    var hasActiveDownload: Bool { !activeDownloadIds.isEmpty }
+
+    /// Popups this tab's page opened. A sign-in or payment popup answers its
+    /// opener through window.opener, so the opener stays awake while any of
+    /// them still has a page. A closed popup has none.
+    private let openedPopups = NSHashTable<Tab>.weakObjects()
+    var hasLiveOpenedPopup: Bool { openedPopups.allObjects.contains { !$0.isAsleep } }
+
+    /// Where a slept tab was, put back once its first load after waking
+    /// finishes -- if it woke to the same URL. Back/forward history does not
+    /// survive sleep on either engine.
+    private var wakeRestore: (url: String, scrollY: Int?, zoomLevel: Double)?
+
+    /// Asks the page what it's holding (TabSleepPageScript), for
+    /// TabSleepCoordinator to decide whether letting it go would lose
+    /// anything. A tab with no engine tab, or a page the script never ran in,
+    /// reports nothing held.
+    func readSleepPageState(completion: @escaping (TabSleepPageState) -> Void) {
+        guard let browser else { return completion(TabSleepPageState()) }
+        browser.executeJavaScript(TabSleepPageScript.refreshSource)
+        browser.getPageSource { source in
+            completion(source.map(TabSleepPageScript.pageState(fromSource:)) ?? TabSleepPageState())
+        }
+    }
+
+    /// Releases the engine tab -- the web view or CEF browser and the page
+    /// process memory behind it -- keeping everything the tab strip, the
+    /// session and a later wake need. The delegate is detached before the
+    /// close so the dying engine tab's last callbacks can't overwrite the
+    /// state kept here.
+    func sleep(scrollY: Int?) {
+        guard let browser else { return }
+        wakeRestore = (engineURLString, scrollY, browser.zoomLevel())
+        devTools.tabWillClose()
+        browser.delegate = nil
+        browser.close()
+        self.browser = nil
+        isLoading = false
+        loadingProgress = 0
+        pendingNavigationURL = nil
+        canGoBack = false
+        canGoForward = false
+        isAudible = false
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    private func applyWakeRestore() {
+        guard let restore = wakeRestore else { return }
+        wakeRestore = nil
+        guard restore.url == engineURLString, let browser else { return }
+        if let y = restore.scrollY, y > 0 {
+            browser.executeJavaScript(TabSleepPageScript.restoreScrollSource(y: y))
+        }
+        // Zoom is per tab on WebKit and so went with the old web view; on CEF
+        // it is per host and already back, which the second check leaves alone.
+        let defaultLevel = PageZoom.level(forFactor: PageZoom.defaultFactor)
+        if restore.zoomLevel != defaultLevel, browser.zoomLevel() == defaultLevel {
+            browser.setZoomLevel(restore.zoomLevel)
+        }
     }
 
     /// Per-site stylesheets this tab's documents get from document start --
@@ -712,6 +793,9 @@ final class Tab: NSObject, EngineTabDelegate {
     func seedRestoredTitle(_ title: String) {
         guard !isShowingStartPage, !title.isEmpty else { return }
         self.title = title
+        // A restored tab has no engine tab until it is selected, so nothing
+        // else would ever ask for its icon.
+        maybeLoadFavicon()
     }
 
     func close() {
@@ -776,6 +860,7 @@ final class Tab: NSObject, EngineTabDelegate {
         }
         delegate?.tabDidChangeDisplayState(self)
         if didFinishLoading {
+            applyWakeRestore()
             delegate?.tabDidFinishLoading(self)
         }
     }
@@ -852,6 +937,7 @@ final class Tab: NSObject, EngineTabDelegate {
         if AutoScrollPreference.isEnabled {
             executeJavaScript(AutoScrollScript.source)
         }
+        executeJavaScript(TabSleepPageScript.source)
     }
 
     func engineTabDidCommitNavigation(_ url: String) {
@@ -950,6 +1036,7 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func engineTabDidBeginDownload(id downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {
         revertNavigationThatBecameADownload(downloadURL: url)
+        activeDownloadIds.insert(downloadId)
         delegate?.tab(self, didBeginDownload: TabDownloadStart(
             downloadId: downloadId, url: url, suggestedName: suggestedName, destinationPath: destinationPath))
     }
@@ -997,6 +1084,9 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func engineTabDidUpdateDownload(id downloadId: Int64, receivedBytes: Int64, totalBytes: Int64, isComplete: Bool, isCancelled: Bool, isInterrupted: Bool) {
+        if isComplete || isCancelled || isInterrupted {
+            activeDownloadIds.remove(downloadId)
+        }
         delegate?.tab(self, didUpdateDownload: TabDownloadUpdate(
             downloadId: downloadId, receivedBytes: receivedBytes, totalBytes: totalBytes,
             isComplete: isComplete, isCancelled: isCancelled, isInterrupted: isInterrupted))
@@ -1032,6 +1122,7 @@ final class Tab: NSObject, EngineTabDelegate {
     func engineTabDidCreatePopup(_ popup: EnginePopupTab, disposition: EngineWindowOpenDisposition) {
         let child = Tab(adoptingPopup: popup, openedBy: self)
         child.needsInitialOmniboxFocus = false
+        openedPopups.add(child)
         switch disposition {
         case .foregroundTab:
             delegate?.tab(self, didOpenPopup: child, inNewWindow: false, foreground: true)

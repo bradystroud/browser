@@ -215,6 +215,9 @@ set(BROWSER_SWIFT_SRCS
   Gestures/SwipeNavigationController.swift
   Gestures/SwipeScrollProbeScript.swift
   Audio/TabAudioCoordinator.swift
+  TabSleep/TabSleepCoordinator.swift
+  TabSleep/TabSleepPreferences.swift
+  TabSleep/BrowserWindowController+TabSleep.swift
   CLI/CLIServer.swift
   Update/UpdateCoordinator.swift
   )
@@ -394,6 +397,8 @@ source_group(SearchCore FILES ${BROWSER_SEARCH_CORE_SRCS})
 set(BROWSER_SESSION_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/SessionSnapshot.swift
   ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/ClosedItemStack.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/TabSleepPolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/TabSleepPageScript.swift
   )
 source_group(SessionCore FILES ${BROWSER_SESSION_CORE_SRCS})
 

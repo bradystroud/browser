@@ -69,7 +69,7 @@ final class TabAudioCoordinator {
         // A loading/about:blank/start-page tab has no real document worth
         // reading yet -- skip rather than waste a GetSource round-trip on
         // something that's about to change anyway.
-        guard !tab.isLoading, !tab.isShowingStartPage else { return }
+        guard !tab.isAsleep, !tab.isLoading, !tab.isShowingStartPage else { return }
         guard !tabsWithRequestInFlight.contains(tab) else { return }
         tabsWithRequestInFlight.add(tab)
         tab.getPageSource { [weak self, weak tab] source in

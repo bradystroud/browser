@@ -643,6 +643,7 @@ final class MainMenuBuilder {
         // "Unpin Tab" in BrowserWindowController.validateMenuItem(_:).
         windowMenu.addItem(withTitle: "Pin Tab", action: #selector(BrowserWindowController.togglePinActiveTab(_:)), keyEquivalent: "p")
             .keyEquivalentModifierMask = [.command, .option]
+        windowMenu.addItem(withTitle: "Put Other Tabs to Sleep", action: #selector(BrowserWindowController.sleepOtherTabs(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

@@ -45,6 +45,7 @@ final class TabOverviewView: NSView {
     func configure(
         tabs: [(id: UUID, title: String, favicon: NSImage?, cpuUsagePercent: Double?)],
         selectedTabId: UUID?,
+        asleepTabIds: Set<UUID> = [],
         thumbnailProvider: (UUID) -> NSImage?,
         onSelect: @escaping (UUID) -> Void,
         onDismiss: @escaping () -> Void
@@ -56,6 +57,7 @@ final class TabOverviewView: NSView {
                 tabId: tab.id, title: tab.title, favicon: tab.favicon,
                 thumbnail: thumbnailProvider(tab.id), cpuUsagePercent: tab.cpuUsagePercent)
             cell.setHighlighted(tab.id == selectedTabId)
+            cell.setAsleep(asleepTabIds.contains(tab.id))
             cell.onSelect = { onSelect(tab.id) }
             addSubview(cell)
             return cell

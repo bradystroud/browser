@@ -42,6 +42,7 @@ final class TabOverviewController {
         view.configure(
             tabs: tabs,
             selectedTabId: windowController.activeTab?.id,
+            asleepTabIds: Set(windowController.tabs.filter(\.isAsleep).map(\.id)),
             thumbnailProvider: { [weak windowController] tabId in windowController?.thumbnailImage(forTabId: tabId) },
             onSelect: { [weak self] tabId in self?.selectAndDismiss(tabId) },
             onDismiss: { [weak self] in self?.dismiss() }

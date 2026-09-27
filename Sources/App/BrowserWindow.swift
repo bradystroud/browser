@@ -45,6 +45,7 @@ final class BrowserWindow: NSWindow {
         EmailAutofillCoordinator.shared.activate()
         // Same reasoning, for the per-tab audio indicator (browser-rhi.4).
         TabAudioCoordinator.shared.activate()
+        TabSleepCoordinator.shared.activate()
         // Same reasoning, for the start page gear button (browser-ymx).
         StartPageSettingsCoordinator.shared.activate()
         // Same reasoning, for reading-list article capture (browser-56p).

@@ -47,6 +47,8 @@ final class TabButtonView: NSView {
     /// onPinToggle above; BrowserWindowController owns the actual
     /// Tab.toggleMuted() call.
     var onMuteToggle: (() -> Void)?
+    /// Context menu's "Put Tab to Sleep" (see TabSleepCoordinator).
+    var onSleep: (() -> Void)?
 
     /// Drag-to-reorder (browser-rhi.6) -- set by TabStripView.rebuildButtons.
     weak var dragDelegate: TabButtonDragDelegate?
@@ -105,6 +107,16 @@ final class TabButtonView: NSView {
         didSet {
             guard oldValue != isLoading else { return }
             updateIconState()
+        }
+    }
+
+    /// Mirrors Tab.isAsleep: the tab holds no page right now, so it is drawn
+    /// dimmer than an ordinary background tab. A selected tab is never drawn
+    /// asleep -- selecting one wakes it.
+    var isAsleep = false {
+        didSet {
+            guard oldValue != isAsleep else { return }
+            updateSelectionAppearance()
         }
     }
 
@@ -583,6 +595,9 @@ final class TabButtonView: NSView {
         if ActiveEngine.capabilities.perTabAudioMute {
             menu.addItem(withTitle: isMuted ? "Unmute Tab" : "Mute Tab", action: #selector(muteToggleTapped), keyEquivalent: "").target = self
         }
+        if onSleep != nil, !isSelected, !isAsleep {
+            menu.addItem(withTitle: "Put Tab to Sleep", action: #selector(sleepTapped), keyEquivalent: "").target = self
+        }
 
         let moveToGroupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -644,6 +659,10 @@ final class TabButtonView: NSView {
 
     @objc private func muteToggleTapped() {
         onMuteToggle?()
+    }
+
+    @objc private func sleepTapped() {
+        onSleep?()
     }
 
     @objc private func closeTapped() {
@@ -712,6 +731,7 @@ final class TabButtonView: NSView {
     /// through the *content*, so a difference survives even if every
     /// luminance in play were to coincide exactly.
     private static let inactiveFaviconAlpha: CGFloat = 0.7
+    private static let asleepFaviconAlpha: CGFloat = 0.4
 
     /// Alpha BrowserWindowController.updateChromeTint blends the *active*
     /// tab's theme color into the chrome glass behind the whole strip at.
@@ -868,8 +888,8 @@ final class TabButtonView: NSView {
 
         guard isSelected else {
             selectionRing.isHidden = true
-            titleLabel.textColor = .secondaryLabelColor
-            faviconView.alphaValue = Self.inactiveFaviconAlpha
+            titleLabel.textColor = isAsleep ? .tertiaryLabelColor : .secondaryLabelColor
+            faviconView.alphaValue = isAsleep ? Self.asleepFaviconAlpha : Self.inactiveFaviconAlpha
             audioButton.contentTintColor = .secondaryLabelColor
             closeButton.contentTintColor = .secondaryLabelColor
             return

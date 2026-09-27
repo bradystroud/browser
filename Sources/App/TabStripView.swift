@@ -18,6 +18,9 @@ protocol TabStripViewDelegate: AnyObject {
     /// (browser-rhi.4, see TabButtonView).
     func tabStripView(_ tabStripView: TabStripView, didRequestMuteToggleAt index: Int)
 
+    /// Tab context menu -- "Put Tab to Sleep".
+    func tabStripView(_ tabStripView: TabStripView, didRequestSleepAt index: Int)
+
     /// Tab context menu -- "Move to Group > <existing group>".
     func tabStripView(_ tabStripView: TabStripView, didRequestMoveToGroupAt index: Int, groupId: UUID)
 
@@ -100,6 +103,8 @@ final class TabStripView: NSView {
         let isAudible: Bool
         /// Mirrors Tab.isLoading (browser-7z5).
         let isLoading: Bool
+        /// Mirrors Tab.isAsleep.
+        var isAsleep = false
     }
 
     struct GroupDisplayInfo {
@@ -421,6 +426,11 @@ final class TabStripView: NSView {
         tabButton(forTabIndex: index)?.isLoading = isLoading
     }
 
+    /// Cheaper than a full reload -- see updateTitle.
+    func updateSleepState(at index: Int, isAsleep: Bool) {
+        tabButton(forTabIndex: index)?.isAsleep = isAsleep
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for item in stripItems {
@@ -492,6 +502,7 @@ final class TabStripView: NSView {
             button.isMuted = info.isMuted
             button.isAudible = info.isAudible
             button.isLoading = info.isLoading
+            button.isAsleep = info.isAsleep
             button.availableGroups = availableGroups
             button.isVerticalLayout = isVertical
             button.isSelected = index == selectedIndex
@@ -519,6 +530,10 @@ final class TabStripView: NSView {
             button.onMuteToggle = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestMuteToggleAt: index)
+            }
+            button.onSleep = { [weak self] in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestSleepAt: index)
             }
             button.onMoveToGroup = { [weak self] groupId in
                 guard let self else { return }

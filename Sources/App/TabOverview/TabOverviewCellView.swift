@@ -91,6 +91,16 @@ final class TabOverviewCellView: NSView {
         isSelected = highlighted
     }
 
+    /// A sleeping tab's thumbnail is the page as it was left, not as it is,
+    /// so it is shown faded.
+    func setAsleep(_ asleep: Bool) {
+        let alpha: CGFloat = asleep ? 0.45 : 1
+        thumbnailView.alphaValue = alpha
+        placeholderFaviconView.alphaValue = alpha
+        titleLabel.textColor = asleep ? .tertiaryLabelColor : .labelColor
+        toolTip = asleep ? "Sleeping — selecting it reloads the page" : nil
+    }
+
     private func setThumbnail(_ thumbnail: NSImage?) {
         thumbnailView.image = thumbnail
         thumbnailView.isHidden = thumbnail == nil

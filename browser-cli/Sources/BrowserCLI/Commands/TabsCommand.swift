@@ -20,7 +20,7 @@ public enum TabsCommand {
             return Output.emit(response, json: args.jsonOutput) { response in
                 guard let tabs = response.tabs, !tabs.isEmpty else { return "(no open tabs)" }
                 return tabs.map { tab in
-                    let marker = tab.isActive ? "*" : " "
+                    let marker = tab.isActive ? "*" : (tab.isAsleep == true ? "z" : " ")
                     return "\(marker) \(tab.profileName)\twindow \(tab.windowIndex) tab \(tab.tabIndex)\t\(tab.title)\t\(tab.url)"
                 }.joined(separator: "\n")
             }

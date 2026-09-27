@@ -93,14 +93,19 @@ public struct CLITabInfo: Codable {
     public let isActive: Bool
     public let title: String
     public let url: String
+    /// True while the tab holds no loaded page (never selected since launch,
+    /// or put to sleep). Optional so a CLI and an app from different builds
+    /// still understand each other; nil means the app didn't say.
+    public let isAsleep: Bool?
 
-    public init(profileName: String, windowIndex: Int, tabIndex: Int, isActive: Bool, title: String, url: String) {
+    public init(profileName: String, windowIndex: Int, tabIndex: Int, isActive: Bool, title: String, url: String, isAsleep: Bool? = nil) {
         self.profileName = profileName
         self.windowIndex = windowIndex
         self.tabIndex = tabIndex
         self.isActive = isActive
         self.title = title
         self.url = url
+        self.isAsleep = isAsleep
     }
 }
 

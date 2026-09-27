@@ -28,10 +28,24 @@ class StringVisitorBlock : public CefStringVisitor {
   explicit StringVisitorBlock(void (^completion)(NSString *_Nullable source))
       : completion_([completion copy]) {}
 
-  void Visit(const CefString& string) override {
-    if (!completion_) {
+  // A browser closed while the read is in flight releases the visitor
+  // without visiting it. The completion still runs, with nil, so a caller
+  // waiting on it (the audio poll, tab sleep) is never left waiting forever.
+  ~StringVisitorBlock() override {
+    if (visited_ || !completion_) {
       return;
     }
+    void (^completion)(NSString *) = completion_;
+    dispatch_async(dispatch_get_main_queue(), ^{
+      completion(nil);
+    });
+  }
+
+  void Visit(const CefString& string) override {
+    if (!completion_ || visited_) {
+      return;
+    }
+    visited_ = true;
     NSString* result = [NSString stringWithUTF8String:string.ToString().c_str()];
     void (^completion)(NSString *) = completion_;
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -41,6 +55,7 @@ class StringVisitorBlock : public CefStringVisitor {
 
  private:
   void (^completion_)(NSString *_Nullable source);
+  bool visited_ = false;
   IMPLEMENT_REFCOUNTING(StringVisitorBlock);
 };
 

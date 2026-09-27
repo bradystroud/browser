@@ -4,10 +4,10 @@ import AppKit
 /// which hosts this alongside the other panes in an NSTabView): what new
 /// windows open with plus the homepage (browser-m0x), the omnibox
 /// display-mode preference (browser-0y1), the search engine and its two
-/// opt-in features (browser-0du) and the rendering-engine choice
+/// opt-in features (browser-0du), tab sleep, and the rendering-engine choice
 /// (browser-2a7). All global rather than per-profile -- see
-/// HomepagePreference, OmniboxDisplayPreference, SearchEnginePreference and
-/// EnginePreference for each one's own reason -- so unlike the other panes
+/// HomepagePreference, OmniboxDisplayPreference, SearchEnginePreference,
+/// TabSleepPreferences and EnginePreference for each one's own reason -- so unlike the other panes
 /// there's no profile picker here.
 final class GeneralPaneController: NSObject, SettingsPaneController {
     private static let margin: CGFloat = 12
@@ -117,6 +117,20 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         label.textColor = .secondaryLabelColor
         return label
     }()
+    /// Tab sleep (see TabSleepCoordinator).
+    private let tabSleepCheckbox = NSButton()
+    private let tabSleepAfterLabel = NSTextField(labelWithString: "after")
+    private let tabSleepAfterPopup = NSPopUpButton()
+    private let tabSleepHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+    private static let tabSleepIntervals: [(title: String, seconds: TimeInterval)] = [
+        ("5 minutes", 5 * 60), ("15 minutes", 15 * 60), ("30 minutes", 30 * 60),
+        ("1 hour", 60 * 60), ("2 hours", 2 * 60 * 60),
+    ]
 
     override init() {
         super.init()
@@ -145,6 +159,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         suggestionsCheckbox.state = SearchEnginePreference.suggestionsEnabled ? .on : .off
         quickSiteCheckbox.state = SearchEnginePreference.quickSiteSearchEnabled ? .on : .off
         updateSearchRow()
+        updateTabSleepRow()
 
         autoScrollCheckbox.state = AutoScrollPreference.isEnabled ? .on : .off
 
@@ -228,6 +243,20 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         quickSiteCheckbox.action = #selector(quickSiteToggled)
         view.addSubview(quickSiteCheckbox)
         view.addSubview(quickSiteHelpLabel)
+
+        tabSleepCheckbox.setButtonType(.switch)
+        tabSleepCheckbox.title = "Put inactive tabs to sleep"
+        tabSleepCheckbox.target = self
+        tabSleepCheckbox.action = #selector(tabSleepToggled)
+        view.addSubview(tabSleepCheckbox)
+        for interval in Self.tabSleepIntervals {
+            tabSleepAfterPopup.menu?.addItem(NSMenuItem(title: interval.title, action: nil, keyEquivalent: ""))
+        }
+        tabSleepAfterPopup.target = self
+        tabSleepAfterPopup.action = #selector(tabSleepIntervalChanged)
+        view.addSubview(tabSleepAfterLabel)
+        view.addSubview(tabSleepAfterPopup)
+        view.addSubview(tabSleepHelpLabel)
 
         autoScrollCheckbox.setButtonType(.switch)
         autoScrollCheckbox.title = "Scroll with the middle button"
@@ -345,6 +374,19 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         place(backgroundTabsMaxLabel, x: margin + thirdSlider * 2, width: thirdSlider, height: Self.labelHeight)
         y += Self.labelHeight + rowGap
         placeHelp(backgroundTabsHelpLabel)
+
+        // Tab sleep sits under the background-tab slider as one group: the
+        // slider sets how the engine treats a hidden tab, and this row decides
+        // when the app unloads one altogether. The checkbox and its interval
+        // read as one sentence: "Put inactive tabs to sleep after [30 minutes]".
+        y += rowGap
+        let checkboxWidth: CGFloat = 196
+        place(tabSleepCheckbox, width: checkboxWidth, height: Self.rowHeight)
+        place(tabSleepAfterLabel, x: margin + checkboxWidth, width: 36, height: Self.labelHeight)
+        if apply { tabSleepAfterLabel.frame.origin.y = y + (Self.rowHeight - Self.labelHeight) / 2 }
+        place(tabSleepAfterPopup, x: margin + checkboxWidth + 40, width: 130, height: Self.rowHeight)
+        y += Self.rowHeight + 6
+        placeHelp(tabSleepHelpLabel, indent: Self.checkboxIndent)
 
         return (y + margin).rounded(.up)
     }
@@ -542,6 +584,36 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         }
 
         quickSiteHelpLabel.stringValue = "Search a site a couple of times and its name becomes a keyword: type \u{201c}wikipedia swift\u{201d} to search Wikipedia directly. Keywords come from your history and never leave your Mac."
+        helpTextDidChange()
+    }
+
+    // MARK: - Tab sleep
+
+    @objc private func tabSleepToggled() {
+        TabSleepPreferences.isEnabled = tabSleepCheckbox.state == .on
+        updateTabSleepRow()
+    }
+
+    @objc private func tabSleepIntervalChanged() {
+        let index = tabSleepAfterPopup.indexOfSelectedItem
+        guard Self.tabSleepIntervals.indices.contains(index) else { return }
+        TabSleepPreferences.idleInterval = Self.tabSleepIntervals[index].seconds
+        updateTabSleepRow()
+    }
+
+    /// An interval stored outside the menu's choices (set by hand for
+    /// testing) selects the nearest one rather than showing nothing.
+    private func updateTabSleepRow() {
+        let enabled = TabSleepPreferences.isEnabled
+        tabSleepCheckbox.state = enabled ? .on : .off
+        let stored = TabSleepPreferences.idleInterval
+        let nearest = Self.tabSleepIntervals.indices.min {
+            abs(Self.tabSleepIntervals[$0].seconds - stored) < abs(Self.tabSleepIntervals[$1].seconds - stored)
+        } ?? 2
+        tabSleepAfterPopup.selectItem(at: nearest)
+        tabSleepAfterPopup.isEnabled = enabled
+        tabSleepAfterLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
+        tabSleepHelpLabel.stringValue = "A background tab you haven\u{2019}t looked at for this long lets go of its page to save memory, and reloads when you select it. Tabs that are pinned, private, playing sound, downloading, or holding something you\u{2019}ve typed stay awake. Sleeping tabs are dimmed in the tab bar."
         helpTextDidChange()
     }
 
