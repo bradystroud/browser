@@ -50,6 +50,14 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
         removeKeyMonitor()
     }
 
+    /// Keeps an open bar just inside the content area's top edge when that
+    /// edge moves without a window resize (autoresizing only covers resizes).
+    func followContentAreaTop() {
+        guard let barView, let contentView = window?.contentView else { return }
+        let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
+        barView.setFrameOrigin(NSPoint(x: barView.frame.minX, y: contentAreaTopY - barView.frame.height - 12))
+    }
+
     private func currentTab() -> Tab? {
         windowController?.activeTab
     }

@@ -125,7 +125,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private static let profilePillHeight: CGFloat = 30
     private static let trailingToolbarControlSize: CGFloat = 30
     private static let trailingToolbarControlGap: CGFloat = 6
+    /// Reader, Downloads, password key and payment autofill -- the slots
+    /// trailingToolbarControlFrame(slot:) hands out. The toolbar's own "+"
+    /// sits outside them, nearest the trailing edge.
     private static let trailingToolbarControlCount = 4
+    /// The toolbar's "+" (new tab), at the trailing end of the toolbar row in
+    /// horizontal mode, Safari-style. It lives here rather than in the tab
+    /// strip because the strip is hidden while a window has one tab, and it
+    /// stays here when the strip shows too, so "+" never jumps between rows
+    /// as tabs open and close. The vertical sidebar keeps its own New Tab
+    /// row, so this is hidden there.
+    private let newTabToolbarButton: NSButton = {
+        let button = NSButton()
+        button.title = ""
+        button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
+        button.imagePosition = .imageOnly
+        button.applyChromeAppearance(.glass)
+        button.toolTip = "New Tab"
+        return button
+    }()
     private let contentContainerView = NSView()
 
     /// The vertical tab sidebar's own material, and the hairline that
@@ -202,21 +220,31 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func trailingToolbarControlFrame(slot: Int) -> NSRect {
         guard let contentView = window?.contentView else { return .zero }
         let size = Self.trailingToolbarControlSize
-        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
         return NSRect(
-            x: contentView.bounds.width - trailingInset - size
-                - CGFloat(slot) * (size + Self.trailingToolbarControlGap),
+            x: trailingToolbarPositionMinX(slot + 1, containerWidth: contentView.bounds.width),
             y: toolbarView.frame.midY - size / 2,
             width: size,
             height: size
         )
     }
 
+    /// Position 0 is the toolbar's own "+"; slot N of
+    /// trailingToolbarControlFrame(slot:) is position N + 1. The "+" position
+    /// is reserved in both orientations so the other controls, which are
+    /// framed once and then ride autoresizing, never need moving on a toggle.
+    private func trailingToolbarPositionMinX(_ position: Int, containerWidth: CGFloat) -> CGFloat {
+        let size = Self.trailingToolbarControlSize
+        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
+        return containerWidth - trailingInset - size
+            - CGFloat(position) * (size + Self.trailingToolbarControlGap)
+    }
+
     private var trailingToolbarControlsReservedWidth: CGFloat {
         let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
+        let positions = Self.trailingToolbarControlCount + 1
         return trailingInset
-            + Self.trailingToolbarControlSize * CGFloat(Self.trailingToolbarControlCount)
-            + Self.trailingToolbarControlGap * CGFloat(Self.trailingToolbarControlCount - 1)
+            + Self.trailingToolbarControlSize * CGFloat(positions)
+            + Self.trailingToolbarControlGap * CGFloat(positions - 1)
     }
 
     private let autocomplete = OmniboxAutocompleteController()
@@ -479,6 +507,35 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             self.tabStripOrientation = updated
             self.applyChromeLayout()
         }
+        NotificationCenter.default.addObserver(
+            forName: .alwaysShowTabBarDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.updateTabStripRowVisibility()
+        }
+    }
+
+    /// Whether the horizontal strip should occupy its row. Hidden with a
+    /// single tab (pinned or not, popup or not) unless View > Always Show Tab
+    /// Bar is on. Meaningless in vertical mode, where the sidebar always shows.
+    private var shouldShowHorizontalTabStrip: Bool {
+        AlwaysShowTabBarPreference.isEnabled || tabs.count > 1
+    }
+
+    /// What applyChromeLayout last laid the horizontal strip out as, so a
+    /// tab opening or closing only relays out on a one <-> many transition.
+    /// Called from insert and closeTab, the only paths that change the tab
+    /// count -- not from a didSet on `tabs`, because a reorder's remove +
+    /// insert would briefly hide and reshow the strip.
+    private var isHorizontalTabStripShown = false
+
+    /// Deliberately not animated: the web content area's frame changes in one
+    /// step, like a window resize, which both engines handle cleanly -- an
+    /// animated frame on CEF's child view would resize the renderer on every
+    /// intermediate step.
+    private func updateTabStripRowVisibility() {
+        guard tabStripOrientation == .horizontal, !tabs.isEmpty,
+              shouldShowHorizontalTabStrip != isHorizontalTabStripShown else { return }
+        applyChromeLayout()
     }
 
     /// Frames all four chrome surfaces (glass backdrop, toolbar row, tab
@@ -503,15 +560,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         switch tabStripOrientation {
         case .horizontal:
-            let stripHeight = Self.tabStripHeight
+            let showsStrip = shouldShowHorizontalTabStrip
+            isHorizontalTabStripShown = showsStrip
+            let stripHeight = showsStrip ? Self.tabStripHeight : 0
             let chromeHeight = stripHeight + toolbarHeight
             chromeBackground.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: chromeHeight)
             tabSidebarBackground.isHidden = true
             tabSidebarSeparator.isHidden = true
+            tabStripView.isHidden = !showsStrip
+            newTabToolbarButton.isHidden = false
             tabStripView.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: stripHeight)
             tabStripView.autoresizingMask = [.width, .minYMargin]
             contentContainerView.frame = NSRect(x: 0, y: 0, width: width, height: height - chromeHeight)
         case .vertical:
+            tabStripView.isHidden = false
+            newTabToolbarButton.isHidden = true
             let sidebarWidth = TabStripView.sidebarWidth
             let sidebarHeight = height - toolbarHeight
             chromeBackground.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
@@ -537,6 +600,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // change autoresizing cannot express.
         activeTab?.hostView.frame = contentContainerView.bounds
         layoutOmniboxContainer()
+        (window as? BrowserWindow)?.chromeLayoutDidChange()
     }
 
     /// View > Show/Hide Tab Sidebar. Flips the shared preference rather than
@@ -545,6 +609,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// that flip posts (see setUpViews).
     @objc func toggleTabSidebar(_ sender: Any?) {
         TabStripOrientationPreference.toggle()
+    }
+
+    /// View > Always Show Tab Bar -- a shared preference, like the sidebar
+    /// toggle above.
+    @objc func toggleAlwaysShowTabBar(_ sender: Any?) {
+        AlwaysShowTabBarPreference.toggle()
     }
 
     private func setUpToolbarContents() {
@@ -663,6 +733,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         reloadButton.target = self
         reloadButton.action = #selector(reloadPage(_:))
         omniboxContainerView.contentContainer.addSubview(reloadButton)
+
+        newTabToolbarButton.frame = NSRect(
+            x: trailingToolbarPositionMinX(0, containerWidth: toolbarView.bounds.width),
+            y: (toolbarHeight - Self.trailingToolbarControlSize) / 2,
+            width: Self.trailingToolbarControlSize,
+            height: Self.trailingToolbarControlSize
+        )
+        newTabToolbarButton.autoresizingMask = [.minXMargin]
+        newTabToolbarButton.target = self
+        newTabToolbarButton.action = #selector(newTab(_:))
+        toolbarView.addSubview(newTabToolbarButton)
 
         // Sits in the toolbar's own padding below the pill (browser-0y1's
         // breathing-room fix left room for exactly this) -- not inside
@@ -1084,6 +1165,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tab.delegate = self
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
+        // Before activateTab, so the new tab's view is framed into the
+        // already-resized content area rather than resized after appearing.
+        updateTabStripRowVisibility()
         // Deliberately before activateTab below, which is what calls
         // Tab.createBrowserIfNeeded: every observer that wires per-tab
         // plumbing (PageMessageDispatcher above all) is therefore wired
@@ -1245,6 +1329,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             window?.close()
             return
         }
+        updateTabStripRowVisibility()
 
         let newActiveIndex: Int
         if wasActive {
@@ -1921,6 +2006,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case #selector(toggleTabSidebar(_:)):
             menuItem.title = tabStripOrientation == .vertical ? "Hide Tab Sidebar" : "Show Tab Sidebar"
             return true
+        case #selector(toggleAlwaysShowTabBar(_:)):
+            menuItem.state = AlwaysShowTabBarPreference.isEnabled ? .on : .off
+            return tabStripOrientation == .horizontal
         case #selector(toggleDevTools(_:)):
             if ActiveEngine.capabilities.inAppDevTools {
                 menuItem.title = activeTab?.devTools.isOpen == true ? "Close Developer Tools" : "Open Developer Tools"

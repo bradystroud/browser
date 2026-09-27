@@ -7,6 +7,9 @@ extension Notification.Name {
     /// observes" shape as .omniboxDisplayPreferenceDidChange (see
     /// OmniboxDisplayPreference.swift).
     static let tabStripOrientationDidChange = Notification.Name("TabStripOrientationDidChange")
+    /// Posted whenever AlwaysShowTabBarPreference.isEnabled changes, for the
+    /// same every-window-follows reason.
+    static let alwaysShowTabBarDidChange = Notification.Name("AlwaysShowTabBarDidChange")
 }
 
 /// Where the tab strip sits: a horizontal row under the toolbar (the default,
@@ -61,5 +64,27 @@ enum TabStripOrientationPreference {
     /// all react to the notification above, and none of them owns the value.
     static func toggle() {
         current = current == .vertical ? .horizontal : .vertical
+    }
+}
+
+/// View > Always Show Tab Bar. Off (the default), the horizontal strip is
+/// hidden while a window has a single tab, Safari-style, and the web content
+/// moves up under the toolbar; on, it shows regardless of tab count. Has no
+/// effect on the vertical sidebar. Global rather than per-profile for the
+/// same reason as TabStripOrientationPreference.
+enum AlwaysShowTabBarPreference {
+    private static let key = "BrowserAlwaysShowTabBar"
+
+    static var isEnabled: Bool {
+        get { AppPreferencesStore.current.bool(forKey: key) }
+        set {
+            guard newValue != isEnabled else { return }
+            AppPreferencesStore.current.set(newValue, forKey: key)
+            NotificationCenter.default.post(name: .alwaysShowTabBarDidChange, object: nil)
+        }
+    }
+
+    static func toggle() {
+        isEnabled.toggle()
     }
 }

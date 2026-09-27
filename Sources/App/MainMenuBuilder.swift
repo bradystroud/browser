@@ -265,6 +265,11 @@ final class MainMenuBuilder {
             action: #selector(BrowserWindowController.toggleTabSidebar(_:)),
             keyEquivalent: "s"
         ).keyEquivalentModifierMask = [.command, .control]
+        menu.addItem(
+            withTitle: "Always Show Tab Bar",
+            action: #selector(BrowserWindowController.toggleAlwaysShowTabBar(_:)),
+            keyEquivalent: ""
+        )
         menu.addItem(.separator())
         responsiveDesignModeItem.submenu = responsiveDesignModeMenu()
         menu.addItem(responsiveDesignModeItem)
