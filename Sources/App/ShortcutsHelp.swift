@@ -79,11 +79,13 @@ enum ShortcutsHelp {
 
     /// Entries with no real menu item behind them, so they can't be derived
     /// live: ⌘1-9 (nine near-identical entries would be clutter -- see
-    /// BrowserWindow.performKeyEquivalent) and Ctrl+Tab/Ctrl+Shift+Tab (a
+    /// BrowserWindow.performKeyEquivalent), Ctrl+Tab/Ctrl+Shift+Tab (a
     /// bare-Control keyDown never reaches AppKit's menu key-equivalent
     /// routing, so these are a raw NSEvent monitor instead -- see
-    /// TabCyclingController).
-    private static let extraEntries: [ShortcutCategory: [ShortcutEntry]] = [
+    /// TabCyclingController), the link-peek click (LinkPeekGesture, listed
+    /// only while its setting is on) and a little window's own ⌘O
+    /// (LittleWindowController's key monitor).
+    private static var extraEntries: [ShortcutCategory: [ShortcutEntry]] {[
         .tabs: [
             ShortcutEntry(key: "⌘1–9", title: "Select Tab"),
             ShortcutEntry(key: "⌃⇥", title: "Next Tab"),
@@ -100,7 +102,9 @@ enum ShortcutsHelp {
             ShortcutEntry(key: "⌘]", title: "Forward"),
             ShortcutEntry(key: "⌘=", title: "Zoom In"),
         ],
-    ]
+        .links: (LinkPeekPreference.isEnabled ? [ShortcutEntry(key: "⌥⇧-click", title: "Peek at Link")] : [])
+            + [ShortcutEntry(key: "⌘O", title: "Open Little Window in Browser")],
+    ]}
 
     static func sections() -> [(ShortcutCategory, [ShortcutEntry])] {
         var entries: [ShortcutCategory: [ShortcutEntry]] = [:]
