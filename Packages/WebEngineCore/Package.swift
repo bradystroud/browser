@@ -16,7 +16,10 @@ let package = Package(
         .target(name: "WebEngineCore"),
         .testTarget(
             name: "WebEngineCoreTests",
-            dependencies: ["WebEngineCore", .product(name: "BlockListCore", package: "BlockListCore")]
+            dependencies: ["WebEngineCore", .product(name: "BlockListCore", package: "BlockListCore")],
+            // fixture-hello.crx: a real CRX3, packed by Chrome's own
+            // --pack-extension from a two-file extension with a throwaway key.
+            resources: [.copy("Fixtures")]
         ),
     ]
 )

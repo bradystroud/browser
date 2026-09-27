@@ -19,7 +19,10 @@ enum CEFEngine: BrowserEngine {
             responsiveDesignMode: true,
             perTabCPUUsage: true,
             perTabAudioMute: true,
-            customContextMenuItems: true)
+            customContextMenuItems: true,
+            // Chromium's extension system is Chrome-style only; this app's
+            // Alloy-style CEF 150 browsers have none.
+            webExtensions: false)
     }
 
     static func initialize(profilesRootPath: String) -> Bool {

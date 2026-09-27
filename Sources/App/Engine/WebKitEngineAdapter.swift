@@ -60,7 +60,19 @@ enum WebKitEngine: BrowserEngine {
             perTabAudioMute: true,
             customContextMenuItems: false,
             backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable,
-            nativeSwipeNavigation: true)
+            nativeSwipeNavigation: true,
+            webExtensions: extensionsAvailable)
+    }
+
+    /// WKWebExtension is macOS 15.4+.
+    static var extensionsAvailable: Bool {
+        if #available(macOS 15.4, *) { return true }
+        return false
+    }
+
+    static var extensions: EngineExtensionManager? {
+        if #available(macOS 15.4, *) { return WebKitExtensionManager.shared }
+        return nil
     }
 
     static var contentRuleListStore: WKContentRuleListStore?
@@ -276,7 +288,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
 
     init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
         self.profileName = profileName
-        let config = WKWebViewConfiguration()
+        var config = WKWebViewConfiguration()
         // WKWebsiteDataStore(forIdentifier:) is macOS 14.0+ (see
         // WKWebsiteDataStore.h) -- this app's deployment target is 12.0, so
         // on macOS 12/13 there is no public way to get a persistent,
@@ -289,6 +301,9 @@ final class WebKitTab: NSObject, EnginePopupTab {
             config.websiteDataStore = WKWebsiteDataStore(forIdentifier: uuid)
         }
         config.applicationNameForUserAgent = SafariUserAgent.applicationName
+        if #available(macOS 15.4, *) {
+            config = WebKitExtensionManager.shared.configuration(for: config, profileId: profileId, initialURL: initialURL)
+        }
         webView = WebKitContentView(frame: hostView.bounds, configuration: config)
         super.init()
         finishInit(hostView: hostView, initialURL: initialURL, config: config)

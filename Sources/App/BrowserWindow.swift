@@ -31,11 +31,17 @@ final class BrowserWindow: NSWindow {
         findBar.followContentAreaTop()
     }
 
+    /// The extensions button and pinned extensions, attached like the
+    /// downloads button; read by ExtensionWindowHandle for popup anchors.
+    let extensionsToolbar = ExtensionsToolbarController()
+
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         DevBuildIndicator.attach(to: self)
         readerMode.attach(to: self)
         downloadsToolbar.attach(to: self)
+        ExtensionsCoordinator.shared.activate()
+        extensionsToolbar.attach(to: self)
         // Idempotent -- see PasswordManagerCoordinator.activate()'s own doc
         // comment for why it's kicked off here rather than in AppDelegate or
         // BrowserWindowController (browser-ojh.1).

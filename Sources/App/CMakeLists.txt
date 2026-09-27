@@ -109,6 +109,10 @@ set(BROWSER_SWIFT_SRCS
   LinkPeek/LinkPeekGesture.swift
   LinkPeek/LinkPeekOverlayView.swift
   LinkPeek/LinkPeekController.swift
+  Engine/EngineExtensions.swift
+  Engine/WebKitExtensions.swift
+  Engine/WebKitExtensionAdapters.swift
+  Engine/WebKitExtensionInstaller.swift
   Routing/RoutingRulesStore.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
@@ -136,6 +140,10 @@ set(BROWSER_SWIFT_SRCS
   Furniture/ReadingListArticleTemplate.swift
   Furniture/ReadingListCoordinator.swift
   Furniture/ReadingListWindowController.swift
+  Extensions/ExtensionsCoordinator.swift
+  Extensions/ExtensionsToolbarController.swift
+  Extensions/ExtensionsWindowController.swift
+  Extensions/ExtensionsPaneController.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
@@ -350,6 +358,10 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PopupTargetPolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CredentialScope.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExternalSchemePolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionPackage.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionUpdate.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ZipArchive.swift
   )
 source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})
 

@@ -240,9 +240,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             - CGFloat(position) * (size + Self.trailingToolbarControlGap)
     }
 
+    /// Slots beyond the fixed four that a controller currently fills (the
+    /// extensions button and pinned extensions), so the omnibox stays clear
+    /// of them.
+    var extraTrailingToolbarSlots = 0 {
+        didSet { if extraTrailingToolbarSlots != oldValue { layoutOmniboxContainer() } }
+    }
+
     private var trailingToolbarControlsReservedWidth: CGFloat {
         let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
-        let positions = Self.trailingToolbarControlCount + 1
+        let positions = Self.trailingToolbarControlCount + 1 + extraTrailingToolbarSlots
         return trailingInset
             + Self.trailingToolbarControlSize * CGFloat(positions)
             + Self.trailingToolbarControlGap * CGFloat(positions - 1)

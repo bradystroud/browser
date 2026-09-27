@@ -436,6 +436,9 @@ struct EngineCapabilities {
     /// The engine's own view turns a two-finger trackpad swipe into back
     /// and forward. When false, SwipeNavigationController does it instead.
     var nativeSwipeNavigation: Bool = false
+    /// Chrome extensions can be installed and run -- `extensions` on the
+    /// engine is non-nil.
+    var webExtensions: Bool = false
 }
 
 /// How hard the engine works to save memory in tabs the user can't see.
@@ -566,4 +569,12 @@ protocol BrowserEngine {
     /// at launch and any time the shared list or a profile's
     /// ThreatWarningSettings changes -- see ThreatListCoordinator.
     static func updateThreatBlocking(domains: [String], profileSettings: [String: EngineProfileThreatSettings])
+
+    /// The engine's extension system, where it has one -- see
+    /// EngineCapabilities.webExtensions.
+    static var extensions: EngineExtensionManager? { get }
+}
+
+extension BrowserEngine {
+    static var extensions: EngineExtensionManager? { nil }
 }

@@ -48,6 +48,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let startPagePane = StartPageSettingsPaneController()
     private let autofillPane = AutofillPaneController()
     private let safariSyncPane = SafariSyncPaneController()
+    private let extensionsPane = ExtensionsPaneController()
     private let tabView = NSTabView()
     /// Kept alive for the window's lifetime -- see WindowFrameMemory.
     private var frameMemory: WindowFrameMemory?
@@ -194,6 +195,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         tabView.addTabViewItem(autofillItem)
         tabView.addTabViewItem(safariSyncItem)
+        if ActiveEngine.capabilities.webExtensions {
+            let extensionsItem = NSTabViewItem(identifier: "extensions")
+            extensionsItem.label = "Extensions"
+            extensionsItem.view = SettingsPaneScrollView(pane: extensionsPane)
+            tabView.addTabViewItem(extensionsItem)
+        }
         contentView.addSubview(tabView)
     }
 
@@ -220,6 +227,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         case "start-page": return startPagePane
         case "autofill": return autofillPane
         case "safari-sync": return safariSyncPane
+        case "extensions": return extensionsPane
         default: return nil
         }
     }

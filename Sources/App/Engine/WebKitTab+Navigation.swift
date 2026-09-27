@@ -306,8 +306,9 @@ extension WebKitTab: WKNavigationDelegate {
     /// Schemes the web view renders itself. Anything else (mailto:, tel:,
     /// zoommtg:, slack:, ...) belongs to another app. The app has no custom
     /// internal scheme of its own: the start page and the threat
-    /// interstitial are data: URLs.
-    private static let webSchemes: Set<String> = ["http", "https", "file", "about", "data", "blob", "javascript"]
+    /// interstitial are data: URLs. An extension's own pages are served
+    /// from chrome-extension: (see WebKitExtensionManager.pageScheme).
+    private static let webSchemes: Set<String> = ["http", "https", "file", "about", "data", "blob", "javascript", "chrome-extension"]
 
     static func isExternalScheme(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased() else { return false }

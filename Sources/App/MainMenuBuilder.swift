@@ -645,6 +645,12 @@ final class MainMenuBuilder {
             .keyEquivalentModifierMask = [.command, .option]
         windowMenu.addItem(withTitle: "Put Other Tabs to Sleep", action: #selector(BrowserWindowController.sleepOtherTabs(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
+        // Only on an engine that runs extensions.
+        if ActiveEngine.capabilities.webExtensions {
+            let extensions = windowMenu.addItem(withTitle: "Extensions…", action: #selector(ExtensionsCoordinator.showExtensions(_:)), keyEquivalent: "")
+            extensions.target = ExtensionsCoordinator.shared
+            windowMenu.addItem(.separator())
+        }
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
