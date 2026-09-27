@@ -35,7 +35,10 @@ final class AutofillPaneController: NSObject, SettingsPaneController {
     /// Cards/Addresses sub-tabs directly instead of only ever seeing
     /// whichever one Passwords leaves selected.
     func selectSubTab(identifier: String) {
-        guard tabView.indexOfTabViewItem(withIdentifier: identifier) != NSNotFound else { return }
+        guard tabView.indexOfTabViewItem(withIdentifier: identifier) != NSNotFound else {
+            NSLog("Autofill settings has no tab named '%@'", identifier)
+            return
+        }
         tabView.selectTabViewItem(withIdentifier: identifier)
     }
 
