@@ -230,9 +230,12 @@ final class HistoryStoreTests: XCTestCase {
     }
 
     func testImportVisitsFillsInATitleForAURLThatHadNoneYet() throws {
-        try store.recordVisit(url: "https://untitled.example", title: nil, at: Date())
+        let recorded = Date()
+        try store.recordVisit(url: "https://untitled.example", title: nil, at: recorded)
+        // A second later: a visit at the same millisecond counts as already
+        // imported and is skipped.
         try store.importVisits([
-            (url: "https://untitled.example", title: "Now Has A Title", visitTime: Date()),
+            (url: "https://untitled.example", title: "Now Has A Title", visitTime: recorded.addingTimeInterval(1)),
         ])
 
         let entries = try store.entries()
