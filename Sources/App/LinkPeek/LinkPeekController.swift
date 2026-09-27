@@ -147,7 +147,7 @@ final class LinkPeekController: TabLifecycleObserver {
     func openAsTab() {
         guard let tab = peekTab, let windowController else { return }
         tearDownPanel()
-        windowController.adoptPeekedTab(tab)
+        windowController.adoptTab(tab, makeActive: true)
         focusPage(of: tab)
     }
 

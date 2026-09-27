@@ -1193,7 +1193,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     /// Moves in a Tab that already has a live engine browser -- a little
-    /// window's page (LittleWindowController) -- without reloading it.
+    /// window's page (LittleWindowController) or a link peek's page
+    /// (LinkPeekController.openAsTab) -- without reloading it.
     /// Lands where a link opened from the active tab would, which is never
     /// among the pinned tabs.
     func adoptTab(_ tab: Tab, makeActive: Bool) {
@@ -2652,13 +2653,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Context-menu "Peek Link", from any tab in this window.
     func tab(_ tab: Tab, didRequestPeekForURL url: String) {
         linkPeek.show(url: url)
-    }
-
-    /// "Open as Tab" from the link peek: the peeked Tab, already loaded,
-    /// joins the strip next to the current tab as the active one.
-    func adoptPeekedTab(_ tab: Tab) {
-        let index = activeTabIndex.map { insertionIndex(afterOpenerAt: $0) } ?? tabs.count
-        insert(tab, makeActive: true, at: index, focusOmnibox: false)
     }
 
     private func dismissPermissionPromptIfShowing() {

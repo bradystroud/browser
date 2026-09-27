@@ -5,12 +5,15 @@ import AppKit
 /// conformance (navigation/loading), and delivered to every registered
 /// TabLifecycleObserver.
 enum TabLifecycleEvent {
-    /// The Tab object exists and is in `controller.tabs`, but has no
-    /// engine-side browser yet (Tab.createBrowserIfNeeded hasn't run) -- so
-    /// an observer that wires per-tab plumbing here is guaranteed to be wired
-    /// before the tab's page can possibly say anything. See
-    /// PageMessageDispatcher for why that guarantee is the whole point of
-    /// this event existing.
+    /// The Tab has joined `controller.tabs`, or is a link peek's page about
+    /// to be shown (LinkPeekController), which gets `opened` again if it is
+    /// opened as a tab. A new Tab has no engine-side browser yet
+    /// (Tab.createBrowserIfNeeded hasn't run) -- so an observer that wires
+    /// per-tab plumbing here is guaranteed to be wired before the tab's page
+    /// can possibly say anything. See PageMessageDispatcher for why that
+    /// guarantee is the whole point of this event existing. A tab moved in
+    /// live (BrowserWindowController.adoptTab) already has one, and may
+    /// already have had `opened`, so handling it must be idempotent.
     case opened
 
     /// This tab is now its window's visible tab. Also fires for a brand-new
