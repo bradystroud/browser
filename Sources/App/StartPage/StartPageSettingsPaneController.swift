@@ -23,15 +23,14 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
     private static let imageThumbnailWidth: CGFloat = 76
 
     /// This pane's natural content height, computed from the same
-    /// constants setUpViews lays out with -- see
-    /// GeneralPaneController.preferredContentHeight's doc comment for why
-    /// this pane needs its own accurate value instead of
-    /// SettingsPaneController's generic table-filler default.
+    /// constants setUpViews lays out with -- it has no table to stretch, so
+    /// it needs its own accurate value instead of SettingsPaneController's
+    /// generic table-filler default.
     static let preferredContentHeight: CGFloat =
         margin + headerHeight + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 6 + checkboxRowHeight
             + rowGap + swatchLabelHeight + 6 + swatchRowHeight
             + rowGap + swatchLabelHeight + 6 + imageRowHeight + margin
-    var preferredContentHeight: CGFloat { Self.preferredContentHeight }
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { Self.preferredContentHeight }
 
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: StartPageSettingsPaneController.preferredContentHeight))
 

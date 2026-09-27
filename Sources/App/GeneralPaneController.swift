@@ -14,49 +14,30 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private static let headerHeight: CGFloat = 22
     private static let rowHeight: CGFloat = 28
     private static let labelHeight: CGFloat = 20
-    private static let helpHeight: CGFloat = 48
     private static let rowGap: CGFloat = 12
-
-    /// This pane's natural content height, computed from the same
-    /// constants setUpViews lays out with so the two can never drift apart
-    /// -- SettingsWindowController resizes the Settings window to this
-    /// whenever General becomes the selected tab (unlike the table-based
-    /// panes, General has no scrollable content to stretch into whatever
-    /// height it's given, so it needs its own accurate size instead of
-    /// sharing SettingsPaneController's generic default).
-    static let preferredContentHeight: CGFloat =
-        margin + headerHeight
-            // New-windows row, homepage row, and their shared help text.
-            + rowGap + labelHeight + 6 + rowHeight
-            + rowGap + labelHeight + 6 + rowHeight
-            + rowGap + homepageHelpHeight
-            + rowGap + labelHeight + 6 + rowHeight + rowGap + helpHeight
-            // Search engine row, its help, and the two search toggles.
-            + rowGap + labelHeight + 6 + rowHeight + rowGap + searchHelpHeight
-            + rowGap + checkboxHeight + 6 + suggestionsHelpHeight
-            + rowGap + checkboxHeight + 6 + quickSiteHelpHeight
-            + rowGap + labelHeight + 6 + rowHeight + rowGap + engineHelpHeight + margin
-    var preferredContentHeight: CGFloat { Self.preferredContentHeight }
-    /// Taller than the omnibox row's help text: this one has to carry both
-    /// the restart requirement and what WebKit can't do.
-    private static let engineHelpHeight: CGFloat = 76
-    /// Carries either the explanation of the current choice or the
-    /// "that isn't a URL" warning, whichever applies -- sized for the longer.
-    private static let homepageHelpHeight: CGFloat = 48
+    private static let checkboxHeight: CGFloat = 20
+    /// Help text under a checkbox is indented to line up with its title.
+    private static let checkboxIndent: CGFloat = 18
     /// Leaves room for "Set to Current Page" beside it on one row.
     private static let homepageFieldWidth: CGFloat = 330
-    private static let checkboxHeight: CGFloat = 20
-    /// Carries either the name of the selected engine or the "that template
-    /// is unusable" warning, whichever applies.
-    private static let searchHelpHeight: CGFloat = 34
-    /// The longest help text in the pane, and deliberately so: it is the one
-    /// that says what leaves the machine.
-    private static let suggestionsHelpHeight: CGFloat = 62
-    private static let quickSiteHelpHeight: CGFloat = 34
     /// Sits beside the engine popup, on the same row.
     private static let customTemplateFieldWidth: CGFloat = 316
 
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: GeneralPaneController.preferredContentHeight))
+    /// Laid out top-down by layOut(width:apply:), which is also how the
+    /// pane's content height is measured -- the help labels wrap to the
+    /// pane's width, so that height depends on the width and on whatever
+    /// each help label currently says.
+    let view: NSView = GeneralPaneView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    private let headerLabel: NSTextField = {
+        let label = NSTextField(labelWithString: "General")
+        label.font = .boldSystemFont(ofSize: 13)
+        return label
+    }()
+    private let newWindowLabel = NSTextField(labelWithString: "New windows open with:")
+    private let homepageLabel = NSTextField(labelWithString: "Homepage:")
+    private let omniboxLabel = NSTextField(labelWithString: "When not focused, the address bar shows:")
+    private let searchLabel = NSTextField(labelWithString: "Search engine:")
+    private let engineLabel = NSTextField(labelWithString: "Rendering engine:")
 
     /// New windows / homepage (browser-m0x).
     private let newWindowPopup = NSPopUpButton()
@@ -149,43 +130,14 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     }
 
     private func setUpViews() {
-        let margin = Self.margin
-        let headerHeight = Self.headerHeight
-        let rowHeight = Self.rowHeight
-        let labelHeight = Self.labelHeight
-        let helpHeight = Self.helpHeight
-        let rowGap = Self.rowGap
+        (view as? GeneralPaneView)?.onResize = { [weak self] in self?.layOut() }
 
-        let headerLabel = NSTextField(labelWithString: "General")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(
-            x: margin,
-            y: view.bounds.height - margin - headerHeight,
-            width: view.bounds.width - margin * 2,
-            height: headerHeight
-        )
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        // Top-down from here: the label sits above the popup it describes,
-        // which sits above the help text explaining the current selection
-        // -- all pinned to the top (.minYMargin) so any extra height the
-        // window picks up collects below the help text rather than pushing
-        // this content toward the bottom edge.
+        for label in [headerLabel, newWindowLabel, homepageLabel, omniboxLabel, searchLabel, engineLabel] {
+            view.addSubview(label)
+        }
 
         // New windows / homepage (browser-m0x), first because it's the one
         // setting here that changes what ⌘N does.
-        let newWindowLabelY = headerLabel.frame.minY - rowGap - labelHeight
-        let newWindowLabel = NSTextField(labelWithString: "New windows open with:")
-        newWindowLabel.frame = NSRect(
-            x: margin, y: newWindowLabelY, width: view.bounds.width - margin * 2, height: labelHeight
-        )
-        newWindowLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(newWindowLabel)
-
-        let newWindowPopupY = newWindowLabelY - 6 - rowHeight
-        newWindowPopup.frame = NSRect(x: margin, y: newWindowPopupY, width: 200, height: rowHeight)
-        newWindowPopup.autoresizingMask = [.maxXMargin, .minYMargin]
         for content in NewWindowContent.allCases {
             newWindowPopup.menu?.addItem(NSMenuItem(title: content.title, action: nil, keyEquivalent: ""))
         }
@@ -193,19 +145,6 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         newWindowPopup.action = #selector(newWindowContentChanged)
         view.addSubview(newWindowPopup)
 
-        let homepageLabelY = newWindowPopupY - rowGap - labelHeight
-        let homepageLabel = NSTextField(labelWithString: "Homepage:")
-        homepageLabel.frame = NSRect(
-            x: margin, y: homepageLabelY, width: view.bounds.width - margin * 2, height: labelHeight
-        )
-        homepageLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(homepageLabel)
-
-        let homepageFieldY = homepageLabelY - 6 - rowHeight
-        homepageField.frame = NSRect(
-            x: margin, y: homepageFieldY, width: Self.homepageFieldWidth, height: rowHeight
-        )
-        homepageField.autoresizingMask = [.maxXMargin, .minYMargin]
         homepageField.placeholderString = "https://example.org"
         homepageField.target = self
         // Commit on Return; the delegate below also commits on focus loss, so
@@ -214,56 +153,24 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         homepageField.delegate = self
         view.addSubview(homepageField)
 
-        setToCurrentPageButton.frame = NSRect(
-            x: margin + Self.homepageFieldWidth + 8, y: homepageFieldY, width: 162, height: rowHeight
-        )
-        setToCurrentPageButton.autoresizingMask = [.maxXMargin, .minYMargin]
         setToCurrentPageButton.title = "Set to Current Page"
         setToCurrentPageButton.bezelStyle = .rounded
         setToCurrentPageButton.target = self
         setToCurrentPageButton.action = #selector(setHomepageToCurrentPage)
         view.addSubview(setToCurrentPageButton)
-
-        let homepageHelpY = homepageFieldY - rowGap - Self.homepageHelpHeight
-        homepageHelpLabel.frame = NSRect(
-            x: margin, y: homepageHelpY, width: view.bounds.width - margin * 2, height: Self.homepageHelpHeight
-        )
-        homepageHelpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(homepageHelpLabel)
 
-        let rowLabelY = homepageHelpY - rowGap - labelHeight
-        let rowLabel = NSTextField(labelWithString: "When not focused, the address bar shows:")
-        rowLabel.frame = NSRect(x: margin, y: rowLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
-        rowLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(rowLabel)
-
-        let popupY = rowLabelY - 6 - rowHeight
-        modePopup.frame = NSRect(x: margin, y: popupY, width: 200, height: rowHeight)
-        modePopup.autoresizingMask = [.maxXMargin, .minYMargin]
         for mode in OmniboxDisplayMode.allCases {
             modePopup.menu?.addItem(NSMenuItem(title: mode.title, action: nil, keyEquivalent: ""))
         }
         modePopup.target = self
         modePopup.action = #selector(modeChanged)
         view.addSubview(modePopup)
-
-        let helpY = popupY - rowGap - helpHeight
-        helpLabel.frame = NSRect(x: margin, y: helpY, width: view.bounds.width - margin * 2, height: helpHeight)
-        helpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(helpLabel)
 
         // Search row (browser-0du): the engine popup and, beside it, the
         // template field that only a custom engine uses -- one row rather
         // than two, because the pane is already tall.
-        let searchLabelY = helpY - rowGap - labelHeight
-        let searchLabel = NSTextField(labelWithString: "Search engine:")
-        searchLabel.frame = NSRect(x: margin, y: searchLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
-        searchLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(searchLabel)
-
-        let searchPopupY = searchLabelY - 6 - rowHeight
-        searchEnginePopup.frame = NSRect(x: margin, y: searchPopupY, width: 200, height: rowHeight)
-        searchEnginePopup.autoresizingMask = [.maxXMargin, .minYMargin]
         for choice in Self.searchEngineOrder {
             searchEnginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: choice), action: nil, keyEquivalent: ""))
         }
@@ -271,84 +178,131 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         searchEnginePopup.action = #selector(searchEngineChanged)
         view.addSubview(searchEnginePopup)
 
-        customTemplateField.frame = NSRect(
-            x: margin + 208, y: searchPopupY, width: Self.customTemplateFieldWidth, height: rowHeight
-        )
-        customTemplateField.autoresizingMask = [.maxXMargin, .minYMargin]
         customTemplateField.placeholderString = "https://example.com/search?q={searchTerms}"
         customTemplateField.target = self
         customTemplateField.action = #selector(customTemplateCommitted)
         customTemplateField.delegate = self
         view.addSubview(customTemplateField)
-
-        let searchHelpY = searchPopupY - rowGap - Self.searchHelpHeight
-        searchHelpLabel.frame = NSRect(
-            x: margin, y: searchHelpY, width: view.bounds.width - margin * 2, height: Self.searchHelpHeight
-        )
-        searchHelpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(searchHelpLabel)
 
-        let suggestionsY = searchHelpY - rowGap - Self.checkboxHeight
-        suggestionsCheckbox.frame = NSRect(
-            x: margin, y: suggestionsY, width: view.bounds.width - margin * 2, height: Self.checkboxHeight
-        )
-        suggestionsCheckbox.autoresizingMask = [.width, .minYMargin]
         suggestionsCheckbox.setButtonType(.switch)
         suggestionsCheckbox.title = "Show search suggestions"
         suggestionsCheckbox.target = self
         suggestionsCheckbox.action = #selector(suggestionsToggled)
         view.addSubview(suggestionsCheckbox)
-
-        let suggestionsHelpY = suggestionsY - 6 - Self.suggestionsHelpHeight
-        suggestionsHelpLabel.frame = NSRect(
-            x: margin + 18, y: suggestionsHelpY,
-            width: view.bounds.width - margin * 2 - 18, height: Self.suggestionsHelpHeight
-        )
-        suggestionsHelpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(suggestionsHelpLabel)
 
-        let quickSiteY = suggestionsHelpY - rowGap - Self.checkboxHeight
-        quickSiteCheckbox.frame = NSRect(
-            x: margin, y: quickSiteY, width: view.bounds.width - margin * 2, height: Self.checkboxHeight
-        )
-        quickSiteCheckbox.autoresizingMask = [.width, .minYMargin]
         quickSiteCheckbox.setButtonType(.switch)
         quickSiteCheckbox.title = "Quick Website Search"
         quickSiteCheckbox.target = self
         quickSiteCheckbox.action = #selector(quickSiteToggled)
         view.addSubview(quickSiteCheckbox)
-
-        let quickSiteHelpY = quickSiteY - 6 - Self.quickSiteHelpHeight
-        quickSiteHelpLabel.frame = NSRect(
-            x: margin + 18, y: quickSiteHelpY,
-            width: view.bounds.width - margin * 2 - 18, height: Self.quickSiteHelpHeight
-        )
-        quickSiteHelpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(quickSiteHelpLabel)
 
-        // Engine row, same top-down shape as the omnibox row above it.
-        let engineLabelY = quickSiteHelpY - rowGap - labelHeight
-        let engineLabel = NSTextField(labelWithString: "Rendering engine:")
-        engineLabel.frame = NSRect(x: margin, y: engineLabelY, width: view.bounds.width - margin * 2, height: labelHeight)
-        engineLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(engineLabel)
-
-        let enginePopupY = engineLabelY - 6 - rowHeight
-        enginePopup.frame = NSRect(x: margin, y: enginePopupY, width: 200, height: rowHeight)
-        enginePopup.autoresizingMask = [.maxXMargin, .minYMargin]
         for engine in Self.engineOrder {
             enginePopup.menu?.addItem(NSMenuItem(title: Self.title(for: engine), action: nil, keyEquivalent: ""))
         }
         enginePopup.target = self
         enginePopup.action = #selector(engineChanged)
         view.addSubview(enginePopup)
-
-        let engineHelpY = enginePopupY - rowGap - Self.engineHelpHeight
-        engineHelpLabel.frame = NSRect(
-            x: margin, y: engineHelpY, width: view.bounds.width - margin * 2, height: Self.engineHelpHeight
-        )
-        engineHelpLabel.autoresizingMask = [.width, .minYMargin]
         view.addSubview(engineHelpLabel)
+    }
+
+    // MARK: - Layout
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        layOut(width: width, apply: false)
+    }
+
+    private func layOut() {
+        layOut(width: view.bounds.width, apply: true)
+    }
+
+    /// Top-down: each label sits above the popup it describes, which sits
+    /// above the help text explaining the current selection. Returns the
+    /// total content height; with `apply` false it only measures.
+    @discardableResult
+    private func layOut(width: CGFloat, apply: Bool) -> CGFloat {
+        let margin = Self.margin
+        let rowGap = Self.rowGap
+        let fullWidth = max(0, width - margin * 2)
+        var y = margin
+
+        func place(_ subview: NSView, x: CGFloat = margin, width: CGFloat = fullWidth, height: CGFloat) {
+            if apply { subview.frame = NSRect(x: x, y: y, width: width, height: height) }
+        }
+        /// A wrapping help label, as tall as its current text needs.
+        func placeHelp(_ label: NSTextField, indent: CGFloat = 0) {
+            let labelWidth = max(0, fullWidth - indent)
+            let height = Self.wrappedHeight(of: label, width: labelWidth)
+            place(label, x: margin + indent, width: labelWidth, height: height)
+            y += height
+        }
+        /// "Label:" above one row of controls, each given as (view, x offset, width).
+        func placeLabeledRow(_ label: NSTextField, _ controls: [(NSView, CGFloat, CGFloat)]) {
+            place(label, height: Self.labelHeight)
+            y += Self.labelHeight + 6
+            for (control, offset, controlWidth) in controls {
+                place(control, x: margin + offset, width: controlWidth, height: Self.rowHeight)
+            }
+            y += Self.rowHeight
+        }
+
+        place(headerLabel, height: Self.headerHeight)
+        y += Self.headerHeight
+
+        y += rowGap
+        placeLabeledRow(newWindowLabel, [(newWindowPopup, 0, 200)])
+        y += rowGap
+        placeLabeledRow(homepageLabel, [
+            (homepageField, 0, Self.homepageFieldWidth),
+            (setToCurrentPageButton, Self.homepageFieldWidth + 8, 162),
+        ])
+        y += rowGap
+        placeHelp(homepageHelpLabel)
+
+        y += rowGap
+        placeLabeledRow(omniboxLabel, [(modePopup, 0, 200)])
+        y += rowGap
+        placeHelp(helpLabel)
+
+        y += rowGap
+        placeLabeledRow(searchLabel, [
+            (searchEnginePopup, 0, 200),
+            (customTemplateField, 208, Self.customTemplateFieldWidth),
+        ])
+        y += rowGap
+        placeHelp(searchHelpLabel)
+
+        y += rowGap
+        place(suggestionsCheckbox, height: Self.checkboxHeight)
+        y += Self.checkboxHeight + 6
+        placeHelp(suggestionsHelpLabel, indent: Self.checkboxIndent)
+
+        y += rowGap
+        place(quickSiteCheckbox, height: Self.checkboxHeight)
+        y += Self.checkboxHeight + 6
+        placeHelp(quickSiteHelpLabel, indent: Self.checkboxIndent)
+
+        y += rowGap
+        placeLabeledRow(engineLabel, [(enginePopup, 0, 200)])
+        y += rowGap
+        placeHelp(engineHelpLabel)
+
+        return (y + margin).rounded(.up)
+    }
+
+    private static func wrappedHeight(of label: NSTextField, width: CGFloat) -> CGFloat {
+        guard let cell = label.cell else { return 0 }
+        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        return cell.cellSize(forBounds: bounds).height.rounded(.up)
+    }
+
+    /// After a help label's text changes: re-flow the pane and let the
+    /// hosting scroll view pick up its new height.
+    private func helpTextDidChange() {
+        layOut()
+        invalidateContentHeight()
     }
 
     private static func title(for engine: EngineChoice) -> String {
@@ -370,6 +324,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         case .webkit:
             engineHelpLabel.stringValue = "WebKit is experimental. \(Self.missingFeaturesSentence(for: engine.engine.capabilities))Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
         }
+        helpTextDidChange()
     }
 
     /// "X, Y and Z don't work. " for whatever `capabilities` lacks, or "".
@@ -394,6 +349,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         case .fullURL:
             helpLabel.stringValue = "Shows the full URL, with the \u{201c}https://\u{201d} prefix hidden for a cleaner look. \u{201c}http://\u{201d} always stays visible, so an insecure site is never disguised as secure."
         }
+        helpTextDidChange()
     }
 
     @objc private func engineChanged() {
@@ -485,6 +441,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         }
 
         quickSiteHelpLabel.stringValue = "Search a site a couple of times and its name becomes a keyword: type \u{201c}wikipedia swift\u{201d} to search Wikipedia directly. Keywords come from your history and never leave your Mac."
+        helpTextDidChange()
     }
 
     // MARK: - New windows / homepage (browser-m0x)
@@ -533,6 +490,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// and the help text either explains the selection or warns that the
     /// typed homepage can't be used.
     private func updateHomepageRow() {
+        defer { helpTextDidChange() }
         let content = HomepagePreference.newWindowContent
         let isHomepage = content == .homepage
         homepageField.isEnabled = isHomepage
@@ -569,5 +527,19 @@ extension GeneralPaneController: NSTextFieldDelegate {
         let field = obj.object as? NSTextField
         if field === homepageField { homepageCommitted() }
         if field === customTemplateField { customTemplateCommitted() }
+    }
+}
+
+/// Flipped so GeneralPaneController.layOut(width:apply:) can place rows
+/// top-down, and re-flowed on every resize because the help labels wrap to
+/// the pane's width.
+private final class GeneralPaneView: NSView {
+    var onResize: (() -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        onResize?()
     }
 }

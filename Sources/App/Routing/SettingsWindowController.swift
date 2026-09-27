@@ -2,22 +2,24 @@ import AppKit
 
 /// Conformed by every Settings pane controller so SettingsWindowController
 /// can size the window to fit whichever pane is currently selected (see
-/// resizeWindowForSelectedTab) instead of sharing one fixed window height
-/// across all six tabs regardless of how little or how much each one needs.
+/// resizeWindow(for:animated:)), and so each pane's SettingsPaneScrollView
+/// knows how tall the pane's content is before it has to scroll.
 protocol SettingsPaneController: AnyObject {
     var view: NSView { get }
-    var preferredContentHeight: CGFloat { get }
+    /// The height the pane's content needs at `width`: the window grows to
+    /// this when the pane is selected, and below it the pane scrolls rather
+    /// than being squeezed.
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat
 }
 
 extension SettingsPaneController {
     /// Default for panes built around a scrollable table that stretches to
-    /// fill whatever height it's given (Routing Rules, Profiles, Privacy,
-    /// Autofill's Passwords/Cards/Addresses) -- these don't have one
-    /// "natural" size the way a fixed handful of controls does, so this
-    /// just picks a comfortable default that shows a handful of rows
-    /// without the window feeling cramped. Panes with no such filler
-    /// (General, Start Page) override this with an exact computed value.
-    var preferredContentHeight: CGFloat { 400 }
+    /// fill whatever height it's given (Routing Rules, Profiles, Autofill's
+    /// sections) -- these don't have one "natural" size the way a fixed
+    /// handful of controls does, so this is the height they were laid out
+    /// at, which shows a handful of rows without the window feeling cramped.
+    /// Panes with no such filler override it with their real content height.
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { 400 }
 }
 
 /// The app's "Settings…" window (⌘,), standard macOS placement in the app
@@ -58,6 +60,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// exactly, regardless of tab style or OS version.
     private var chromeOverheadHeight: CGFloat = 0
 
+    /// Kept clear between a fitted window and the edges of the visible
+    /// screen, so a very tall pane never produces a window touching the
+    /// menu bar or the Dock.
+    private static let screenMargin: CGFloat = 40
+
     private init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 580, height: 500),
@@ -66,13 +73,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
             defer: false
         )
         window.title = "Settings"
+        // The panes' fixed-width rows (e.g. General's homepage field and
+        // button) are laid out for this default width and would overlap
+        // any narrower. Height needs no real floor, since each pane scrolls.
+        window.contentMinSize = NSSize(width: 580, height: 220)
         super.init(window: window)
         window.delegate = self
         // tabView.delegate is assigned only after setUpViews() below, not
         // before: NSTabView auto-selects the first item as soon as it's
         // added, which fires tabView(_:didSelect:) synchronously, mid-
         // setUpViews() -- if the delegate were already wired up, that would
-        // trigger a premature resizeWindowForSelectedTab() call before
+        // trigger a premature resizeWindow(for:animated:) call before
         // chromeOverheadHeight has ever been measured (still its zero
         // default) and before tabView itself has even been added to
         // contentView, corrupting the window/tabView size relationship
@@ -85,6 +96,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         // After the initial sizing above, so a remembered frame wins over
         // the freshly measured one rather than being overwritten by it.
         frameMemory = WindowFrameMemory(window: window, name: "settings")
+        // A remembered frame keeps its position and width, but its height is
+        // refitted to the selected pane: a height saved before a pane grew
+        // would otherwise open with that pane's lower rows out of view.
+        resizeWindow(for: tabView.selectedTabViewItem, animated: false)
     }
 
     required init?(coder: NSCoder) {
@@ -134,27 +149,27 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
 
         let generalItem = NSTabViewItem(identifier: "general")
         generalItem.label = "General"
-        generalItem.view = generalPane.view
+        generalItem.view = SettingsPaneScrollView(pane: generalPane)
 
         let routingItem = NSTabViewItem(identifier: "routing-rules")
         routingItem.label = "Routing Rules"
-        routingItem.view = routingRulesPane.view
+        routingItem.view = SettingsPaneScrollView(pane: routingRulesPane)
 
         let profilesItem = NSTabViewItem(identifier: "profiles")
         profilesItem.label = "Profiles"
-        profilesItem.view = profilesPane.view
+        profilesItem.view = SettingsPaneScrollView(pane: profilesPane)
 
         let privacyItem = NSTabViewItem(identifier: "privacy")
         privacyItem.label = "Privacy"
-        privacyItem.view = privacyPane.view
+        privacyItem.view = SettingsPaneScrollView(pane: privacyPane)
 
         let startPageItem = NSTabViewItem(identifier: "start-page")
         startPageItem.label = "Start Page"
-        startPageItem.view = startPagePane.view
+        startPageItem.view = SettingsPaneScrollView(pane: startPagePane)
 
         let autofillItem = NSTabViewItem(identifier: "autofill")
         autofillItem.label = "Autofill"
-        autofillItem.view = autofillPane.view
+        autofillItem.view = SettingsPaneScrollView(pane: autofillPane)
 
         tabView.addTabViewItem(generalItem)
         tabView.addTabViewItem(routingItem)
@@ -170,8 +185,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// NSTabView resizes the selected item's view to fill its content area
     /// synchronously as items are added -- generalItem is the first item
     /// added above, so by now tabView has already stretched (or shrunk)
-    /// generalPane.view from its authored height to whatever this window's
-    /// initial content height allows. The difference is exactly the
+    /// General's scroll view from its authored height to whatever this
+    /// window's initial content height allows. The difference is exactly the
     /// non-pane chrome (title bar + tab-label strip) this window always
     /// needs on top of a pane's own preferredContentHeight.
     private func measureChromeOverheadHeight() {
@@ -191,38 +206,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         }
     }
 
-    /// Resizes the window to fit the given tab's own natural height, keeping
-    /// the window's top edge and width fixed -- standard macOS preferences
-    /// behavior (see e.g. Safari/Mail Settings), so switching tabs grows or
-    /// shrinks the window from the bottom rather than every tab sharing one
-    /// fixed size regardless of its content.
+    /// Resizes the window to fit the given tab's own content height, keeping
+    /// the window's top-left corner and width fixed -- standard macOS
+    /// settings behavior (see System Settings, Safari/Mail Settings), so
+    /// switching tabs grows or shrinks the window from the bottom. The height
+    /// is capped to the visible screen; a pane taller than that scrolls
+    /// inside its SettingsPaneScrollView. If the fitted window would run off
+    /// the bottom of the screen, it moves up just enough to stay on it.
     ///
-    /// Called from tabView(_:willSelect:) -- BEFORE NSTabView swaps in the
-    /// new tab's view -- rather than didSelect (after). NSTabView tiles
-    /// whichever view it swaps in to fit the *current* content rect at that
-    /// moment; resizing only after the swap (on didSelect) meant a pane
-    /// went from its pristine authored size to whatever the *previous*
-    /// tab's size happened to be, and back again a moment later. For a
-    /// pane whose scroll view has no slack to give (e.g. Routing Rules,
-    /// authored with zero spare height), shrinking through a much smaller
-    /// intermediate size clamps that scroll view's height at 0, and the
-    /// following grow-back then overshoots -- confirmed via a real
-    /// scratch-launch screenshot where the oversized, clipped scroll view
-    /// ended up painted over the "Routing Rules" header. Resizing first
-    /// means the incoming view is tiled directly from its authored size to
-    /// its own preferredContentHeight, which are defined to be the same
-    /// value, so no intermediate size -- and no autoresizing-mask math --
-    /// happens at all.
+    /// Called from tabView(_:willSelect:), before NSTabView swaps in the new
+    /// tab's view, so the incoming pane is tiled once, at its final size.
     private func resizeWindow(for tabViewItem: NSTabViewItem?, animated: Bool) {
         guard let window, let contentView = window.contentView else { return }
-        let preferredHeight = pane(for: tabViewItem)?.preferredContentHeight ?? 400
+        // Every tab's view shares the tab view's one content area.
+        let paneWidth = tabView.contentRect.width
+        let preferredHeight = pane(for: tabViewItem)?.preferredContentHeight(forWidth: paneWidth) ?? 400
         let desiredContentRect = NSRect(x: 0, y: 0, width: contentView.bounds.width, height: preferredHeight + chromeOverheadHeight)
-        let desiredWindowFrame = window.frameRect(forContentRect: desiredContentRect)
+        var desiredHeight = window.frameRect(forContentRect: desiredContentRect).height
+
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+        if let visible {
+            desiredHeight = min(desiredHeight, visible.height - Self.screenMargin)
+        }
+        desiredHeight = max(desiredHeight, window.frameRect(forContentRect: NSRect(origin: .zero, size: window.contentMinSize)).height)
 
         var newFrame = window.frame
-        let deltaHeight = desiredWindowFrame.height - newFrame.height
-        newFrame.size.height = desiredWindowFrame.height
-        newFrame.origin.y -= deltaHeight
+        newFrame.origin.y = newFrame.maxY - desiredHeight
+        newFrame.size.height = desiredHeight
+        if let visible, newFrame.minY < visible.minY {
+            newFrame.origin.y = visible.minY
+        }
+        guard newFrame != window.frame else { return }
         window.setFrame(newFrame, display: true, animate: animated)
     }
 

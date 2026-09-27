@@ -23,13 +23,11 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     /// This pane's natural content height -- SettingsWindowController
     /// resizes the Settings window to this whenever Privacy becomes the
-    /// selected tab (see GeneralPaneController.preferredContentHeight's
-    /// doc comment for why panes with more content than
-    /// SettingsPaneController's generic 400pt default need their own exact
-    /// value). Computed bottom-up from the same constants setUpViews lays
-    /// out with top-down, so the two can't drift apart: margin, header,
-    /// Link Handling section, profile row, ad-block + threat-warning
-    /// checkboxes, the Site Permissions section (label + table + button
+    /// selected tab, and below it the pane scrolls (see
+    /// SettingsPaneController.preferredContentHeight(forWidth:)). Computed
+    /// bottom-up from the same constants setUpViews lays out with top-down,
+    /// so the two can't drift apart: margin, header, Link Handling section,
+    /// profile row, ad-block + threat-warning checkboxes, the Site Permissions section (label + table + button
     /// row), the Allowed Sites section (label + table + button row), and
     /// the final bottom margin.
     static let preferredContentHeight: CGFloat =
@@ -37,7 +35,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
             + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 4 + checkboxRowHeight
             + rowGap + sectionLabelHeight + 4 + permissionsTableHeight + rowGap + buttonRowHeight
             + rowGap + sectionLabelHeight + 4 + allowlistTableHeight + rowGap + buttonRowHeight + margin
-    var preferredContentHeight: CGFloat { Self.preferredContentHeight }
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { Self.preferredContentHeight }
 
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: PrivacyPaneController.preferredContentHeight))
 
@@ -164,15 +162,15 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         let enabledCheckboxY = profileRowY - rowGap - checkboxRowHeight
         enabledCheckbox.target = self
         enabledCheckbox.action = #selector(enabledToggled)
-        enabledCheckbox.frame = NSRect(x: margin, y: enabledCheckboxY, width: 280, height: checkboxRowHeight)
-        enabledCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
+        enabledCheckbox.frame = NSRect(x: margin, y: enabledCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
+        enabledCheckbox.autoresizingMask = [.width, .minYMargin]
         view.addSubview(enabledCheckbox)
 
         let threatWarningCheckboxY = enabledCheckboxY - 4 - checkboxRowHeight
         threatWarningCheckbox.target = self
         threatWarningCheckbox.action = #selector(threatWarningToggled)
-        threatWarningCheckbox.frame = NSRect(x: margin, y: threatWarningCheckboxY, width: 280, height: checkboxRowHeight)
-        threatWarningCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
+        threatWarningCheckbox.frame = NSRect(x: margin, y: threatWarningCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
+        threatWarningCheckbox.autoresizingMask = [.width, .minYMargin]
         view.addSubview(threatWarningCheckbox)
 
         // Site Permissions -- header, table, then Remove/Reset All below

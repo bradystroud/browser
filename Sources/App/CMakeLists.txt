@@ -98,6 +98,7 @@ set(BROWSER_SWIFT_SRCS
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
+  Routing/SettingsPaneScrollView.swift
   Routing/SettingsWindowController.swift
   Routing/RoutingRulesPaneController.swift
   Routing/RoutingRuleEditor.swift
