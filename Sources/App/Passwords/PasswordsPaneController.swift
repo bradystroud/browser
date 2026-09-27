@@ -23,6 +23,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     private var selectedProfile: Profile?
     private var credentials: [SavedCredential] = []
     private var profileChangeObserver: NSObjectProtocol?
+    private var passwordStoreObserver: NSObjectProtocol?
 
     override init() {
         super.init()
@@ -33,6 +34,19 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         ) { [weak self] _ in
             self?.reload()
         }
+        // An import posts once per saved row; coalescing into one reload on
+        // the next run-loop turn keeps that to a single Keychain query.
+        passwordStoreObserver = NotificationCenter.default.addObserver(
+            forName: .passwordStoreDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(self.reloadCredentials), object: nil)
+            self.perform(#selector(self.reloadCredentials), with: nil, afterDelay: 0)
+        }
+    }
+
+    @objc private func reloadCredentials() {
+        loadCredentialsForSelectedProfile()
     }
 
     /// Repopulates the profile picker from ProfileManager, preserving the
@@ -74,6 +88,21 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         deleteButton.frame = NSRect(x: margin + 94, y: margin, width: 70, height: buttonRowHeight)
         deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(deleteButton)
+
+        let importButton = NSButton(
+            title: "Import from Another Browser…",
+            target: ChromiumImportWindowController.shared,
+            action: #selector(ChromiumImportWindowController.show(_:))
+        )
+        importButton.sizeToFit()
+        importButton.frame = NSRect(
+            x: view.bounds.width - margin - importButton.frame.width,
+            y: margin,
+            width: importButton.frame.width,
+            height: buttonRowHeight
+        )
+        importButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        view.addSubview(importButton)
 
         let autofillRowY = margin + buttonRowHeight + rowGap
         autofillCheckbox.frame = NSRect(x: margin, y: autofillRowY, width: view.bounds.width - margin * 2, height: 20)

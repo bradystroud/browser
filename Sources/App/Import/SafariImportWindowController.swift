@@ -199,8 +199,8 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             if let historyPath = row.profile.historyDatabasePath,
                let visits = try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: historyPath) {
                 // One transaction: it either writes every visit or none.
-                if (try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) })) != nil {
-                    totalHistory += visits.count
+                if let added = try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) }) {
+                    totalHistory += added
                 }
             }
 

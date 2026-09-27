@@ -76,44 +76,44 @@ public final class HistoryStore {
     /// insertVisit takes the max of the existing and new last_visit_time,
     /// never regresses it backward regardless of which order visits are
     /// replayed in.
-    public func importVisits(_ visits: [(url: String, title: String?, visitTime: Date)]) throws {
+    ///
+    /// A visit already stored for the same URL at the same millisecond is
+    /// skipped, so importing the same history twice adds nothing the second
+    /// time. Returns how many visits were actually added.
+    @discardableResult
+    public func importVisits(_ visits: [(url: String, title: String?, visitTime: Date)]) throws -> Int {
         try database.perform { db in
             try db.withTransaction {
+                var added = 0
                 for visit in visits {
+                    if try Self.visitExists(url: visit.url, at: visit.visitTime, db: db) { continue }
                     try Self.insertVisit(url: visit.url, title: visit.title, at: visit.visitTime, db: db)
+                    added += 1
                 }
+                return added
             }
         }
     }
 
-    /// importVisits, minus every visit this profile already holds: one with
-    /// the same URL at the same millisecond. Imported visits keep their
-    /// original timestamps, so this recognizes a visit that an earlier
-    /// one-time Safari import or sync run already brought in. Returns how
-    /// many visits it inserted.
+    /// The name Safari history sync calls. importVisits already skips every
+    /// visit this profile holds (same URL, same millisecond), so a visit an
+    /// earlier import or sync run brought in is not added twice.
     @discardableResult
     public func importVisitsSkippingExisting(_ visits: [(url: String, title: String?, visitTime: Date)]) throws -> Int {
-        try database.perform { db in
-            var inserted = 0
-            try db.withTransaction {
-                let exists = try db.prepare("""
-                    SELECT 1 FROM history_visits
-                    JOIN history_urls ON history_visits.url_id = history_urls.id
-                    WHERE history_urls.url = ? AND history_visits.visit_time = ?
-                    LIMIT 1;
-                    """)
-                for visit in visits {
-                    try exists.bind(visit.url, at: 1)
-                    try exists.bind(Self.epochMs(visit.visitTime), at: 2)
-                    let alreadyHeld = try exists.step()
-                    try exists.reset()
-                    if alreadyHeld { continue }
-                    try Self.insertVisit(url: visit.url, title: visit.title, at: visit.visitTime, db: db)
-                    inserted += 1
-                }
-            }
-            return inserted
-        }
+        try importVisits(visits)
+    }
+
+    /// A lookup rather than a unique index: live recording may legitimately
+    /// store two visits in one millisecond, and databases written before
+    /// this check may already hold such pairs from earlier imports.
+    private static func visitExists(url: String, at date: Date, db: SQLiteConnection) throws -> Bool {
+        let select = try db.prepare("""
+            SELECT 1 FROM history_visits JOIN history_urls ON history_visits.url_id = history_urls.id
+            WHERE history_urls.url = ? AND history_visits.visit_time = ? LIMIT 1;
+            """)
+        try select.bind(url, at: 1)
+        try select.bind(epochMs(date), at: 2)
+        return try select.step()
     }
 
     private static func insertVisit(url: String, title: String?, at date: Date, db: SQLiteConnection) throws {

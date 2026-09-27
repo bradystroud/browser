@@ -85,6 +85,12 @@ final class Statement {
         isNull(column) ? nil : text(column)
     }
 
+    func blob(_ column: Int32) -> Data {
+        let count = Int(sqlite3_column_bytes(handle, column))
+        guard count > 0, let bytes = sqlite3_column_blob(handle, column) else { return Data() }
+        return Data(bytes: bytes, count: count)
+    }
+
     func isNull(_ column: Int32) -> Bool {
         sqlite3_column_type(handle, column) == SQLITE_NULL
     }

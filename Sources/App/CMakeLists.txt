@@ -185,6 +185,8 @@ set(BROWSER_SWIFT_SRCS
   Import/PasswordImportCoordinator.swift
   Import/SafariHistorySyncCoordinator.swift
   Import/SafariSyncPaneController.swift
+  Import/ChromiumSafeStorageKeychain.swift
+  Import/ChromiumImportWindowController.swift
   TabOverview/TabThumbnailCache.swift
   TabOverview/TabOverviewCellView.swift
   TabOverview/TabOverviewView.swift
@@ -249,6 +251,9 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistorySync.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/PasswordCSVParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumBrowserDiscovery.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumPasswordDecryptor.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ChromiumProfileReaders.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/RegistrableDomain.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/IdentityProviderHints.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/EmailSuggestionRanker.swift

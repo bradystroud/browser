@@ -11,10 +11,10 @@ public enum BookmarkImporter {
     /// instead of being recreated as a nested folder. This is what maps
     /// Safari's "Favorites"/Chrome's "Bookmarks bar" folder onto this app's
     /// own Favorites folder, so an imported favorite shows up on the start
-    /// page's Favorites section. Bookmarks are deduped by exact URL within
-    /// whichever folder they land in; folders are not deduped by title (a
-    /// second import of the same file creates a second folder, matching
-    /// the plain "dedupe by URL" scope this was asked for).
+    /// page's Favorites section. A folder merges into an existing folder of
+    /// the same title in the same place, and bookmarks are deduped by exact
+    /// URL within whichever folder they land in, so importing the same tree
+    /// twice adds nothing the second time.
     ///
     /// Returns every bookmark URL actually inserted (not skipped as a
     /// duplicate) -- for the caller to kick lazy favicon fetches against
@@ -38,7 +38,11 @@ public enum BookmarkImporter {
                 if isFavoritesBar, let favoritesFolderId {
                     insertedURLs += importNodes(children, into: bookmarks, destinationParentId: favoritesFolderId, favoritesFolderId: favoritesFolderId)
                 } else {
-                    let folderId = (try? bookmarks.addFolder(title: title, parentId: destinationParentId)) ?? destinationParentId
+                    let existing = ((try? bookmarks.children(of: destinationParentId)) ?? [])
+                        .first { $0.kind == .folder && $0.title == title }?.id
+                    let folderId = existing
+                        ?? (try? bookmarks.addFolder(title: title, parentId: destinationParentId))
+                        ?? destinationParentId
                     insertedURLs += importNodes(children, into: bookmarks, destinationParentId: folderId, favoritesFolderId: favoritesFolderId)
                 }
             }

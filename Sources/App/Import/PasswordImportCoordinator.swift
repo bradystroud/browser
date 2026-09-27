@@ -3,8 +3,8 @@ import Foundation
 /// Writes parsed CSV password entries into PasswordStore (browser-ymx),
 /// deduped by (origin, username) -- an existing saved credential wins
 /// unless the caller opts to overwrite. Pure Keychain/PasswordStore glue,
-/// no UI; SafariImportWindowController's Passwords section is the only
-/// caller.
+/// no UI; called by SafariImportWindowController's CSV section and by
+/// ChromiumImportWindowController.
 ///
 /// SECURITY, non-negotiable (per Brady's own explicit requirement for this
 /// feature):
@@ -19,6 +19,10 @@ enum PasswordImportCoordinator {
     struct ImportResult {
         let importedCount: Int
         let skippedAsDuplicateCount: Int
+        /// Rows with no http(s) origin or no username.
+        let unusableCount: Int
+        /// Rows the Keychain refused to save.
+        let failedCount: Int
     }
 
     /// `overwriteExisting`: when false (the default UI choice), an entry
@@ -40,11 +44,13 @@ enum PasswordImportCoordinator {
 
         var imported = 0
         var skipped = 0
+        var unusable = 0
+        var failed = 0
         for entry in entries {
             // A row with no http(s) origin (an android:// app entry, say)
             // could never be filled into a web page.
             guard let origin = WebOrigin(urlString: entry.url), !entry.username.isEmpty else {
-                skipped += 1
+                unusable += 1
                 continue
             }
             let key = Key(scope: .origin(origin), username: entry.username)
@@ -57,13 +63,13 @@ enum PasswordImportCoordinator {
                 continue
             }
             guard PasswordStore.save(profileName: profile.name, origin: origin, username: entry.username, password: entry.password) else {
-                skipped += 1
+                failed += 1
                 continue
             }
             existing.insert(key)
             imported += 1
         }
-        return ImportResult(importedCount: imported, skippedAsDuplicateCount: skipped)
+        return ImportResult(importedCount: imported, skippedAsDuplicateCount: skipped, unusableCount: unusable, failedCount: failed)
     }
 
     /// Best-effort "secure" delete of the plaintext CSV file the user

@@ -210,6 +210,14 @@ final class MainMenuBuilder {
         )
         importFullSafariItem.target = SafariImportWindowController.shared
         menu.addItem(importFullSafariItem)
+
+        let importChromiumItem = NSMenuItem(
+            title: "Import from Another Browser…",
+            action: #selector(ChromiumImportWindowController.show(_:)),
+            keyEquivalent: ""
+        )
+        importChromiumItem.target = ChromiumImportWindowController.shared
+        menu.addItem(importChromiumItem)
         return menu
     }
 

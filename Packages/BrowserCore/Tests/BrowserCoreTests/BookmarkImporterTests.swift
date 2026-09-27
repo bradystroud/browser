@@ -108,4 +108,32 @@ final class BookmarkImporterTests: XCTestCase {
         let inserted = BookmarkImporter.importNodes(nodes, into: store, destinationParentId: nil, favoritesFolderId: nil)
         XCTAssertEqual(inserted, ["https://new.example"])
     }
+
+    func testImportingTheSameTreeTwiceReusesFoldersAndAddsNothing() throws {
+        let nodes: [ImportedBookmarkNode] = [
+            .folder(title: "Other Bookmarks", isFavoritesBar: false, children: [
+                .bookmark(title: "A", url: "https://a.example"),
+                .folder(title: "Nested", isFavoritesBar: false, children: [
+                    .bookmark(title: "B", url: "https://b.example"),
+                ]),
+            ]),
+        ]
+        XCTAssertEqual(BookmarkImporter.importNodes(nodes, into: store, destinationParentId: nil, favoritesFolderId: nil).count, 2)
+        XCTAssertEqual(BookmarkImporter.importNodes(nodes, into: store, destinationParentId: nil, favoritesFolderId: nil), [])
+
+        let topLevel = try store.children(of: nil)
+        XCTAssertEqual(topLevel.map(\.title), ["Other Bookmarks"])
+        let inside = try store.children(of: topLevel[0].id)
+        XCTAssertEqual(inside.map(\.title), ["A", "Nested"])
+        XCTAssertEqual(try store.children(of: inside[1].id).map(\.title), ["B"])
+    }
+
+    func testFolderMergesOnlyWithAFolderNotABookmarkOfTheSameTitle() throws {
+        try store.addBookmark(title: "Work", url: "https://work.example", parentId: nil)
+        BookmarkImporter.importNodes(
+            [.folder(title: "Work", isFavoritesBar: false, children: [.bookmark(title: "C", url: "https://c.example")])],
+            into: store, destinationParentId: nil, favoritesFolderId: nil
+        )
+        XCTAssertEqual(try store.children(of: nil).map(\.kind), [.bookmark, .folder])
+    }
 }

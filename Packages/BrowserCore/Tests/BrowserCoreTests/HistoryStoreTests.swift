@@ -86,6 +86,22 @@ final class HistoryStoreTests: XCTestCase {
         XCTAssertEqual(entries.first?.title, "Second Title")
     }
 
+    func testImportingTheSameVisitsTwiceAddsNothingTheSecondTime() throws {
+        let t1 = Date(timeIntervalSince1970: 1_700_000_000)
+        let t2 = t1.addingTimeInterval(60)
+        let visits: [(url: String, title: String?, visitTime: Date)] = [
+            ("https://example.com", "Example", t1),
+            ("https://example.com", "Example", t2),
+            ("https://other.example", nil, t1),
+        ]
+        XCTAssertEqual(try store.importVisits(visits), 3)
+        XCTAssertEqual(try store.importVisits(visits), 0)
+        XCTAssertEqual(try store.importVisits([("https://example.com", nil, t2.addingTimeInterval(1))]), 1)
+
+        let counts = Dictionary(uniqueKeysWithValues: try store.entries().map { ($0.url, $0.visitCount) })
+        XCTAssertEqual(counts, ["https://example.com": 3, "https://other.example": 1])
+    }
+
     func testEmptyQueryReturnsNoSuggestions() throws {
         try store.recordVisit(url: "https://example.com", title: "Example")
         XCTAssertEqual(try store.autocomplete(query: ""), [])
