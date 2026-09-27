@@ -73,6 +73,9 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
 
     func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
         guard let manager, !controller.isPrivate, !tab.isPrivate else { return }
+        // A link peek's page is not one of the window's tabs, so extensions
+        // hear of it only once "Open as Tab" adds it to the strip.
+        if case .closed = event {} else if !controller.tabs.contains(where: { $0 === tab }) { return }
         let key = ObjectIdentifier(controller)
         switch event {
         case .opened:
