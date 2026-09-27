@@ -418,7 +418,8 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     private static func resolveInitialLoad(_ requestedURL: String, profileId: String, isPrivate: Bool) -> (url: String, isStartPage: Bool) {
-        guard requestedURL == blankPageSentinel || requestedURL.isEmpty else {
+        guard requestedURL == blankPageSentinel || requestedURL.isEmpty
+                || StartPageRenderer.isStartPageDataURL(requestedURL) else {
             return (requestedURL, false)
         }
         return (StartPageRenderer.dataURL(profileId: profileId, isPrivate: isPrivate), true)
@@ -745,7 +746,9 @@ final class Tab: NSObject, EngineTabDelegate {
     /// then it jumps"). Resets loadingProgress to 0 so a fresh navigation's
     /// progress bar never briefly shows the previous page's final value.
     func engineTabWillStartMainFrameNavigation(_ url: String) {
-        pendingNavigationURL = url
+        // The start page is never shown as an address, so it is never a
+        // pending one either.
+        pendingNavigationURL = isOwnStartPage(url) ? nil : url
         loadingProgress = 0
         hasFreshTitle = false
         delegate?.tabDidChangeDisplayState(self)

@@ -49,6 +49,27 @@ enum StartPageRenderer {
     /// how an engine re-reports it: the media-type parameters and percent-
     /// encoding of the payload can both differ from what dataURL produced.
     /// Nil for anything that is not a data: URL.
+    /// True for a data: URL that holds a start page this app rendered,
+    /// including one saved in an older session. A session saved while the
+    /// start page's URL leaked into Tab.urlString stores the raw data: URL;
+    /// restoring it must re-render the start page, not show that URL as an
+    /// ordinary page. Every normal-window start page carries the gear
+    /// button's openStartPageSettings message, so that is the marker.
+    static func isStartPageDataURL(_ url: String) -> Bool {
+        guard url.lowercased().hasPrefix("data:"), let comma = url.firstIndex(of: ",") else { return false }
+        let header = url[..<comma].lowercased()
+        guard header.hasPrefix("data:text/html") else { return false }
+        let payload = String(url[url.index(after: comma)...])
+        let decoded: String?
+        if header.hasSuffix(";base64") {
+            let base64 = payload.removingPercentEncoding ?? payload
+            decoded = Data(base64Encoded: base64).flatMap { String(data: $0, encoding: .utf8) }
+        } else {
+            decoded = payload.removingPercentEncoding
+        }
+        return decoded?.contains("'openStartPageSettings'") ?? false
+    }
+
     static func payloadKey(_ url: String) -> String? {
         guard url.lowercased().hasPrefix("data:"), let comma = url.firstIndex(of: ",") else { return nil }
         let payload = String(url[url.index(after: comma)...])
