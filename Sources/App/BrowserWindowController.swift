@@ -875,8 +875,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// snapping to the end state while the pill is still sliding under it
     /// (the trailing reload button jumping the full width change in one
     /// frame was the visible half of that).
+    ///
+    /// With no `width`, it uses omniboxFrame()'s, the pill's final width, not
+    /// its current frame: callers such as refreshContentBlockerButton run
+    /// while a focus expand/collapse is still animating, and the current
+    /// frame then holds a width part-way through, which left the field
+    /// shorter than the pill once the animation finished.
     private func layoutOmniboxInnerContent(width: CGFloat? = nil, animated: Bool = false) {
-        let width = width ?? omniboxContainerView.frame.width
+        let width = width ?? omniboxFrame().width
         let reloadSize: CGFloat = 20
         let innerMargin: CGFloat = 8
         let reloadFrame = NSRect(
