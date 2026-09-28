@@ -110,7 +110,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// A simple "Private" pill -- the whole visual distinction Private
     /// Browsing gets for now (browser-12m.1). nil (never created) for a
     /// normal window. Anchored off the toolbar's trailing edge.
-    private let privateLabel: NSTextField?
+    private let privateLabel: NSView?
     /// Safari-style profile indicator (browser-0y1, Brady's ask): a small
     /// glass pill showing this window's profile color + name, at the
     /// toolbar's leading edge next to navigation -- the chrome tint alone
@@ -283,15 +283,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         self.isPrivate = isPrivate
         self.initialURL = initialURL
         if isPrivate {
+            // The badge is a plain view with the text centered inside it: a
+            // label NSTextField draws its line at the top of its own frame,
+            // so a label that is itself the badge shows its text too high.
+            let badge = NSView()
+            badge.wantsLayer = true
+            badge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
+            badge.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
+            badge.layer?.cornerCurve = .continuous
             let label = NSTextField(labelWithString: "Private")
             label.font = .systemFont(ofSize: 11, weight: .semibold)
             label.textColor = .white
             label.alignment = .center
-            label.wantsLayer = true
-            label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
-            label.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
-            label.layer?.cornerCurve = .continuous
-            self.privateLabel = label
+            label.translatesAutoresizingMaskIntoConstraints = false
+            badge.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            ])
+            self.privateLabel = badge
             self.profilePillButton = nil
         } else {
             self.privateLabel = nil
