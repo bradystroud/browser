@@ -134,7 +134,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     /// which otherwise always shows whichever one Passwords leaves selected.
     func showTab(identifier: String) {
         let parts = identifier.split(separator: ":", maxSplits: 1).map(String.init)
-        tabView.selectTabViewItem(withIdentifier: parts[0])
+        // NSTabView raises on an identifier it has no item for, and this is
+        // reached from a launch argument, so an unknown name must not take
+        // the app down before it has finished launching.
+        guard let tabIdentifier = parts.first,
+              tabView.indexOfTabViewItem(withIdentifier: tabIdentifier) != NSNotFound else {
+            NSLog("Settings has no tab named '%@'; showing the current one", identifier)
+            show()
+            return
+        }
+        tabView.selectTabViewItem(withIdentifier: tabIdentifier)
         if parts[0] == "autofill", parts.count == 2 {
             autofillPane.selectSubTab(identifier: parts[1])
         }
