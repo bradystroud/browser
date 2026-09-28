@@ -1,8 +1,8 @@
 import Foundation
 
 /// The "site" a host belongs to -- its registrable domain (eTLD+1), so
-/// `login.ssw.com.au` and `www.ssw.com.au` are the same site and
-/// `ssw.com.au` / `other.com.au` are not.
+/// `login.contoso.com.au` and `www.contoso.com.au` are the same site and
+/// `contoso.com.au` / `other.com.au` are not.
 ///
 /// A heuristic, not the Public Suffix List: it knows the second-level
 /// suffixes country-code registries actually hand out (`com.au`, `co.uk`,

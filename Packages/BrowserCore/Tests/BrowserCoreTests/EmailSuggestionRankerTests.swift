@@ -3,7 +3,7 @@ import XCTest
 
 final class EmailSuggestionRankerTests: XCTestCase {
     private let work = "alex@contoso.com.au"
-    private let personal = "brady@example.com"
+    private let personal = "sam@example.com"
     private let other = "someone@contoso.com"
     private let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
     private let tenantGUID = "2d8a2b0e-8f7c-4c1a-9a3e-3b2f6f0a9c11"
@@ -22,21 +22,21 @@ final class EmailSuggestionRankerTests: XCTestCase {
         EmailSuggestionRanker.rank(candidates: candidates, usage: usage, rules: rules, pageURL: url, prefix: prefix).first
     }
 
-    // Personal is used far more, so any SSW win below is the hint's doing.
+    // Personal is used far more, so any work-address win below is the hint's doing.
     private var heavyPersonalUsage: [EmailUsageRecord] {
         [use(personal, "https://github.com/login", count: 40)]
     }
 
     func testMicrosoftTenantAsDomainInPath() {
         let result = top([personal, work], usage: heavyPersonalUsage,
-                         url: "https://login.microsoftonline.com/ssw.com.au/oauth2/v2.0/authorize?client_id=x")
+                         url: "https://login.microsoftonline.com/contoso.com.au/oauth2/v2.0/authorize?client_id=x")
         XCTAssertEqual(result, RankedEmail(email: work, reason: .domainHint))
         XCTAssertEqual(result?.reason.label(provider: .microsoft), "Matches this Microsoft tenant")
     }
 
     func testDomainHintQueryParameter() {
         let result = top([personal, work], usage: heavyPersonalUsage,
-                         url: "https://login.microsoftonline.com/common/oauth2/authorize?domain_hint=ssw.com.au")
+                         url: "https://login.microsoftonline.com/common/oauth2/authorize?domain_hint=contoso.com.au")
         XCTAssertEqual(result, RankedEmail(email: work, reason: .domainHint))
     }
 
@@ -53,7 +53,7 @@ final class EmailSuggestionRankerTests: XCTestCase {
     }
 
     func testLoginHintExactWinsOverEverythingButRules() {
-        let url = "https://login.microsoftonline.com/ssw.com.au/oauth2/authorize?login_hint=Someone%40Contoso.com"
+        let url = "https://login.microsoftonline.com/contoso.com.au/oauth2/authorize?login_hint=Someone%40Contoso.com"
         XCTAssertEqual(top([personal, work, other], usage: heavyPersonalUsage, url: url),
                        RankedEmail(email: other, reason: .loginHint))
     }
@@ -66,18 +66,18 @@ final class EmailSuggestionRankerTests: XCTestCase {
 
     func testGoogleHostedDomain() {
         let result = top([personal, work], usage: heavyPersonalUsage,
-                         url: "https://accounts.google.com/o/oauth2/v2/auth?hd=ssw.com.au&client_id=1")
+                         url: "https://accounts.google.com/o/oauth2/v2/auth?hd=contoso.com.au&client_id=1")
         XCTAssertEqual(result, RankedEmail(email: work, reason: .domainHint))
         XCTAssertEqual(result?.reason.label(provider: .google), "Matches this Google tenant")
     }
 
     func testOktaSubdomainMatchesEmailDomainLabel() {
-        XCTAssertEqual(top([personal, work], usage: heavyPersonalUsage, url: "https://ssw.okta.com/login/login.htm"),
+        XCTAssertEqual(top([personal, work], usage: heavyPersonalUsage, url: "https://contoso.okta.com/login/login.htm"),
                        RankedEmail(email: work, reason: .domainHint))
     }
 
     func testSiteDomainMatch() {
-        XCTAssertEqual(top([personal, work], usage: heavyPersonalUsage, url: "https://timepro.ssw.com.au/signin"),
+        XCTAssertEqual(top([personal, work], usage: heavyPersonalUsage, url: "https://timepro.contoso.com.au/signin"),
                        RankedEmail(email: work, reason: .siteDomain))
     }
 
@@ -105,8 +105,8 @@ final class EmailSuggestionRankerTests: XCTestCase {
     }
 
     func testRuleBeatsHints() {
-        let rules = [EmailRule(hostPattern: "login.microsoftonline.com", tenant: "ssw.com.au", email: personal)]
-        let url = "https://login.microsoftonline.com/ssw.com.au/oauth2/authorize?login_hint=\(work)"
+        let rules = [EmailRule(hostPattern: "login.microsoftonline.com", tenant: "contoso.com.au", email: personal)]
+        let url = "https://login.microsoftonline.com/contoso.com.au/oauth2/authorize?login_hint=\(work)"
         XCTAssertEqual(top([work], rules: rules, url: url), RankedEmail(email: personal, reason: .rule))
     }
 
@@ -119,29 +119,29 @@ final class EmailSuggestionRankerTests: XCTestCase {
     func testMostSpecificRuleWins() {
         let rules = [
             EmailRule(hostPattern: "*", email: personal),
-            EmailRule(hostPattern: "*.ssw.com.au", email: work),
+            EmailRule(hostPattern: "*.contoso.com.au", email: work),
         ]
-        XCTAssertEqual(top([], rules: rules, url: "https://ssw.com.au/")?.email, work, "*.x also matches bare x")
+        XCTAssertEqual(top([], rules: rules, url: "https://contoso.com.au/")?.email, work, "*.x also matches bare x")
         XCTAssertEqual(top([], rules: rules, url: "https://github.com/")?.email, personal)
     }
 
     func testPrefixFilterIsCaseInsensitiveAndLimited() {
         let many = (0..<9).map { "user\($0)@example.com" }
         XCTAssertEqual(EmailSuggestionRanker.rank(candidates: many, usage: [], rules: [], pageURL: "https://x.com/").count, 5)
-        let filtered = EmailSuggestionRanker.rank(candidates: [personal, work], usage: [], rules: [], pageURL: "https://x.com/", prefix: "BRADYS")
+        let filtered = EmailSuggestionRanker.rank(candidates: [personal, work], usage: [], rules: [], pageURL: "https://x.com/", prefix: "ALEX@C")
         XCTAssertEqual(filtered.map(\.email), [work])
     }
 
     func testDuplicatesAndInvalidCandidatesAreDropped() {
-        let ranked = EmailSuggestionRanker.rank(candidates: ["Brady@Example.com", personal, "not an email", "x@y"],
+        let ranked = EmailSuggestionRanker.rank(candidates: ["Sam@Example.com", personal, "not an email", "x@y"],
                                                 usage: [], rules: [], pageURL: "https://x.com/")
         XCTAssertEqual(ranked.map(\.email), [personal])
     }
 
     func testGlob() {
-        XCTAssertTrue(EmailSuggestionRanker.glob("*.okta.com", matches: "ssw.okta.com"))
-        XCTAssertTrue(EmailSuggestionRanker.glob("github.com/orgs/*", matches: "github.com/orgs/ssw"))
-        XCTAssertFalse(EmailSuggestionRanker.glob("*.okta.com", matches: "ssw.okta.com.evil.net"))
+        XCTAssertTrue(EmailSuggestionRanker.glob("*.okta.com", matches: "contoso.okta.com"))
+        XCTAssertTrue(EmailSuggestionRanker.glob("github.com/orgs/*", matches: "github.com/orgs/contoso"))
+        XCTAssertFalse(EmailSuggestionRanker.glob("*.okta.com", matches: "contoso.okta.com.evil.net"))
         XCTAssertFalse(EmailSuggestionRanker.glob("a*c", matches: "abd"))
     }
 }
@@ -151,32 +151,32 @@ final class IdentityProviderHintsTests: XCTestCase {
         let guid = "2d8a2b0e-8f7c-4c1a-9a3e-3b2f6f0a9c11"
         XCTAssertEqual(IdentityProviderHints.parse(urlString: "https://login.microsoftonline.com/\(guid.uppercased())/oauth2").tenantKey,
                        "microsoft:\(guid)")
-        let byDomain = IdentityProviderHints.parse(urlString: "https://login.windows.net/ssw.com.au/oauth2/authorize")
-        XCTAssertEqual(byDomain.tenantKey, "microsoft:ssw.com.au")
-        XCTAssertEqual(byDomain.domainHints, ["ssw.com.au"])
+        let byDomain = IdentityProviderHints.parse(urlString: "https://login.windows.net/contoso.com.au/oauth2/authorize")
+        XCTAssertEqual(byDomain.tenantKey, "microsoft:contoso.com.au")
+        XCTAssertEqual(byDomain.domainHints, ["contoso.com.au"])
         XCTAssertNil(IdentityProviderHints.parse(urlString: "https://login.microsoftonline.com/common/oauth2/authorize").tenantKey)
         XCTAssertNil(IdentityProviderHints.parse(urlString: "https://login.live.com/login.srf?wa=1").tenantKey)
-        XCTAssertEqual(IdentityProviderHints.parse(urlString: "https://login.microsoftonline.com/common/x?whr=ssw.com.au").domainHints,
-                       ["ssw.com.au"])
+        XCTAssertEqual(IdentityProviderHints.parse(urlString: "https://login.microsoftonline.com/common/x?whr=contoso.com.au").domainHints,
+                       ["contoso.com.au"])
     }
 
     func testHintsOnlyFromTheirOwnHosts() {
-        let fake = IdentityProviderHints.parse(urlString: "https://evil.example/ssw.com.au/oauth2")
+        let fake = IdentityProviderHints.parse(urlString: "https://evil.example/contoso.com.au/oauth2")
         XCTAssertNil(fake.tenantKey)
         XCTAssertNil(fake.provider)
     }
 
     func testAuth0RegionalSubdomain() {
-        let hints = IdentityProviderHints.parse(urlString: "https://ssw.au.auth0.com/login")
+        let hints = IdentityProviderHints.parse(urlString: "https://contoso.au.auth0.com/login")
         XCTAssertEqual(hints.provider, .auth0)
-        XCTAssertEqual(hints.tenantKey, "auth0:ssw")
+        XCTAssertEqual(hints.tenantKey, "auth0:contoso")
     }
 }
 
 final class RegistrableDomainTests: XCTestCase {
     func testCommonShapes() {
-        XCTAssertEqual(RegistrableDomain.of(host: "login.ssw.com.au"), "ssw.com.au")
-        XCTAssertEqual(RegistrableDomain.of(host: "ssw.com.au"), "ssw.com.au")
+        XCTAssertEqual(RegistrableDomain.of(host: "login.contoso.com.au"), "contoso.com.au")
+        XCTAssertEqual(RegistrableDomain.of(host: "contoso.com.au"), "contoso.com.au")
         XCTAssertEqual(RegistrableDomain.of(host: "www.bbc.co.uk"), "bbc.co.uk")
         XCTAssertEqual(RegistrableDomain.of(host: "login.microsoftonline.com"), "microsoftonline.com")
         XCTAssertEqual(RegistrableDomain.of(host: "a.b.example.io"), "example.io")
@@ -198,7 +198,7 @@ final class EmailAutofillStoreTests: XCTestCase {
 
     func testRecordUseAggregatesAndPersists() {
         let store = EmailAutofillStore(profileDirectory: dir)
-        let url = "https://login.microsoftonline.com/ssw.com.au/oauth2/authorize"
+        let url = "https://login.microsoftonline.com/contoso.com.au/oauth2/authorize"
         XCTAssertTrue(store.recordUse(email: " Alex@Contoso.com.au ", pageURL: url))
         XCTAssertTrue(store.recordUse(email: "alex@contoso.com.au", pageURL: url))
         XCTAssertFalse(store.recordUse(email: "nope", pageURL: url))
@@ -209,14 +209,14 @@ final class EmailAutofillStoreTests: XCTestCase {
         XCTAssertEqual(record.email, "alex@contoso.com.au")
         XCTAssertEqual(record.count, 2)
         XCTAssertEqual(record.siteDomain, "microsoftonline.com")
-        XCTAssertEqual(record.tenantKey, "microsoft:ssw.com.au")
+        XCTAssertEqual(record.tenantKey, "microsoft:contoso.com.au")
     }
 
     func testAddressesRulesAndClear() {
         let store = EmailAutofillStore(profileDirectory: dir)
         XCTAssertTrue(store.addAddress("Me@Example.com"))
         XCTAssertFalse(store.addAddress("me@example.com"))
-        let rule = EmailRule(hostPattern: "*.ssw.com.au", email: "me@example.com")
+        let rule = EmailRule(hostPattern: "*.contoso.com.au", email: "me@example.com")
         store.saveRule(rule)
         store.recordUse(email: "me@example.com", pageURL: "https://a.com/")
         store.clearUsage()

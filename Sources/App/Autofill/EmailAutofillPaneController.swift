@@ -324,7 +324,7 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
         return ListAppearance.textCell(in: tableView, identifier: "emailCell.\(column)", text: text)
     }
 
-    /// `microsoft:ssw.com.au` -> `Microsoft: ssw.com.au`.
+    /// `microsoft:contoso.com.au` -> `Microsoft: contoso.com.au`.
     private static func tenantDisplay(_ key: String) -> String {
         let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
         guard parts.count == 2, let provider = IdentityProviderHints.Provider(rawValue: parts[0]) else { return key }

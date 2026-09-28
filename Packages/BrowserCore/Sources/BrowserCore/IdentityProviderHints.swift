@@ -28,7 +28,7 @@ public struct IdentityProviderHints: Equatable, Sendable {
     /// or a Microsoft tenant written as a domain.
     public var domainHints: [String] = []
     /// Tenant names that are not domains -- an Okta/Auth0 subdomain such as
-    /// `ssw` in `ssw.okta.com` -- matched against an email domain's first
+    /// `contoso` in `contoso.okta.com` -- matched against an email domain's first
     /// label.
     public var tenantLabels: [String] = []
     /// A stable key for "this tenant", used to remember which email was last
@@ -109,7 +109,7 @@ public struct IdentityProviderHints: Equatable, Sendable {
         if !domainHints.contains(domain) { domainHints.append(domain) }
     }
 
-    /// The tenant label in `ssw.okta.com` or `ssw.au.auth0.com` -- always the
+    /// The tenant label in `contoso.okta.com` or `contoso.au.auth0.com` -- always the
     /// leftmost label, whatever region labels sit between it and the base.
     private static func subdomainLabel(host: String, under bases: [String]) -> String? {
         for base in bases where host.hasSuffix("." + base) {
@@ -124,7 +124,7 @@ public struct IdentityProviderHints: Equatable, Sendable {
         UUID(uuidString: value) != nil
     }
 
-    /// A hint value that looks like a DNS domain (`ssw.com.au`), lowercased;
+    /// A hint value that looks like a DNS domain (`contoso.com.au`), lowercased;
     /// nil for `organizations`, `consumers`, a GUID or anything else.
     private static func normalizedDomain(_ value: String) -> String? {
         let domain = value.trimmingCharacters(in: .whitespaces).lowercased()

@@ -31,7 +31,7 @@ public struct EmailUsageRecord: Codable, Equatable, Identifiable, Sendable {
 public struct EmailRule: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     /// A glob (`*` wildcard) matched against the host, or against
-    /// host + path when it contains a `/`: `*.ssw.com.au`,
+    /// host + path when it contains a `/`: `*.contoso.com.au`,
     /// `login.microsoftonline.com`, `github.com/orgs/*`.
     public var hostPattern: String
     /// A tenant GUID, tenant domain or Okta/Auth0 subdomain; nil or empty
@@ -215,7 +215,7 @@ public enum EmailSuggestionRanker {
     }
 
     /// `*` matches any run of characters (including none); everything else
-    /// matches itself. `*.ssw.com.au` also matches the bare `ssw.com.au`,
+    /// matches itself. `*.contoso.com.au` also matches the bare `contoso.com.au`,
     /// which is what anyone writing it means.
     static func glob(_ pattern: String, matches subject: String) -> Bool {
         if pattern.hasPrefix("*."), subject == pattern.dropFirst(2) { return true }
