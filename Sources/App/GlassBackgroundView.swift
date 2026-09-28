@@ -16,6 +16,12 @@ extension NSButton {
     func applyChromeAppearance(_ appearance: ChromeButtonAppearance) {
         isBordered = true
         imageScaling = .scaleProportionallyDown
+        // A rounded rectangle, never a capsule: the glass bezel's own
+        // rounded-rectangle radius is what ChromeMetrics.controlCornerRadius
+        // matches (see its doc comment).
+        if #available(macOS 26.0, *) {
+            borderShape = .roundedRectangle
+        }
         contentTintColor = .secondaryLabelColor
 
         switch appearance {
@@ -187,6 +193,7 @@ final class GlassBackgroundView: NSView {
         // Redundant with the real glass view masking its own corners on
         // macOS 26+, but harmless (same shape, same rect).
         layer?.cornerRadius = glassCornerRadius
+        layer?.cornerCurve = .continuous
         layer?.masksToBounds = glassCornerRadius > 0
         if #available(macOS 26.0, *), let glass = modernGlassView as? NSGlassEffectView {
             glass.cornerRadius = glassCornerRadius
