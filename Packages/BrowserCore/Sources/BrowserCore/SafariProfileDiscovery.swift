@@ -44,7 +44,7 @@ public enum SafariProfileDiscovery {
     public static func profileNames(fromCopiedSafariTabsDatabaseAt path: String) -> [String: String] {
         guard let connection = try? SQLiteConnection(path: path, readOnly: true) else { return [:] }
         guard let statement = try? connection.prepare("""
-            SELECT external_uuid, title FROM bookmarks WHERE parent = 0 AND type = 1 AND subtype = 2;
+            SELECT external_uuid, title FROM bookmarks WHERE type = 1 AND subtype = 2;
             """) else { return [:] }
 
         var names: [String: String] = [:]
@@ -52,7 +52,9 @@ public enum SafariProfileDiscovery {
             let uuid = statement.text(0)
             let title = statement.text(1)
             guard !uuid.isEmpty, !title.isEmpty else { continue }
-            names[uuid] = title
+            // Keyed uppercase: the Profiles folder names and external_uuid are
+            // both UUIDs, but nothing guarantees they share a case.
+            names[uuid.uppercased()] = title
         }
         return names
     }

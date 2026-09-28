@@ -79,7 +79,7 @@ enum SafariImportScanner {
         let tabsDbSource = root.appendingPathComponent("SafariTabs.db")
         if fm.fileExists(atPath: tabsDbSource.path) {
             let copiedTabsPath = tempDir.appendingPathComponent("SafariTabs.db").path
-            if (try? fm.copyItem(atPath: tabsDbSource.path, toPath: copiedTabsPath)) != nil {
+            if copySQLiteDatabase(from: tabsDbSource.path, to: copiedTabsPath) {
                 profileNames = SafariProfileDiscovery.profileNames(fromCopiedSafariTabsDatabaseAt: copiedTabsPath)
             }
         }
@@ -98,7 +98,7 @@ enum SafariImportScanner {
         for profileId in profileIds {
             profiles.append(makeProfile(
                 id: profileId,
-                displayName: profileNames[profileId] ?? profileId,
+                displayName: profileNames[profileId.uppercased()] ?? profileId,
                 sourceHistoryPath: root.appendingPathComponent("Profiles").appendingPathComponent(profileId).appendingPathComponent("History.db"),
                 copiedHistoryName: "\(profileId)-History.db",
                 tempDir: tempDir
@@ -114,13 +114,27 @@ enum SafariImportScanner {
         )
     }
 
+    /// Copies a SQLite database together with its -wal and -shm files.
+    /// Safari keeps its databases open in WAL mode, so recent rows -- a
+    /// newly created or renamed profile's name, the latest visits -- often
+    /// exist only in the -wal file until Safari checkpoints it. Copying the
+    /// main file alone silently drops them.
+    private static func copySQLiteDatabase(from source: String, to destination: String) -> Bool {
+        let fm = FileManager.default
+        guard (try? fm.copyItem(atPath: source, toPath: destination)) != nil else { return false }
+        for suffix in ["-wal", "-shm"] where fm.fileExists(atPath: source + suffix) {
+            try? fm.copyItem(atPath: source + suffix, toPath: destination + suffix)
+        }
+        return true
+    }
+
     private static func makeProfile(id: String, displayName: String, sourceHistoryPath: URL, copiedHistoryName: String, tempDir: URL) -> SafariImportProfile {
         let fm = FileManager.default
         guard fm.fileExists(atPath: sourceHistoryPath.path) else {
             return SafariImportProfile(id: id, displayName: displayName, historyDatabasePath: nil, historyCount: 0)
         }
         let copiedPath = tempDir.appendingPathComponent(copiedHistoryName).path
-        guard (try? fm.copyItem(atPath: sourceHistoryPath.path, toPath: copiedPath)) != nil else {
+        guard copySQLiteDatabase(from: sourceHistoryPath.path, to: copiedPath) else {
             return SafariImportProfile(id: id, displayName: displayName, historyDatabasePath: nil, historyCount: 0)
         }
         let visitCount = (try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: copiedPath))?.count ?? 0
