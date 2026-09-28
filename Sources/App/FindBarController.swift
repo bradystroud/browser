@@ -1,24 +1,35 @@
 import AppKit
 
-/// Compact "Find in Page" bar (⌘F) overlaying the top-right of the web
+/// Compact "Find in Page" bar (⌘F) floating over the top-right of the web
 /// content -- Safari/Chrome-style: a search field, a "N of M" match counter,
-/// prev/next chevrons, and a close button. One instance per BrowserWindow
-/// (see that file's -toggleFindBar:), created lazily on first use.
+/// prev/next chevrons, and a close button, drawn in the same glass pill the
+/// omnibox uses. One instance per BrowserWindow (see that file's
+/// -toggleFindBar:), created lazily on first use.
 ///
 /// Deliberately owned by `BrowserWindow` rather than `BrowserWindowController`
 /// (see Tab.onFindResult's doc comment) -- this class only ever talks to
-/// whichever `Tab` is active *at the moment of each action* (resolved fresh
-///每次, not cached across the bar's lifetime), so switching tabs while the
+/// whichever `Tab` is active *at the moment of each action*, resolved fresh
+/// rather than cached across the bar's lifetime, so switching tabs while the
 /// bar is open doesn't need any extra notification wiring: the next
 /// keystroke/Enter/chevron click just operates on whatever tab is now
 /// active. The one accepted gap from this: the match counter doesn't
 /// instantly clear at the exact moment of a tab switch, only on the next
-/// action -- see docs/ai-tasks/find-in-page-notes.md.
+/// action.
+///
+/// The bar is a subview of `window.contentView`, added after (so above) the
+/// web content container. Both engines' page views are ordinary layer-backed
+/// descendants of that container, so plain AppKit sibling z-order puts the
+/// bar on top of the page.
 final class FindBarController: NSObject, NSTextFieldDelegate {
-    private static let barSize = NSSize(width: 320, height: 32)
+    private static let barWidth: CGFloat = 360
+    private static let barHeight: CGFloat = 36
+    /// Gap between the bar and the page area's top and trailing edges.
+    private static let edgeMargin: CGFloat = 10
+    private static let controlSize: CGFloat = 28
+    private static let symbolPointSize: CGFloat = 12
 
     private weak var window: NSWindow?
-    private var barView: NSView?
+    private var barView: GlassBackgroundView?
     private let searchField = NSTextField()
     private let counterLabel = NSTextField(labelWithString: "")
     private var searchWorkItem: DispatchWorkItem?
@@ -54,8 +65,7 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
     /// edge moves without a window resize (autoresizing only covers resizes).
     func followContentAreaTop() {
         guard let barView, let contentView = window?.contentView else { return }
-        let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
-        barView.setFrameOrigin(NSPoint(x: barView.frame.minX, y: contentAreaTopY - barView.frame.height - 12))
+        barView.frame = barFrame(in: contentView)
     }
 
     private func currentTab() -> Tab? {
@@ -68,74 +78,100 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
 
     // MARK: - View setup
 
+    /// Top-right of the page area. The page area's trailing edge is always
+    /// the window's (the vertical tab sidebar sits on the leading side), so
+    /// only its top edge needs asking for.
+    private func barFrame(in contentView: NSView) -> NSRect {
+        let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
+        return NSRect(
+            x: contentView.bounds.width - Self.barWidth - Self.edgeMargin,
+            y: contentAreaTopY - Self.barHeight - Self.edgeMargin,
+            width: Self.barWidth,
+            height: Self.barHeight
+        )
+    }
+
     private func buildBar(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
-        let size = Self.barSize
-        let margin: CGFloat = 12
-        // NOTE (browser-qpy-overlay-notes): positioning below
-        // contentAreaTopY -- i.e. overlapping contentContainerView's own
-        // bounds, where CEF's hosted content view lives -- was confirmed
-        // during that task to make a plain NSButton invisible regardless of
-        // normal AppKit z-order (CEF's compositing surface silently paints
-        // over it). This container is layer-backed (wantsLayer below)
-        // rather than a plain view, which may or may not composite
-        // differently -- not verified either way, since opening the find
-        // bar needs a real ⌘F keystroke this task couldn't send under the
-        // no-synthetic-input rule. If Brady's manual test finds the find
-        // bar doesn't actually appear, this is why -- see
-        // ReaderModeController.setButtonVisible for the toolbar-row
-        // placement that's confirmed to render.
-        let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
-        let container = NSView(frame: NSRect(
-            x: contentView.bounds.width - size.width - margin,
-            y: contentAreaTopY - size.height - margin,
-            width: size.width,
-            height: size.height
-        ))
-        container.autoresizingMask = [.minXMargin, .minYMargin]
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        container.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
-        container.layer?.cornerCurve = .continuous
-        container.layer?.borderWidth = 1
-        container.layer?.borderColor = NSColor.separatorColor.cgColor
+        let bar = GlassBackgroundView(
+            material: .hudWindow, blendingMode: .withinWindow,
+            solidFallbackColor: .controlBackgroundColor,
+            cornerRadius: ChromeMetrics.controlCornerRadius
+        )
+        bar.frame = barFrame(in: contentView)
+        bar.autoresizingMask = [.minXMargin, .minYMargin]
+        // Same hairline edge as the omnibox pill -- it is what separates the
+        // glass from a white page behind it.
+        bar.layer?.borderWidth = 0.5
+        bar.layer?.borderColor = NSColor.separatorColor.cgColor
 
-        let fieldMargin: CGFloat = 8
-        let buttonSize: CGFloat = 20
-        let closeButton = NSButton(image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Done")!, target: self, action: #selector(closeTapped))
-        closeButton.isBordered = false
-        closeButton.frame = NSRect(x: size.width - fieldMargin - buttonSize, y: (size.height - buttonSize) / 2, width: buttonSize, height: buttonSize)
-        closeButton.autoresizingMask = [.minXMargin]
-        container.addSubview(closeButton)
+        // Children go in contentContainer, never `bar` itself -- see
+        // GlassBackgroundView.contentContainer.
+        let content = bar.contentContainer
+        let size = bar.frame.size
+        let inset: CGFloat = 4
+        let controlY = (size.height - Self.controlSize) / 2
 
-        let nextButton = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Next")!, target: self, action: #selector(nextTapped))
-        nextButton.isBordered = false
-        nextButton.frame = NSRect(x: closeButton.frame.minX - 4 - buttonSize, y: (size.height - buttonSize) / 2, width: buttonSize, height: buttonSize)
-        nextButton.autoresizingMask = [.minXMargin]
-        container.addSubview(nextButton)
+        let closeButton = makeButton(symbol: "xmark", label: "Close", action: #selector(closeTapped))
+        closeButton.frame = NSRect(x: size.width - inset - Self.controlSize, y: controlY, width: Self.controlSize, height: Self.controlSize)
+        content.addSubview(closeButton)
 
-        let prevButton = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Previous")!, target: self, action: #selector(previousTapped))
-        prevButton.isBordered = false
-        prevButton.frame = NSRect(x: nextButton.frame.minX - 4 - buttonSize, y: (size.height - buttonSize) / 2, width: buttonSize, height: buttonSize)
-        prevButton.autoresizingMask = [.minXMargin]
-        container.addSubview(prevButton)
+        let nextButton = makeButton(symbol: "chevron.down", label: "Next Match (⌘G)", action: #selector(nextTapped))
+        nextButton.frame = closeButton.frame.offsetBy(dx: -Self.controlSize, dy: 0)
+        content.addSubview(nextButton)
 
-        let counterWidth: CGFloat = 64
-        counterLabel.frame = NSRect(x: prevButton.frame.minX - counterWidth, y: 0, width: counterWidth, height: size.height)
+        let prevButton = makeButton(symbol: "chevron.up", label: "Previous Match (⇧⌘G)", action: #selector(previousTapped))
+        prevButton.frame = nextButton.frame.offsetBy(dx: -Self.controlSize, dy: 0)
+        content.addSubview(prevButton)
+
+        let labelFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        let labelHeight = ceil(labelFont.ascender - labelFont.descender + labelFont.leading) + 2
+
+        let counterWidth: CGFloat = 76
+        counterLabel.frame = NSRect(
+            x: prevButton.frame.minX - 4 - counterWidth,
+            y: (size.height - labelHeight) / 2,
+            width: counterWidth,
+            height: labelHeight
+        )
         counterLabel.alignment = .right
-        counterLabel.font = .systemFont(ofSize: 11)
+        counterLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         counterLabel.textColor = .secondaryLabelColor
-        counterLabel.autoresizingMask = [.minXMargin]
-        container.addSubview(counterLabel)
+        counterLabel.lineBreakMode = .byClipping
+        content.addSubview(counterLabel)
 
-        searchField.frame = NSRect(x: fieldMargin, y: 4, width: counterLabel.frame.minX - fieldMargin - 4, height: size.height - 8)
+        let fieldX: CGFloat = 14
+        searchField.frame = NSRect(
+            x: fieldX,
+            y: (size.height - labelHeight) / 2,
+            width: counterLabel.frame.minX - fieldX - 4,
+            height: labelHeight
+        )
+        searchField.font = labelFont
+        searchField.isBordered = false
+        searchField.drawsBackground = false
+        searchField.focusRingType = .none
         searchField.placeholderString = "Find in Page"
-        searchField.autoresizingMask = [.width]
+        searchField.cell?.usesSingleLineMode = true
+        searchField.cell?.isScrollable = true
         searchField.delegate = self
-        container.addSubview(searchField)
+        content.addSubview(searchField)
 
-        contentView.addSubview(container)
-        barView = container
+        contentView.addSubview(bar)
+        barView = bar
+    }
+
+    /// Borderless until hovered, like the reload button inside the omnibox
+    /// pill -- a bezel on each would read as bubbles inside a bubble.
+    private func makeButton(symbol: String, label: String, action: Selector) -> NSButton {
+        let config = NSImage.SymbolConfiguration(pointSize: Self.symbolPointSize, weight: .medium)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(config)
+        let button = NSButton(image: image ?? NSImage(), target: self, action: action)
+        button.applyChromeAppearance(.inline)
+        button.imageScaling = .scaleNone
+        button.toolTip = label
+        return button
     }
 
     // MARK: - Search triggering
@@ -156,7 +192,7 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
             self?.performSearch(text: text, forward: true)
         }
         searchWorkItem = workItem
-        // ~150ms debounce for live-search-as-you-type (browser-5kq.5's scope).
+        // ~150ms debounce for live-search-as-you-type.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
@@ -210,18 +246,31 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
         performSearch(text: text, forward: false)
     }
 
-    // MARK: - Keyboard (Enter/Shift+Enter/Escape)
+    // MARK: - Keyboard (Return/⇧Return, Esc, ⌘G/⇧⌘G)
 
     /// A local monitor rather than control(_:textView:doCommandBy:) because
     /// that delegate method can't distinguish plain Return from Shift+Return
     /// (both normally resolve to the same insertNewline: selector) -- same
     /// "local NSEvent monitor for a specific overlay's keyboard handling"
     /// pattern already used by ShortcutsOverlayController/TabCyclingController.
-    /// Scoped to only intercept when the search field itself is first
-    /// responder, so it never steals keys meant for the web page or omnibox.
+    ///
+    /// Return/Esc are only taken while the search field itself is first
+    /// responder, so they never steal keys meant for the web page or
+    /// omnibox. ⌘G/⇧⌘G are taken anywhere in this window while the bar is
+    /// open (so they also work after clicking back into the page), and have
+    /// no menu item of their own to collide with.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.isSearchFieldFocused(in: event) else { return event }
+            guard let self else { return event }
+            if self.isFindAgainChord(event) {
+                if event.modifierFlags.contains(.shift) {
+                    self.findPrevious()
+                } else {
+                    self.findNext()
+                }
+                return nil
+            }
+            guard self.isSearchFieldFocused(in: event) else { return event }
             switch event.keyCode {
             case 53:  // Escape
                 self.dismiss()
@@ -237,6 +286,14 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
                 return event
             }
         }
+    }
+
+    private func isFindAgainChord(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window else { return false }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        guard modifiers == .command || modifiers == [.command, .shift] else { return false }
+        return event.charactersIgnoringModifiers?.lowercased() == "g"
     }
 
     private func removeKeyMonitor() {
