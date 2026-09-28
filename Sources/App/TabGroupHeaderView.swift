@@ -21,9 +21,8 @@ final class TabGroupHeaderView: NSView {
         }
     }
 
-    /// True while this header is a full-width row in the vertical sidebar --
-    /// see TabButtonView.isVerticalLayout for why the capsule radius does not
-    /// survive that change of proportions.
+    /// True while this header is a full-width row in the vertical sidebar
+    /// (see TabButtonView.isVerticalLayout).
     var isVerticalLayout = false {
         didSet {
             guard oldValue != isVerticalLayout else { return }
@@ -137,14 +136,15 @@ final class TabGroupHeaderView: NSView {
 
     override func layout() {
         super.layout()
-        // Full pill shape (browser-qpy), matching TabButtonView -- see that
-        // view's own layout() for why the real glass view masks its own
-        // corners on macOS 26+ instead of this view's layer.
-        let cornerRadius = isVerticalLayout ? min(9, bounds.height / 2) : bounds.height / 2
+        // The same shape as TabButtonView -- see that view's own layout()
+        // for why the real glass view masks its own corners on macOS 26+
+        // instead of this view's layer.
+        let cornerRadius = min(ChromeMetrics.controlCornerRadius, bounds.height / 2)
         if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
             glass.cornerRadius = cornerRadius
         } else {
             layer?.cornerRadius = cornerRadius
+            layer?.cornerCurve = .continuous
         }
         let dotSize: CGFloat = 8
         let margin: CGFloat = 8

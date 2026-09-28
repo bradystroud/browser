@@ -55,7 +55,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let omniboxContainerView = GlassBackgroundView(
         material: .hudWindow, blendingMode: .withinWindow,
         solidFallbackColor: .controlBackgroundColor,
-        cornerRadius: BrowserWindowController.omniboxPillHeight / 2
+        cornerRadius: ChromeMetrics.controlCornerRadius
     )
     /// Thin, Safari-style loading-progress bar shown just below the
     /// omnibox pill (browser-7z5, Brady's ask: navigation gave zero
@@ -289,7 +289,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             label.alignment = .center
             label.wantsLayer = true
             label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
-            label.layer?.cornerRadius = 8
+            label.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
+            label.layer?.cornerCurve = .continuous
             self.privateLabel = label
             self.profilePillButton = nil
         } else {
@@ -690,7 +691,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             toolbarView.addSubview(privateLabel)
         }
 
-        // Omnibox pill (browser-qpy): a centered floating capsule, domain-
+        // Omnibox pill (browser-qpy): a centered floating rounded rect, domain-
         // only when unfocused, expanding to the full editable URL on focus/
         // ⌘L (see setOmniboxFocused(_:animated:)) -- reload lives inside its
         // trailing edge, not as a separate toolbar button.

@@ -95,7 +95,8 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
         container.autoresizingMask = [.minXMargin, .minYMargin]
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        container.layer?.cornerRadius = 8
+        container.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
+        container.layer?.cornerCurve = .continuous
         container.layer?.borderWidth = 1
         container.layer?.borderColor = NSColor.separatorColor.cgColor
 

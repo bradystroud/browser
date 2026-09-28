@@ -43,6 +43,7 @@ set(BROWSER_SWIFT_SRCS
   CommandLineArgs.swift
   AppPreferencesStore.swift
   GeneralPaneController.swift
+  ChromeMetrics.swift
   GlassBackgroundView.swift
   ListAppearance.swift
   PerProfileRegistry.swift

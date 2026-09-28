@@ -81,13 +81,11 @@ private final class SuggestionRowView: NSTableCellView {
 final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     private static let rowHeight: CGFloat = 36
     private static let maxVisibleRows = 8
-    /// Matches the omnibox pill's own rounding closely enough to read as the
-    /// same control -- the pill is a full capsule at 30pt tall, but a
-    /// dropdown many rows deep cannot be, so this is the flat radius AppKit
-    /// menus use rather than the capsule's own height/2.
-    private static let cornerRadius: CGFloat = 10
+    /// The omnibox pill's own radius, so the dropdown reads as part of the
+    /// same control.
+    private static let cornerRadius: CGFloat = ChromeMetrics.controlCornerRadius
     /// A hair of daylight under the pill, so the dropdown's own rounded top
-    /// edge and shadow read as separate from the capsule above it.
+    /// edge and shadow read as separate from the pill above it.
     private static let anchorGap: CGFloat = 4
     /// History rows shrink to leave room once engine suggestions arrive, so
     /// a full dropdown still shows some of each rather than all of one.
@@ -145,12 +143,12 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         scrollView.backgroundColor = .windowBackgroundColor
         scrollView.hasVerticalScroller = true
         // The panel is borderless and transparent, so without this the
-        // dropdown is a hard-cornered rectangle hanging under a fully
-        // rounded omnibox capsule. Matching the capsule's own corner
-        // treatment (and AppKit's own menus/popovers) is what makes the two
-        // read as one control rather than two.
+        // dropdown is a hard-cornered rectangle hanging under a rounded
+        // omnibox pill. Matching the pill's own corner treatment is what
+        // makes the two read as one control rather than two.
         scrollView.wantsLayer = true
         scrollView.layer?.cornerRadius = Self.cornerRadius
+        scrollView.layer?.cornerCurve = .continuous
         scrollView.layer?.masksToBounds = true
         scrollView.layer?.borderWidth = 0.5
         scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
@@ -346,7 +344,7 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
     /// `anchor` is the omnibox *pill*, not the text field inside it -- the
     /// field is inset by the pill's own padding and its trailing reload
     /// button, so anchoring to it left the dropdown visibly narrower than,
-    /// and misaligned with, the capsule it hangs from.
+    /// and misaligned with, the pill it hangs from.
     private func position(below anchor: NSView, in window: NSWindow) {
         let anchorFrameInWindow = anchor.convert(anchor.bounds, to: nil)
         let anchorFrameOnScreen = window.convertToScreen(anchorFrameInWindow)

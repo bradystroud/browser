@@ -122,12 +122,11 @@ final class TabButtonView: NSView {
 
     /// True while this pill is a row in the vertical sidebar rather than a
     /// cell in the horizontal strip (see TabStripOrientation). It changes
-    /// three things and nothing else: the title reads from the leading edge
+    /// two things and nothing else: the title reads from the leading edge
     /// instead of centred (a column of centred titles is unreadable -- the
-    /// eye has no common left margin to run down), the corner radius stops
-    /// being a full capsule at a width that would make one look like a
-    /// lozenge, and an unselected row highlights on hover, which is what a
-    /// list of rows is expected to do and a strip of pills is not.
+    /// eye has no common left margin to run down), and an unselected row
+    /// highlights on hover, which is what a list of rows is expected to do
+    /// and a strip of pills is not.
     var isVerticalLayout = false {
         didSet {
             guard oldValue != isVerticalLayout else { return }
@@ -348,26 +347,22 @@ final class TabButtonView: NSView {
         faviconView.image = image ?? Self.genericFavicon
     }
 
-    /// A full capsule in the horizontal strip (browser-qpy), a rounded rect
-    /// in the sidebar. A capsule only reads as one while the pill is roughly
-    /// as wide as it is tall; at a sidebar row's proportions the same radius
-    /// turns it into a lozenge, which is why Safari's and Arc's own sidebar
-    /// rows are rounded rects and their tab pills are not.
+    /// The same rounded rect in the horizontal strip, the sidebar and when
+    /// pinned -- see ChromeMetrics.controlCornerRadius.
     private var cornerRadius: CGFloat {
-        isVerticalLayout ? min(10, bounds.height / 2) : bounds.height / 2
+        min(ChromeMetrics.controlCornerRadius, bounds.height / 2)
     }
 
     override func layout() {
         super.layout()
-        // Full pill shape (browser-qpy): fully rounded ends at any height,
-        // not a fixed radius -- matches the compact pinned width too. On
-        // macOS 26+ the real glass view masks its own corners; masking
+        // On macOS 26+ the real glass view masks its own corners; masking
         // this view's own layer too would double up (and clip nothing
         // extra, since the glass view already fills these bounds).
         if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
             glass.cornerRadius = cornerRadius
         } else {
             layer?.cornerRadius = cornerRadius
+            layer?.cornerCurve = .continuous
         }
         layoutSelectionRing()
         let closeSize: CGFloat = 14
@@ -935,9 +930,9 @@ final class TabButtonView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         selectionRing.frame = contentContainer.bounds
-        // Follows the pill's own radius, so the ring traces the shape it
-        // outlines in either orientation rather than bulging past its corners.
-        let radius = min(cornerRadius, rect.height / 2)
+        // Inset from the pill's own radius by the same amount as the ring
+        // itself, so its corners stay concentric with the shape it outlines.
+        let radius = min(ChromeMetrics.concentricRadius(insetBy: inset), rect.height / 2)
         selectionRing.path = CGPath(
             roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil
         )
