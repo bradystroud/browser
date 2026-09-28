@@ -154,10 +154,24 @@ enum StartPageRenderer {
         """
     }
 
-    /// U+FE0E forces the text presentation: without it Chromium renders the
-    /// emoji form, which is a full-color picture that ignores `color` and
-    /// sits wrong against the panel's typography.
-    private static let gearGlyph = "&#x2699;&#xFE0E;"
+    /// Drawn to match SF Symbols' `gearshape`, so it reads as the same icon
+    /// family as the native toolbar. A typed U+2699 comes from whatever text
+    /// font has it and never matches. `currentColor` keeps `.gear`'s color
+    /// and hover styles in charge.
+    private static let gearGlyph = """
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" \
+    stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">\
+    <path d="M10.08 4.85L10.42 2.53A9.6 9.6 0 0 1 13.58 2.53\
+    L13.92 4.85A7.4 7.4 0 0 1 15.7 5.59L17.57 4.18A9.6 9.6 0 0 1 19.82 6.43\
+    L18.41 8.3A7.4 7.4 0 0 1 19.15 10.08L21.47 10.42A9.6 9.6 0 0 1 21.47 13.58\
+    L19.15 13.92A7.4 7.4 0 0 1 18.41 15.7L19.82 17.57A9.6 9.6 0 0 1 17.57 19.82\
+    L15.7 18.41A7.4 7.4 0 0 1 13.92 19.15L13.58 21.47A9.6 9.6 0 0 1 10.42 21.47\
+    L10.08 19.15A7.4 7.4 0 0 1 8.3 18.41L6.43 19.82A9.6 9.6 0 0 1 4.18 17.57\
+    L5.59 15.7A7.4 7.4 0 0 1 4.85 13.92L2.53 13.58A9.6 9.6 0 0 1 2.53 10.42\
+    L4.85 10.08A7.4 7.4 0 0 1 5.59 8.3L4.18 6.43A9.6 9.6 0 0 1 6.43 4.18\
+    L8.3 5.59A7.4 7.4 0 0 1 10.08 4.85Z"/>\
+    <circle cx="12" cy="12" r="3"/></svg>
+    """
 
     /// The Private Browsing notice's mark, drawn rather than typed. The
     /// obvious emoji for it (U+1F576) has no usable text presentation --

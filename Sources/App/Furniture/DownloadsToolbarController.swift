@@ -170,6 +170,9 @@ private final class DownloadsPopoverViewController: NSViewController {
     private static let headerHeight: CGFloat = 30
     private static let footerHeight: CGFloat = 32
     private static let maxVisibleRows = 6
+    /// One leading/trailing inset for everything in the popover -- header,
+    /// row contents and footer buttons -- so their edges line up.
+    static let contentInset: CGFloat = 14
 
     private let profile: Profile
     private let onShowAll: () -> Void
@@ -197,7 +200,7 @@ private final class DownloadsPopoverViewController: NSViewController {
     private func setUpViews() {
         let header = NSTextField(labelWithString: "Downloads")
         header.font = .systemFont(ofSize: 13, weight: .semibold)
-        header.frame = NSRect(x: 14, y: 0, width: 200, height: 18)
+        header.frame = NSRect(x: Self.contentInset, y: 0, width: 200, height: 18)
         header.autoresizingMask = [.minYMargin]
         view.addSubview(header)
 
@@ -220,14 +223,18 @@ private final class DownloadsPopoverViewController: NSViewController {
         let showAll = NSButton(title: "Show All Downloads", target: self, action: #selector(showAllTapped))
         showAll.bezelStyle = .inline
         showAll.controlSize = .small
-        showAll.frame = NSRect(x: 10, y: 8, width: 160, height: 20)
+        showAll.sizeToFit()
+        showAll.frame = NSRect(x: Self.contentInset, y: 8, width: showAll.frame.width, height: 20)
         showAll.autoresizingMask = [.maxYMargin]
         view.addSubview(showAll)
 
         let clear = NSButton(title: "Clear", target: self, action: #selector(clearTapped))
         clear.bezelStyle = .inline
         clear.controlSize = .small
-        clear.frame = NSRect(x: Self.width - 70, y: 8, width: 60, height: 20)
+        clear.sizeToFit()
+        clear.frame = NSRect(
+            x: Self.width - Self.contentInset - clear.frame.width, y: 8,
+            width: clear.frame.width, height: 20)
         clear.autoresizingMask = [.minXMargin, .maxYMargin]
         view.addSubview(clear)
     }
@@ -263,7 +270,9 @@ private final class DownloadsPopoverViewController: NSViewController {
         view.frame = NSRect(origin: .zero, size: size)
         // Top-down: header, list, footer buttons.
         if let header = view.subviews.first as? NSTextField {
-            header.frame = NSRect(x: 14, y: size.height - 22, width: size.width - 28, height: 18)
+            header.frame = NSRect(
+                x: Self.contentInset, y: size.height - 22,
+                width: size.width - Self.contentInset * 2, height: 18)
         }
         let listY = Self.footerHeight
         let listHeight = size.height - Self.headerHeight - Self.footerHeight
@@ -318,23 +327,26 @@ private final class DownloadRowView: NSView {
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 48) }
 
     private func setUpViews() {
+        let inset = DownloadsPopoverViewController.contentInset
+        let textX = inset + 28 + 10
+        let textWidth = bounds.width - textX - 18 - inset - 10
         // The real Finder icon for the file's type, so a row reads at a
         // glance the way it does in Safari's list.
         iconView.image = NSWorkspace.shared.icon(forFile: download.destinationPath)
         iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.frame = NSRect(x: 12, y: 10, width: 28, height: 28)
+        iconView.frame = NSRect(x: inset, y: 10, width: 28, height: 28)
         addSubview(iconView)
 
         nameLabel.stringValue = download.suggestedName
         nameLabel.font = .systemFont(ofSize: 12)
         nameLabel.lineBreakMode = .byTruncatingMiddle
-        nameLabel.frame = NSRect(x: 50, y: 26, width: bounds.width - 50 - 44, height: 16)
+        nameLabel.frame = NSRect(x: textX, y: 26, width: textWidth, height: 16)
         addSubview(nameLabel)
 
         statusLabel.font = .systemFont(ofSize: 10)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: 50, y: 8, width: bounds.width - 50 - 44, height: 14)
+        statusLabel.frame = NSRect(x: textX, y: 8, width: textWidth, height: 14)
         addSubview(statusLabel)
 
         progressIndicator.style = .bar
@@ -342,7 +354,7 @@ private final class DownloadRowView: NSView {
         progressIndicator.minValue = 0
         progressIndicator.maxValue = 100
         progressIndicator.controlSize = .small
-        progressIndicator.frame = NSRect(x: 50, y: 10, width: bounds.width - 50 - 44, height: 8)
+        progressIndicator.frame = NSRect(x: textX, y: 10, width: textWidth, height: 8)
         addSubview(progressIndicator)
 
         revealButton.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Reveal in Finder")
@@ -351,7 +363,7 @@ private final class DownloadRowView: NSView {
         revealButton.toolTip = "Reveal in Finder"
         revealButton.target = self
         revealButton.action = #selector(reveal)
-        revealButton.frame = NSRect(x: bounds.width - 34, y: 15, width: 18, height: 18)
+        revealButton.frame = NSRect(x: bounds.width - inset - 18, y: 15, width: 18, height: 18)
         addSubview(revealButton)
 
         applyState()
