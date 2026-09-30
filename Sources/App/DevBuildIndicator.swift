@@ -44,7 +44,6 @@ enum DevBuildIndicator {
             width: contentView.bounds.width, height: bannerHeight))
         banner.autoresizingMask = [.width, .minYMargin]
         contentView.addSubview(banner)
-        banner.observeFullScreen(of: window)
     }
 
     // MARK: - Details
@@ -98,10 +97,10 @@ enum DevBuildIndicator {
 }
 
 private final class DevBuildBannerView: NSView {
-    /// Clears the traffic lights, which float over the top-left of the
-    /// window whenever it is not full screen.
-    private static let trafficLightInset: CGFloat = 78
-    private static let fullScreenInset: CGFloat = 10
+    /// The traffic lights sit on the toolbar row below the banner (see
+    /// BrowserWindow's layout), so the text starts at the plain edge inset
+    /// in every mode, full screen included.
+    private static let leadingInset: CGFloat = 10
 
     private let label = NSTextField(labelWithString: DevBuildIndicator.bannerText)
     private var popover: NSPopover?
@@ -121,22 +120,13 @@ private final class DevBuildBannerView: NSView {
         label.cell?.truncatesLastVisibleLine = true
         label.autoresizingMask = [.width]
         addSubview(label)
-        layoutLabel(inset: Self.trafficLightInset)
+        layoutLabel(inset: Self.leadingInset)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
     }
 
-    func observeFullScreen(of window: NSWindow) {
-        let center = NotificationCenter.default
-        center.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            self?.layoutLabel(inset: Self.fullScreenInset)
-        }
-        center.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { [weak self] _ in
-            self?.layoutLabel(inset: Self.trafficLightInset)
-        }
-    }
 
     private func layoutLabel(inset: CGFloat) {
         let height = label.intrinsicContentSize.height
