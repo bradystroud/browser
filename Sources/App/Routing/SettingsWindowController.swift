@@ -23,7 +23,7 @@ extension SettingsPaneController {
 }
 
 /// The app's "Settings…" window (⌘,), standard macOS placement in the app
-/// menu. Hosts six sections in an NSTabView: "General" (global preferences
+/// menu. Hosts seven sections in an NSTabView: "General" (global preferences
 /// not tied to any one profile -- currently just the omnibox display mode,
 /// see GeneralPaneController, browser-0y1), "Routing Rules" (per Brady's
 /// original request -- see RoutingRulesPaneController), "Profiles"
@@ -34,7 +34,8 @@ extension SettingsPaneController {
 /// (per-profile saved passwords/cards/addresses as three inner sub-tabs,
 /// Touch-ID-gated reveal for the secret bits -- see AutofillPaneController,
 /// browser-ojh.1/.2; this used to be a standalone "Passwords" top-level tab
-/// before browser-ojh.2 added cards/addresses alongside it). This
+/// before browser-ojh.2 added cards/addresses alongside it), and "Safari"
+/// (the ongoing Safari history sync -- see SafariSyncPaneController). This
 /// controller just owns the window and composes the panes; all the
 /// section-specific logic lives in their own controllers.
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTabViewDelegate {
@@ -46,6 +47,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
     private let privacyPane = PrivacyPaneController()
     private let startPagePane = StartPageSettingsPaneController()
     private let autofillPane = AutofillPaneController()
+    private let safariSyncPane = SafariSyncPaneController()
     private let tabView = NSTabView()
     /// Kept alive for the window's lifetime -- see WindowFrameMemory.
     private var frameMemory: WindowFrameMemory?
@@ -113,6 +115,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         privacyPane.reload()
         startPagePane.reload()
         autofillPane.reload()
+        safariSyncPane.reload()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -185,7 +188,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         tabView.addTabViewItem(profilesItem)
         tabView.addTabViewItem(privacyItem)
         tabView.addTabViewItem(startPageItem)
+        let safariSyncItem = NSTabViewItem(identifier: "safari-sync")
+        safariSyncItem.label = "Safari"
+        safariSyncItem.view = SettingsPaneScrollView(pane: safariSyncPane)
+
         tabView.addTabViewItem(autofillItem)
+        tabView.addTabViewItem(safariSyncItem)
         contentView.addSubview(tabView)
     }
 
@@ -211,6 +219,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTa
         case "privacy": return privacyPane
         case "start-page": return startPagePane
         case "autofill": return autofillPane
+        case "safari-sync": return safariSyncPane
         default: return nil
         }
     }

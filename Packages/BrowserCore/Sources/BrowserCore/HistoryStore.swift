@@ -86,6 +86,36 @@ public final class HistoryStore {
         }
     }
 
+    /// importVisits, minus every visit this profile already holds: one with
+    /// the same URL at the same millisecond. Imported visits keep their
+    /// original timestamps, so this recognizes a visit that an earlier
+    /// one-time Safari import or sync run already brought in. Returns how
+    /// many visits it inserted.
+    @discardableResult
+    public func importVisitsSkippingExisting(_ visits: [(url: String, title: String?, visitTime: Date)]) throws -> Int {
+        try database.perform { db in
+            var inserted = 0
+            try db.withTransaction {
+                let exists = try db.prepare("""
+                    SELECT 1 FROM history_visits
+                    JOIN history_urls ON history_visits.url_id = history_urls.id
+                    WHERE history_urls.url = ? AND history_visits.visit_time = ?
+                    LIMIT 1;
+                    """)
+                for visit in visits {
+                    try exists.bind(visit.url, at: 1)
+                    try exists.bind(Self.epochMs(visit.visitTime), at: 2)
+                    let alreadyHeld = try exists.step()
+                    try exists.reset()
+                    if alreadyHeld { continue }
+                    try Self.insertVisit(url: visit.url, title: visit.title, at: visit.visitTime, db: db)
+                    inserted += 1
+                }
+            }
+            return inserted
+        }
+    }
+
     private static func insertVisit(url: String, title: String?, at date: Date, db: SQLiteConnection) throws {
         let epochMs = epochMs(date)
         let resolvedTitle = title ?? ""

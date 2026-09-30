@@ -18,6 +18,9 @@ UserDefaults.standard.register(defaults: [
     "NSQuitAlwaysKeepsWindows": false,
 ])
 
+// Waits for launch to finish before it loads anything; see its own comment.
+SafariHistorySyncCoordinator.startAfterLaunch()
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
