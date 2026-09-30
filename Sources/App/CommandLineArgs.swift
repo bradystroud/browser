@@ -142,9 +142,12 @@ enum CommandLineArgs {
     /// click/keystroke -- the sanctioned way an agent can drive this
     /// window for screenshot verification under AGENTS.md's UI
     /// verification protocol (same "explicit flag, no-op unless passed"
-    /// pattern as testNoActivate() above). <identifier> matches one of
-    /// SettingsWindowController's own NSTabViewItem identifiers ("general",
-    /// "routing-rules", "profiles", "privacy", "start-page", "autofill").
+    /// pattern as testNoActivate() above). <identifier> is one of
+    /// SettingsWindowController's pane identifiers ("general", "links",
+    /// "profiles", "privacy", "start-page", "passwords", "autofill",
+    /// "safari", "extensions"), an older name for one ("routing-rules",
+    /// "safari-sync"), or "autofill:<section>" ("cards", "addresses",
+    /// "emails") -- see SettingsWindowController.showTab(identifier:).
     /// Returns nil (no-op) unless explicitly passed, so normal launches are
     /// unaffected.
     static func showSettingsTabIdentifier() -> String? {

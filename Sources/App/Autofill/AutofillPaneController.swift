@@ -1,71 +1,110 @@
 import AppKit
 
-/// The "Autofill" tab of the Settings window (browser-ojh.2) -- an inner
-/// NSTabView with three sections: Passwords (browser-ojh.1's existing
-/// PasswordsPaneController, unchanged, just relocated under this wrapper
-/// instead of being its own top-level Settings tab), Cards, and Addresses.
-/// SettingsWindowController hosts this one controller instead of hosting
-/// PasswordsPaneController directly -- see that file's own updated doc
-/// comment.
+/// The "Autofill" pane of the Settings window: saved cards, addresses and
+/// the email suggestions, one at a time under a segmented control. Saved
+/// passwords have their own pane (PasswordsPaneController) -- they are the
+/// section people open most, and a pane of their own keeps them one click
+/// away rather than two, the way Safari's settings do.
+///
+/// A segmented control rather than three more toolbar panes: the three are
+/// one feature (what the browser fills into forms), and a toolbar of twelve
+/// would no longer fit a settings window.
 final class AutofillPaneController: NSObject, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    private static let margin: CGFloat = 20
+    private static let controlGap: CGFloat = 12
 
-    private let passwordsPane = PasswordsPaneController()
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
+
     private let cardsPane = CardsPaneController()
     private let addressesPane = AddressesPaneController()
     private let emailsPane = EmailAutofillPaneController()
-    private let tabView = NSTabView()
+    private let sectionControl = NSSegmentedControl(
+        labels: ["Cards", "Addresses", "Emails"],
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let container = NSView()
+
+    /// In segment order.
+    private static let sectionNames = ["cards", "addresses", "emails"]
+
+    private var sectionPanes: [SettingsPaneController] { [cardsPane, addressesPane, emailsPane] }
 
     override init() {
         super.init()
         setUpViews()
+        showSection(at: 0)
+    }
+
+    /// Tall enough for the tallest section, so switching sections never
+    /// squeezes one list below what another had.
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        let sectionHeight = sectionPanes.map { $0.preferredContentHeight(forWidth: width) }.max() ?? 400
+        return (Self.margin + sectionControl.frame.height + Self.controlGap + sectionHeight).rounded(.up)
     }
 
     func reload() {
-        passwordsPane.reload()
         cardsPane.reload()
         addressesPane.reload()
         emailsPane.reload()
     }
 
-    /// Test-only entry point for the `--show-settings-tab
-    /// autofill:<sub-identifier>` launch argument (see
-    /// CommandLineArgs.showSettingsTabIdentifier and
-    /// SettingsWindowController.showTab) -- lets an agent screenshot the
-    /// Cards/Addresses sub-tabs directly instead of only ever seeing
-    /// whichever one Passwords leaves selected.
+    /// The section a `--show-settings-tab autofill:<section>` names, or nil.
+    /// Accepts the short names ("cards") and the identifiers the sections
+    /// had as inner tabs ("autofill-cards").
+    static func sectionName(from identifier: String) -> String? {
+        let name = identifier.hasPrefix("autofill-") ? String(identifier.dropFirst("autofill-".count)) : identifier
+        return sectionNames.contains(name) ? name : nil
+    }
+
+    /// Entry point for `--show-settings-tab autofill:<section>` (see
+    /// SettingsWindowController.showTab), so an agent can screenshot a
+    /// section directly.
     func selectSubTab(identifier: String) {
-        guard tabView.indexOfTabViewItem(withIdentifier: identifier) != NSNotFound else {
-            NSLog("Autofill settings has no tab named '%@'", identifier)
+        guard let name = Self.sectionName(from: identifier), let index = Self.sectionNames.firstIndex(of: name) else {
+            NSLog("Autofill settings has no section named '%@'", identifier)
             return
         }
-        tabView.selectTabViewItem(withIdentifier: identifier)
+        showSection(at: index)
     }
 
     private func setUpViews() {
-        tabView.frame = view.bounds
-        tabView.autoresizingMask = [.width, .height]
+        sectionControl.target = self
+        sectionControl.action = #selector(sectionChanged)
+        sectionControl.sizeToFit()
+        let controlSize = sectionControl.frame.size
+        sectionControl.frame = NSRect(
+            x: ((view.bounds.width - controlSize.width) / 2).rounded(),
+            y: view.bounds.height - Self.margin - controlSize.height,
+            width: controlSize.width,
+            height: controlSize.height
+        )
+        sectionControl.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        view.addSubview(sectionControl)
 
-        let passwordsItem = NSTabViewItem(identifier: "autofill-passwords")
-        passwordsItem.label = "Passwords"
-        passwordsItem.view = passwordsPane.view
+        container.frame = NSRect(
+            x: 0,
+            y: 0,
+            width: view.bounds.width,
+            height: sectionControl.frame.minY - Self.controlGap
+        )
+        container.autoresizingMask = [.width, .height]
+        view.addSubview(container)
+    }
 
-        let cardsItem = NSTabViewItem(identifier: "autofill-cards")
-        cardsItem.label = "Cards"
-        cardsItem.view = cardsPane.view
+    @objc private func sectionChanged() {
+        showSection(at: sectionControl.selectedSegment)
+    }
 
-        let addressesItem = NSTabViewItem(identifier: "autofill-addresses")
-        addressesItem.label = "Addresses"
-        addressesItem.view = addressesPane.view
-
-        tabView.addTabViewItem(passwordsItem)
-        tabView.addTabViewItem(cardsItem)
-        let emailsItem = NSTabViewItem(identifier: "autofill-emails")
-        emailsItem.label = "Emails"
-        emailsItem.view = emailsPane.view
-
-        tabView.addTabViewItem(addressesItem)
-        tabView.addTabViewItem(emailsItem)
-        view.addSubview(tabView)
+    private func showSection(at index: Int) {
+        guard sectionPanes.indices.contains(index) else { return }
+        sectionControl.selectedSegment = index
+        let paneView = sectionPanes[index].view
+        guard paneView.superview !== container else { return }
+        container.subviews.forEach { $0.removeFromSuperview() }
+        paneView.frame = container.bounds
+        paneView.autoresizingMask = [.width, .height]
+        container.addSubview(paneView)
     }
 }
