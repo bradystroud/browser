@@ -65,12 +65,13 @@ final class TabSleepCoordinator: TabLifecycleObserver {
     private func sweep(pressure: TabSleepPolicy.MemoryPressure) {
         guard TabSleepPreferences.isEnabled else { return }
         let idle = TabSleepPolicy.idleInterval(configured: TabSleepPreferences.idleInterval, pressure: pressure)
+        let reason: TabMemoryDiagnostics.SleepReason = pressure == .normal ? .idle : .pressure
         for controller in WindowManager.shared.windowControllers {
             // The visible tab is in use for as long as it stays visible, so
             // its clock starts when it stops being the visible one.
             controller.activeTab?.markUsed()
             for tab in controller.tabs {
-                sleep(tab, in: controller, trigger: .automatic, idleInterval: idle)
+                sleep(tab, in: controller, trigger: .automatic, idleInterval: idle, reason: reason)
             }
         }
     }
@@ -79,7 +80,7 @@ final class TabSleepCoordinator: TabLifecycleObserver {
     /// waived, everything else still applies (see TabSleepPolicy.Trigger).
     func sleepNow(_ tabs: [Tab], in controller: BrowserWindowController) {
         for tab in tabs {
-            sleep(tab, in: controller, trigger: .manual, idleInterval: 0)
+            sleep(tab, in: controller, trigger: .manual, idleInterval: 0, reason: .manual)
         }
     }
 
@@ -109,7 +110,7 @@ final class TabSleepCoordinator: TabLifecycleObserver {
     /// The page is asked last, because asking costs a round trip to it; and
     /// the tab is checked again once it answers, since it may have been
     /// selected or started playing in the meantime.
-    private func sleep(_ tab: Tab, in controller: BrowserWindowController, trigger: TabSleepPolicy.Trigger, idleInterval: TimeInterval) {
+    private func sleep(_ tab: Tab, in controller: BrowserWindowController, trigger: TabSleepPolicy.Trigger, idleInterval: TimeInterval, reason: TabMemoryDiagnostics.SleepReason) {
         if let asked = tabsBeingChecked.object(forKey: tab), -asked.timeIntervalSinceNow < Self.checkTimeout { return }
         guard blocker(for: tab, in: controller, trigger: trigger, idleInterval: idleInterval) == nil else { return }
         let asked = NSDate()
@@ -121,6 +122,7 @@ final class TabSleepCoordinator: TabLifecycleObserver {
                   self.blocker(for: tab, in: controller, trigger: trigger, idleInterval: idleInterval) == nil,
                   TabSleepPolicy.blocker(for: page) == nil else { return }
             tab.sleep(scrollY: page.scrollY)
+            TabMemoryDiagnostics.shared.tabSlept(tab, reason: reason)
         }
     }
 }

@@ -13,7 +13,11 @@ import Darwin
 /// - `pressure`: each system memory-pressure change.
 /// - `processEnded`: a tab's page process ended, and whether it was hidden.
 /// - `tabShown`: a hidden tab was shown again, how long it was hidden, and
-///   whether its process ended meanwhile -- the reload the user notices.
+///   whether its process ended or tab sleep unloaded it meanwhile -- the
+///   reload the user notices.
+/// - `tabSlept`: tab sleep (TabSleepCoordinator) unloaded a hidden tab, and
+///   why: `idle`, `pressure` (a memory warning shortened the wait) or
+///   `manual` (a menu command).
 /// - `policy`: the Background tabs setting changed.
 ///
 /// No URLs, titles or hosts are recorded: tabs are identified by a number
@@ -52,6 +56,7 @@ final class TabMemoryDiagnostics: TabLifecycleObserver {
     private var selectedTabByWindow: [ObjectIdentifier: ObjectIdentifier] = [:]
     private var hiddenSince: [ObjectIdentifier: Date] = [:]
     private var endedWhileHidden: Set<ObjectIdentifier> = []
+    private var sleptWhileHidden: Set<ObjectIdentifier> = []
     private var timer: Timer?
     private var pressureSource: DispatchSourceMemoryPressure?
     private var sessionRecorded = false
@@ -98,20 +103,39 @@ final class TabMemoryDiagnostics: TabLifecycleObserver {
             selectedTabByWindow[windowKey] = tabKey
             if let since = hiddenSince.removeValue(forKey: tabKey) {
                 let ended = endedWhileHidden.remove(tabKey) != nil
+                let slept = sleptWhileHidden.remove(tabKey) != nil
                 record("tabShown", [
                     "tab": number(for: tabKey),
                     "hiddenSeconds": Int(Date().timeIntervalSince(since)),
                     "processEndedWhileHidden": ended,
+                    "sleptWhileHidden": slept,
                 ])
             }
         case .closed:
             hiddenSince[tabKey] = nil
             endedWhileHidden.remove(tabKey)
+            sleptWhileHidden.remove(tabKey)
             tabNumbers[tabKey] = nil
             if selectedTabByWindow[windowKey] == tabKey { selectedTabByWindow[windowKey] = nil }
         case .opened, .navigated, .finishedLoading:
             break
         }
+    }
+
+    enum SleepReason: String {
+        case idle, pressure, manual
+    }
+
+    func tabSlept(_ tab: Tab, reason: SleepReason) {
+        let key = ObjectIdentifier(tab)
+        let since = hiddenSince[key]
+        sleptWhileHidden.insert(key)
+        record("tabSlept", [
+            "tab": number(for: key),
+            "reason": reason.rawValue,
+            "hiddenSeconds": since.map { Int(Date().timeIntervalSince($0)) } ?? 0,
+            "pressureLevel": Self.pressureLevel(),
+        ])
     }
 
     @objc private func contentProcessEnded(_ notification: Notification) {
