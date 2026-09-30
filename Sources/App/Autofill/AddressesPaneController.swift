@@ -9,10 +9,13 @@ import AppKit
 /// otherwise (a user might want to add their own address without first
 /// filling out some site's checkout form).
 final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
 
     private let profilePopup = NSPopUpButton()
     private let addressesTableView = NSTableView()
+    private lazy var listButtons = SettingsListButtons(target: self, action: #selector(listButtonClicked))
+    private lazy var editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedAddress))
+    private let form = SettingsForm()
 
     private var selectedProfile: Profile?
     private var addresses: [StoredAddress] = []
@@ -20,8 +23,12 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
     private var appActiveObserver: NSObjectProtocol?
 
     private let meCardCheckbox = NSButton(checkboxWithTitle: "Fill from my contact card", target: nil, action: nil)
-    private let meCardStatusLabel = NSTextField(labelWithString: "")
+    private let meCardStatusLabel = SettingsForm.footnote()
     private let meCardActionButton = NSButton(title: "", target: nil, action: nil)
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        SettingsTablePane.preferredHeight(form: form, topMargin: CardsPaneController.topMargin)
+    }
 
     override init() {
         super.init()
@@ -49,91 +56,53 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let profileRowHeight: CGFloat = 28
-        let buttonRowHeight: CGFloat = 28
-
-        let headerLabel = NSTextField(labelWithString: "Addresses")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(x: margin, y: view.bounds.height - margin - headerHeight, width: view.bounds.width - margin * 2, height: headerHeight)
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        let addButton = NSButton(title: "Add…", target: self, action: #selector(addAddress))
-        addButton.frame = NSRect(x: margin, y: margin, width: 70, height: buttonRowHeight)
-        addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(addButton)
-
-        let editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedAddress))
-        editButton.frame = NSRect(x: margin + 74, y: margin, width: 70, height: buttonRowHeight)
-        editButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(editButton)
-
-        let deleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteSelectedAddress))
-        deleteButton.frame = NSRect(x: margin + 148, y: margin, width: 70, height: buttonRowHeight)
-        deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(deleteButton)
-
-        let meCardRowY = margin + buttonRowHeight + rowGap
-        meCardCheckbox.frame = NSRect(x: margin, y: meCardRowY + 4, width: 190, height: 20)
-        meCardCheckbox.autoresizingMask = [.maxXMargin, .maxYMargin]
+        // The contact card applies to every profile, so it sits above the
+        // profile picker rather than beside the per-profile list.
         meCardCheckbox.target = self
         meCardCheckbox.action = #selector(meCardPreferenceChanged)
-        view.addSubview(meCardCheckbox)
-
-        meCardStatusLabel.font = .systemFont(ofSize: 11)
-        meCardStatusLabel.textColor = .secondaryLabelColor
-        meCardStatusLabel.lineBreakMode = .byTruncatingTail
-        meCardStatusLabel.frame = NSRect(x: margin + 194, y: meCardRowY + 6, width: view.bounds.width - margin * 2 - 194 - 170, height: 16)
-        meCardStatusLabel.autoresizingMask = [.width, .maxYMargin]
-        view.addSubview(meCardStatusLabel)
-
-        meCardActionButton.frame = NSRect(x: view.bounds.width - margin - 166, y: meCardRowY, width: 166, height: buttonRowHeight)
-        meCardActionButton.autoresizingMask = [.minXMargin, .maxYMargin]
+        meCardActionButton.bezelStyle = .push
+        meCardActionButton.controlSize = .small
+        meCardActionButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         meCardActionButton.target = self
         meCardActionButton.action = #selector(meCardActionTapped)
-        view.addSubview(meCardActionButton)
+        form.addRow(nil, meCardCheckbox, meCardActionButton)
+        form.addFootnote(meCardStatusLabel, indented: true)
 
-        let profileRowY = meCardRowY + buttonRowHeight + rowGap
-        let profileLabel = NSTextField(labelWithString: "Profile:")
-        profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(profileLabel)
-
-        profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: profileRowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .maxYMargin]
+        form.beginSection()
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
-        view.addSubview(profilePopup)
-
-        let scrollTop = view.bounds.height - margin - headerHeight - rowGap
-        let scrollBottom = profileRowY + profileRowHeight + rowGap
-        let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom)))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
+        form.addRow("Profile:", profilePopup)
 
         let nameColumn = NSTableColumn(identifier: .init("fullName"))
         nameColumn.title = "Name"
-        nameColumn.width = 160
+        nameColumn.width = 200
 
         let addressColumn = NSTableColumn(identifier: .init("address"))
         addressColumn.title = "Address"
-        addressColumn.width = 280
+        addressColumn.width = 360
 
         addressesTableView.addTableColumn(nameColumn)
         addressesTableView.addTableColumn(addressColumn)
         addressesTableView.dataSource = self
         addressesTableView.delegate = self
-        ListAppearance.apply(to: addressesTableView, in: scrollView)
-        scrollView.documentView = addressesTableView
-        view.addSubview(scrollView)
+        addressesTableView.target = self
+        addressesTableView.doubleAction = #selector(editSelectedAddress)
+
+        SettingsTablePane.install(
+            in: view,
+            topMargin: CardsPaneController.topMargin,
+            form: form,
+            table: addressesTableView,
+            listButtons: listButtons,
+            trailingButtons: [editButton]
+        )
+        updateSelectionDependentControls()
     }
 
     // MARK: - Data
 
     private func loadAddressesForSelectedProfile() {
+        defer { updateSelectionDependentControls() }
         guard let profile = selectedProfile else {
             addresses = []
             addressesTableView.reloadData()
@@ -142,6 +111,12 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
         addresses = AddressStoreManager.shared.store(forProfileId: profile.id).all()
             .sorted { $0.fullName == $1.fullName ? $0.streetAddress < $1.streetAddress : $0.fullName < $1.fullName }
         addressesTableView.reloadData()
+    }
+
+    private func updateSelectionDependentControls() {
+        let hasSelection = addresses.indices.contains(addressesTableView.selectedRow)
+        listButtons.canRemove = hasSelection
+        editButton.isEnabled = hasSelection
     }
 
     // MARK: - Contact card
@@ -182,6 +157,14 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
     }
 
     // MARK: - Actions
+
+    @objc private func listButtonClicked() {
+        switch listButtons.selectedSegment {
+        case SettingsListButtons.addSegment: addAddress()
+        case SettingsListButtons.removeSegment: deleteSelectedAddress()
+        default: break
+        }
+    }
 
     @objc private func profileSelectionChanged() {
         selectedProfile = profilePopup.selectedItem?.representedObject as? Profile
@@ -229,6 +212,10 @@ final class AddressesPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         addresses.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionDependentControls()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

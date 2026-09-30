@@ -7,14 +7,25 @@ import AppKit
 /// are shown in the table directly, same as PasswordsPaneController shows
 /// site+username without gating).
 final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    /// Sits under the Autofill pane's section control, which already
+    /// provides the space above it.
+    static let topMargin: CGFloat = 8
+
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
 
     private let profilePopup = NSPopUpButton()
     private let cardsTableView = NSTableView()
+    private lazy var listButtons = SettingsTablePane.removeOnlyButtons(target: self, action: #selector(listButtonClicked))
+    private lazy var revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedCard))
+    private let form = SettingsForm()
 
     private var selectedProfile: Profile?
     private var cards: [StoredCardSummary] = []
     private var profileChangeObserver: NSObjectProtocol?
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        SettingsTablePane.preferredHeight(form: form, topMargin: Self.topMargin)
+    }
 
     override init() {
         super.init()
@@ -35,71 +46,43 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let profileRowHeight: CGFloat = 28
-        let buttonRowHeight: CGFloat = 28
-
-        let headerLabel = NSTextField(labelWithString: "Cards")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(x: margin, y: view.bounds.height - margin - headerHeight, width: view.bounds.width - margin * 2, height: headerHeight)
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        let revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedCard))
-        revealButton.frame = NSRect(x: margin, y: margin, width: 90, height: buttonRowHeight)
-        revealButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(revealButton)
-
-        let deleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteSelectedCard))
-        deleteButton.frame = NSRect(x: margin + 94, y: margin, width: 70, height: buttonRowHeight)
-        deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(deleteButton)
-
-        let profileRowY = margin + buttonRowHeight + rowGap
-        let profileLabel = NSTextField(labelWithString: "Profile:")
-        profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(profileLabel)
-
-        profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: profileRowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .maxYMargin]
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
-        view.addSubview(profilePopup)
-
-        let scrollTop = view.bounds.height - margin - headerHeight - rowGap
-        let scrollBottom = profileRowY + profileRowHeight + rowGap
-        let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom)))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
+        form.addRow("Profile:", profilePopup)
 
         let nameColumn = NSTableColumn(identifier: .init("cardholderName"))
         nameColumn.title = "Name"
-        nameColumn.width = 220
+        nameColumn.width = 280
 
         let numberColumn = NSTableColumn(identifier: .init("last4"))
         numberColumn.title = "Card"
-        numberColumn.width = 120
+        numberColumn.width = 140
 
         let expiryColumn = NSTableColumn(identifier: .init("expiry"))
         expiryColumn.title = "Expires"
-        expiryColumn.width = 100
+        expiryColumn.width = 120
 
         cardsTableView.addTableColumn(nameColumn)
         cardsTableView.addTableColumn(numberColumn)
         cardsTableView.addTableColumn(expiryColumn)
         cardsTableView.dataSource = self
         cardsTableView.delegate = self
-        ListAppearance.apply(to: cardsTableView, in: scrollView)
-        scrollView.documentView = cardsTableView
-        view.addSubview(scrollView)
+
+        SettingsTablePane.install(
+            in: view,
+            topMargin: Self.topMargin,
+            form: form,
+            table: cardsTableView,
+            listButtons: listButtons,
+            trailingButtons: [revealButton]
+        )
+        updateSelectionDependentControls()
     }
 
     // MARK: - Data
 
     private func loadCardsForSelectedProfile() {
+        defer { updateSelectionDependentControls() }
         guard let profile = selectedProfile else {
             cards = []
             cardsTableView.reloadData()
@@ -110,7 +93,17 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
         cardsTableView.reloadData()
     }
 
+    private func updateSelectionDependentControls() {
+        let hasSelection = cards.indices.contains(cardsTableView.selectedRow)
+        listButtons.setEnabled(hasSelection, forSegment: 0)
+        revealButton.isEnabled = hasSelection
+    }
+
     // MARK: - Actions
+
+    @objc private func listButtonClicked() {
+        deleteSelectedCard()
+    }
 
     @objc private func profileSelectionChanged() {
         selectedProfile = profilePopup.selectedItem?.representedObject as? Profile
@@ -155,6 +148,10 @@ final class CardsPaneController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         cards.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionDependentControls()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

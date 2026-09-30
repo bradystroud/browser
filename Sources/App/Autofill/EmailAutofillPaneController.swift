@@ -3,27 +3,26 @@ import AppKit
 /// The "Emails" section of the Autofill Settings pane: the "Suggest email
 /// addresses" switch, then per profile the user's own addresses, the
 /// site/tenant associations learned from sign-ins, and rules. Same
-/// header / table / profile picker / button row layout as the Passwords and
-/// Addresses sections, with a segmented control choosing which list the
-/// table shows.
+/// profile picker / table / button bar layout as the Passwords, Cards and
+/// Addresses sections, with a "Show" menu choosing which list the table
+/// shows -- a menu rather than a second segmented control, since this
+/// section is already one segment of the Autofill pane's own.
 final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
     private enum Section: Int {
         case addresses, learned, rules
     }
 
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
 
     private let suggestCheckbox = NSButton(checkboxWithTitle: "Suggest email addresses", target: nil, action: nil)
-    private let sectionControl = NSSegmentedControl(
-        labels: ["Your Addresses", "Learned Sites", "Rules"], trackingMode: .selectOne, target: nil, action: nil
-    )
+    /// Items in `Section` order.
+    private let sectionPopup = NSPopUpButton()
     private let profilePopup = NSPopUpButton()
     private let tableView = NSTableView()
-    private let scrollView = NSScrollView()
-    private let addButton = NSButton(title: "Add…", target: nil, action: nil)
-    private let editButton = NSButton(title: "Edit…", target: nil, action: nil)
-    private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
-    private let clearButton = NSButton(title: "Clear All", target: nil, action: nil)
+    private lazy var listButtons = SettingsListButtons(target: self, action: #selector(listButtonClicked))
+    private lazy var editButton = NSButton(title: "Edit…", target: self, action: #selector(editTapped))
+    private lazy var clearButton = NSButton(title: "Clear All", target: self, action: #selector(clearTapped))
+    private let form = SettingsForm()
 
     private var section: Section = .addresses
     private var selectedProfile: Profile?
@@ -36,6 +35,10 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
         formatter.timeStyle = .none
         return formatter
     }()
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        SettingsTablePane.preferredHeight(form: form, topMargin: CardsPaneController.topMargin)
+    }
 
     override init() {
         super.init()
@@ -58,71 +61,34 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let rowHeight: CGFloat = 28
-
-        let headerLabel = NSTextField(labelWithString: "Email Addresses")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(x: margin, y: view.bounds.height - margin - headerHeight, width: 200, height: headerHeight)
-        headerLabel.autoresizingMask = [.maxXMargin, .minYMargin]
-        view.addSubview(headerLabel)
-
-        suggestCheckbox.frame = NSRect(x: view.bounds.width - margin - 220, y: view.bounds.height - margin - headerHeight, width: 220, height: headerHeight)
-        suggestCheckbox.autoresizingMask = [.minXMargin, .minYMargin]
+        // Applies to every profile, so it sits above the profile picker.
         suggestCheckbox.target = self
         suggestCheckbox.action = #selector(suggestPreferenceChanged)
-        view.addSubview(suggestCheckbox)
+        form.addRow(nil, suggestCheckbox)
 
-        let sectionY = view.bounds.height - margin - headerHeight - rowGap - rowHeight
-        sectionControl.frame = NSRect(x: margin, y: sectionY, width: view.bounds.width - margin * 2, height: rowHeight)
-        sectionControl.autoresizingMask = [.width, .minYMargin]
-        sectionControl.selectedSegment = 0
-        sectionControl.target = self
-        sectionControl.action = #selector(sectionChanged)
-        view.addSubview(sectionControl)
-
-        // Bottom-up, as in the other sections.
-        var x = margin
-        for (button, width, action) in [
-            (addButton, 70.0, #selector(addTapped)),
-            (editButton, 70.0, #selector(editTapped)),
-            (removeButton, 80.0, #selector(removeTapped)),
-            (clearButton, 90.0, #selector(clearTapped)),
-        ] as [(NSButton, CGFloat, Selector)] {
-            button.frame = NSRect(x: x, y: margin, width: width, height: rowHeight)
-            button.autoresizingMask = [.maxXMargin, .maxYMargin]
-            button.target = self
-            button.action = action
-            view.addSubview(button)
-            x += width + 4
-        }
-
-        let profileRowY = margin + rowHeight + rowGap
-        let profileLabel = NSTextField(labelWithString: "Profile:")
-        profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(profileLabel)
-
-        profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: rowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .maxYMargin]
+        form.beginSection()
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
-        view.addSubview(profilePopup)
+        form.addRow("Profile:", profilePopup)
 
-        let scrollTop = sectionY - rowGap
-        let scrollBottom = profileRowY + rowHeight + rowGap
-        scrollView.frame = NSRect(x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
+        sectionPopup.addItems(withTitles: ["Your Addresses", "Learned Sites", "Rules"])
+        sectionPopup.selectItem(at: 0)
+        sectionPopup.target = self
+        sectionPopup.action = #selector(sectionChanged)
+        form.addRow("Show:", sectionPopup)
+
         tableView.dataSource = self
         tableView.delegate = self
         tableView.doubleAction = #selector(editTapped)
         tableView.target = self
-        ListAppearance.apply(to: tableView, in: scrollView)
-        scrollView.documentView = tableView
-        view.addSubview(scrollView)
+        SettingsTablePane.install(
+            in: view,
+            topMargin: CardsPaneController.topMargin,
+            form: form,
+            table: tableView,
+            listButtons: listButtons,
+            trailingButtons: [editButton, clearButton]
+        )
         configureColumns()
     }
 
@@ -131,11 +97,11 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
         let columns: [(String, String, CGFloat)]
         switch section {
         case .addresses:
-            columns = [("email", "Email", 480)]
+            columns = [("email", "Email", 600)]
         case .learned:
-            columns = [("email", "Email", 170), ("site", "Site", 140), ("tenant", "Tenant", 90), ("lastUsed", "Last Used", 90)]
+            columns = [("email", "Email", 210), ("site", "Site", 170), ("tenant", "Tenant", 110), ("lastUsed", "Last Used", 110)]
         case .rules:
-            columns = [("pattern", "Host Pattern", 180), ("tenant", "Tenant", 120), ("email", "Email", 190)]
+            columns = [("pattern", "Host Pattern", 220), ("tenant", "Tenant", 150), ("email", "Email", 230)]
         }
         for (identifier, title, width) in columns {
             let column = NSTableColumn(identifier: .init(identifier))
@@ -143,12 +109,26 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
             column.width = width
             tableView.addTableColumn(column)
         }
-        addButton.isHidden = section == .learned
+        // Learned sites are only ever recorded from sign-ins, so there is
+        // nothing to add by hand there.
+        listButtons.setEnabled(section != .learned, forSegment: SettingsListButtons.addSegment)
         editButton.isHidden = section != .rules
         clearButton.isHidden = section != .learned
-        // Remove sits where Add is when Add is hidden.
-        removeButton.frame.origin.x = section == .learned ? 12 : (section == .rules ? 12 + 148 : 12 + 74)
-        clearButton.frame.origin.x = 12 + 84
+        updateSelectionDependentControls()
+    }
+
+    private func updateSelectionDependentControls() {
+        let hasSelection = tableView.selectedRow >= 0 && tableView.selectedRow < numberOfRows(in: tableView)
+        listButtons.canRemove = hasSelection
+        editButton.isEnabled = hasSelection
+    }
+
+    @objc private func listButtonClicked() {
+        switch listButtons.selectedSegment {
+        case SettingsListButtons.addSegment: addTapped()
+        case SettingsListButtons.removeSegment: removeTapped()
+        default: break
+        }
     }
 
     // MARK: - Data
@@ -164,6 +144,7 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
     private func loadData() {
         data = store?.data ?? EmailAutofillData()
         tableView.reloadData()
+        updateSelectionDependentControls()
     }
 
     private func changed() {
@@ -178,9 +159,10 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
     }
 
     @objc private func sectionChanged() {
-        section = Section(rawValue: sectionControl.selectedSegment) ?? .addresses
+        section = Section(rawValue: sectionPopup.indexOfSelectedItem) ?? .addresses
         configureColumns()
         tableView.reloadData()
+        updateSelectionDependentControls()
     }
 
     @objc private func profileSelectionChanged() {
@@ -293,6 +275,10 @@ final class EmailAutofillPaneController: NSObject, NSTableViewDataSource, NSTabl
         case .learned: return data.usage.count
         case .rules: return data.rules.count
         }
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionDependentControls()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

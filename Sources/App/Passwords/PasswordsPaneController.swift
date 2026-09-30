@@ -1,29 +1,33 @@
 import AppKit
 
-/// The "Passwords" pane of the Settings window (browser-ojh.1; see
-/// SettingsWindowController, which hosts this alongside the other panes in
-/// an NSTabView). Saved credentials are per-profile (PasswordStore), so this
-/// pane starts with a profile picker, then lists that profile's saved
-/// site/username pairs -- same profile-picker-then-table layout
-/// PrivacyPaneController already established for its own per-profile list.
+/// The "Passwords" pane of the Settings window (browser-ojh.1). Saved
+/// credentials are per-profile (PasswordStore), so the pane has a profile
+/// picker above the list of that profile's saved site/username pairs.
 ///
 /// Never shows a password in the table itself -- only site + username.
 /// Revealing the actual password requires "Reveal" plus a fresh Touch ID
 /// (or passcode-fallback) check via LocalAuthentication first; there is no
 /// way to see a saved password from this pane without that check succeeding.
 final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
 
     private let profilePopup = NSPopUpButton()
     private let credentialsTableView = NSTableView()
     private let autofillCheckbox = NSButton(
         checkboxWithTitle: "Fill saved passwords automatically", target: nil, action: nil
     )
+    private lazy var listButtons = SettingsTablePane.removeOnlyButtons(target: self, action: #selector(listButtonClicked))
+    private lazy var revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedPassword))
+    private let form = SettingsForm()
 
     private var selectedProfile: Profile?
     private var credentials: [SavedCredential] = []
     private var profileChangeObserver: NSObjectProtocol?
     private var passwordStoreObserver: NSObjectProtocol?
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        SettingsTablePane.preferredHeight(form: form, topMargin: SettingsForm.margin)
+    }
 
     override init() {
         super.init()
@@ -61,99 +65,49 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let profileRowHeight: CGFloat = 28
-        let buttonRowHeight: CGFloat = 28
+        autofillCheckbox.target = self
+        autofillCheckbox.action = #selector(autofillPreferenceChanged)
+        autofillCheckbox.state = PasswordAutofillPreference.isAutomaticFillEnabled ? .on : .off
+        form.addRow(nil, autofillCheckbox)
 
-        let headerLabel = NSTextField(labelWithString: "Passwords")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(
-            x: margin,
-            y: view.bounds.height - margin - headerHeight,
-            width: view.bounds.width - margin * 2,
-            height: headerHeight
-        )
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
+        form.beginSection()
+        profilePopup.target = self
+        profilePopup.action = #selector(profileSelectionChanged)
+        form.addRow("Profile:", profilePopup)
 
-        // Bottom-up from here, mirroring the other panes' layout style.
-        let revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedPassword))
-        revealButton.frame = NSRect(x: margin, y: margin, width: 90, height: buttonRowHeight)
-        revealButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(revealButton)
+        let siteColumn = NSTableColumn(identifier: .init("site"))
+        siteColumn.title = "Site"
+        siteColumn.width = 340
 
-        let deleteButton = NSButton(title: "Delete", target: self, action: #selector(deleteSelectedCredential))
-        deleteButton.frame = NSRect(x: margin + 94, y: margin, width: 70, height: buttonRowHeight)
-        deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(deleteButton)
+        let usernameColumn = NSTableColumn(identifier: .init("username"))
+        usernameColumn.title = "Username"
+        usernameColumn.width = 220
+
+        credentialsTableView.addTableColumn(siteColumn)
+        credentialsTableView.addTableColumn(usernameColumn)
+        credentialsTableView.dataSource = self
+        credentialsTableView.delegate = self
 
         let importButton = NSButton(
             title: "Import from Another Browser…",
             target: ChromiumImportWindowController.shared,
             action: #selector(ChromiumImportWindowController.show(_:))
         )
-        importButton.sizeToFit()
-        importButton.frame = NSRect(
-            x: view.bounds.width - margin - importButton.frame.width,
-            y: margin,
-            width: importButton.frame.width,
-            height: buttonRowHeight
+        SettingsTablePane.install(
+            in: view,
+            topMargin: SettingsForm.margin,
+            form: form,
+            table: credentialsTableView,
+            listButtons: listButtons,
+            trailingButtons: [revealButton, importButton]
         )
-        importButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        view.addSubview(importButton)
-
-        let autofillRowY = margin + buttonRowHeight + rowGap
-        autofillCheckbox.frame = NSRect(x: margin, y: autofillRowY, width: view.bounds.width - margin * 2, height: 20)
-        autofillCheckbox.autoresizingMask = [.width, .maxYMargin]
-        autofillCheckbox.target = self
-        autofillCheckbox.action = #selector(autofillPreferenceChanged)
-        autofillCheckbox.state = PasswordAutofillPreference.isAutomaticFillEnabled ? .on : .off
-        view.addSubview(autofillCheckbox)
-
-        let profileRowY = autofillRowY + 20 + rowGap
-        let profileLabel = NSTextField(labelWithString: "Profile:")
-        profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(profileLabel)
-
-        profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: profileRowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .maxYMargin]
-        profilePopup.target = self
-        profilePopup.action = #selector(profileSelectionChanged)
-        view.addSubview(profilePopup)
-
-        // The credentials table fills the remaining space between the
-        // header and the profile row.
-        let scrollTop = view.bounds.height - margin - headerHeight - rowGap
-        let scrollBottom = profileRowY + profileRowHeight + rowGap
-        let scrollView = NSScrollView(frame: NSRect(
-            x: margin, y: scrollBottom, width: view.bounds.width - margin * 2, height: max(0, scrollTop - scrollBottom)
-        ))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
-
-        let siteColumn = NSTableColumn(identifier: .init("site"))
-        siteColumn.title = "Site"
-        siteColumn.width = 280
-
-        let usernameColumn = NSTableColumn(identifier: .init("username"))
-        usernameColumn.title = "Username"
-        usernameColumn.width = 180
-
-        credentialsTableView.addTableColumn(siteColumn)
-        credentialsTableView.addTableColumn(usernameColumn)
-        credentialsTableView.dataSource = self
-        credentialsTableView.delegate = self
-        ListAppearance.apply(to: credentialsTableView, in: scrollView)
-        scrollView.documentView = credentialsTableView
-        view.addSubview(scrollView)
+        updateSelectionDependentControls()
     }
 
     // MARK: - Data
 
     private func loadCredentialsForSelectedProfile() {
+        defer { updateSelectionDependentControls() }
         guard let profile = selectedProfile else {
             credentials = []
             credentialsTableView.reloadData()
@@ -167,7 +121,17 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         credentialsTableView.reloadData()
     }
 
+    private func updateSelectionDependentControls() {
+        let hasSelection = credentials.indices.contains(credentialsTableView.selectedRow)
+        listButtons.setEnabled(hasSelection, forSegment: 0)
+        revealButton.isEnabled = hasSelection
+    }
+
     // MARK: - Actions
+
+    @objc private func listButtonClicked() {
+        deleteSelectedCredential()
+    }
 
     @objc private func autofillPreferenceChanged() {
         PasswordAutofillPreference.isAutomaticFillEnabled = autofillCheckbox.state == .on
@@ -221,6 +185,10 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         credentials.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateSelectionDependentControls()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
