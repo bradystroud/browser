@@ -11,7 +11,7 @@ enum RoutingRuleEditor {
     @discardableResult
     static func run(existingRule: RoutingRule?) -> RoutingRule? {
         let alert = NSAlert()
-        alert.messageText = existingRule == nil ? "New Routing Rule" : "Edit Routing Rule"
+        alert.messageText = existingRule == nil ? "New Link Rule" : "Edit Link Rule"
         alert.informativeText = "Every field you fill in must match for this rule to apply (AND). Leave a field blank to skip it."
         let saveButton = alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")

@@ -1,21 +1,20 @@
 import AppKit
 
-/// The "Profiles" pane of the Settings window (see SettingsWindowController,
-/// which hosts this alongside RoutingRulesPaneController in an NSTabView).
-/// Lists every profile (color swatch + name), with New/Edit/Delete buttons.
-/// "Edit…" reuses NewProfilePrompt's create dialog in edit mode (rename +
-/// recolor via the same palette picker). The table supports normal macOS
-/// multiple selection (Shift-click for a range, Command-click to toggle).
-/// "Delete" confirms the whole selection first (warning that the profiles'
-/// browsing data is removed), refuses to delete every remaining profile,
-/// closes any of those profiles' open windows, then bulk-deletes both their
-/// persisted entries and on-disk cache directories.
+/// The "Profiles" pane of the Settings window (see SettingsWindowController).
+/// Lists every profile (color swatch + name), with add/remove under the list
+/// and Edit… beside them. "Edit…" reuses NewProfilePrompt's create dialog in
+/// edit mode (rename + recolor via the same palette picker). The table
+/// supports normal macOS multiple selection (Shift-click for a range,
+/// Command-click to toggle). Removing confirms the whole selection first
+/// (warning that the profiles' browsing data is removed), refuses to delete
+/// every remaining profile, closes any of those profiles' open windows, then
+/// bulk-deletes both their persisted entries and on-disk cache directories.
 final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 400))
 
     private let tableView = NSTableView()
+    private let listButtons = SettingsListButtons(target: nil, action: nil)
     private let editButton = NSButton(title: "Edit…", target: nil, action: nil)
-    private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
     private var selectedProfileIDs: Set<String> = []
     private var profileChangeObserver: NSObjectProtocol?
 
@@ -41,48 +40,10 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
 
     // MARK: - View setup
 
+    /// The list fills the pane, with its add/remove control flush under it
+    /// and Edit… at its right.
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let buttonRowHeight: CGFloat = 28
-
-        let headerLabel = NSTextField(labelWithString: "Profiles")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(
-            x: margin,
-            y: view.bounds.height - margin - headerHeight,
-            width: view.bounds.width - margin * 2,
-            height: headerHeight
-        )
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        let addButton = NSButton(title: "New Profile…", target: self, action: #selector(addProfile))
-        addButton.frame = NSRect(x: margin, y: margin, width: 116, height: buttonRowHeight)
-        addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(addButton)
-
-        editButton.target = self
-        editButton.action = #selector(editSelectedProfile)
-        editButton.frame = NSRect(x: margin + 120, y: margin, width: 70, height: buttonRowHeight)
-        editButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(editButton)
-
-        deleteButton.target = self
-        deleteButton.action = #selector(deleteSelectedProfiles)
-        deleteButton.frame = NSRect(x: margin + 194, y: margin, width: 150, height: buttonRowHeight)
-        deleteButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(deleteButton)
-
-        let scrollViewY = margin + buttonRowHeight + rowGap
-        let scrollView = NSScrollView(frame: NSRect(
-            x: margin,
-            y: scrollViewY,
-            width: view.bounds.width - margin * 2,
-            height: view.bounds.height - margin - headerHeight - scrollViewY
-        ))
-        scrollView.autoresizingMask = [.width, .height]
+        let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
 
         let colorColumn = NSTableColumn(identifier: .init("color"))
@@ -92,7 +53,7 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         colorColumn.maxWidth = 28
         let nameColumn = NSTableColumn(identifier: .init("name"))
         nameColumn.title = "Name"
-        nameColumn.width = 460
+        nameColumn.width = 560
 
         tableView.addTableColumn(colorColumn)
         tableView.addTableColumn(nameColumn)
@@ -103,7 +64,47 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
         tableView.target = self
         ListAppearance.apply(to: tableView, in: scrollView)
         scrollView.documentView = tableView
-        view.addSubview(scrollView)
+
+        listButtons.target = self
+        listButtons.action = #selector(listButtonClicked)
+        listButtons.setToolTip("New Profile…", forSegment: SettingsListButtons.addSegment)
+
+        editButton.bezelStyle = .rounded
+        editButton.controlSize = .small
+        editButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        editButton.target = self
+        editButton.action = #selector(editSelectedProfile)
+
+        for subview in [scrollView, listButtons, editButton] as [NSView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
+        }
+        let margin = SettingsForm.margin
+        let fillBottom = listButtons.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -margin)
+        fillBottom.priority = .init(999)
+        NSLayoutConstraint.activate([
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: margin),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -margin),
+            scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            listButtons.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            listButtons.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            editButton.centerYAnchor.constraint(equalTo: listButtons.centerYAnchor),
+            editButton.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            fillBottom,
+        ])
+
+        tableView.nextKeyView = listButtons
+        listButtons.nextKeyView = editButton
+        editButton.nextKeyView = tableView
+    }
+
+    @objc private func listButtonClicked() {
+        switch listButtons.selectedSegment {
+        case SettingsListButtons.addSegment: addProfile()
+        case SettingsListButtons.removeSegment: deleteSelectedProfiles()
+        default: break
+        }
     }
 
     // MARK: - Actions
@@ -180,8 +181,11 @@ final class ProfilesPaneController: NSObject, NSTableViewDataSource, NSTableView
     private func updateActionButtons() {
         let selectedCount = tableView.selectedRowIndexes.count
         editButton.isEnabled = selectedCount == 1
-        deleteButton.isEnabled = selectedCount > 0
-        deleteButton.title = selectedCount > 1 ? "Delete \(selectedCount) Profiles" : "Delete"
+        listButtons.canRemove = selectedCount > 0
+        listButtons.setToolTip(
+            selectedCount > 1 ? "Delete \(selectedCount) Profiles" : "Delete Profile",
+            forSegment: SettingsListButtons.removeSegment
+        )
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

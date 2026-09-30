@@ -43,7 +43,7 @@ export function OpenURLActions({
   return (
     <ActionPanel>
       <Action
-        title="Open (Routing Rules)"
+        title="Open (Link Rules)"
         icon={Icon.Globe}
         onAction={() => open(undefined, false)}
       />

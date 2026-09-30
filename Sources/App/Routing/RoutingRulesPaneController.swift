@@ -1,26 +1,42 @@
 import AppKit
 
-/// The "Routing Rules" pane of the Settings window (see
-/// SettingsWindowController, which hosts this alongside ProfilesPaneController
-/// in an NSTabView). An ordered table of rules (first match wins, see
-/// RuleMatcher), add/edit/delete, up/down reordering, a default-profile
-/// picker for links no rule matches, a "Test" affordance (browser-ymx: paste
-/// a URL, optionally pick a source app, see which rule -- if any -- would
-/// match and which profile it resolves to), and a "Make Default Browser…"
-/// button. Every mutation saves immediately via RoutingRulesStore -- there
-/// is no separate "Apply" step; only "Make Default Browser…" has an
-/// explicit action, since that one triggers a system confirmation dialog
-/// rather than just writing local state.
+/// The "Links" pane of the Settings window (see SettingsWindowController).
+/// An ordered table of link rules (first match wins, see RuleMatcher) with
+/// add/remove/reorder under it and Edit… beside them, then the profile for
+/// links no rule matches, the little-window preference, a "Test" affordance
+/// (browser-ymx: paste a URL, optionally pick a source app, see which rule
+/// -- if any -- would match and which profile it resolves to), and a "Make
+/// Default Browser…" button. Every mutation saves immediately via
+/// RoutingRulesStore -- there is no separate "Apply" step; only "Make
+/// Default Browser…" has an explicit action, since that one triggers a
+/// system confirmation dialog rather than just writing local state.
 final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: 400))
+    /// The rules table's height when the window is fitted to this pane; it
+    /// grows with the window and never shrinks below `minimumTableHeight`.
+    private static let preferredTableHeight: CGFloat = 200
+    private static let minimumTableHeight: CGFloat = 120
+
+    private static let upSegment = 2
+    private static let downSegment = 3
+
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 600))
 
     private let tableView = NSTableView()
+    private let tableScrollView = NSScrollView()
+    private let listButtons = SettingsListButtons(
+        target: nil,
+        action: nil,
+        extraSymbols: [("chevron.up", "Move Up"), ("chevron.down", "Move Down")]
+    )
+    private let editButton = NSButton(title: "Edit…", target: nil, action: nil)
+    private let form = SettingsForm()
     private let defaultProfilePopup = NSPopUpButton()
     private let littleWindowCheckbox = NSButton(
         checkboxWithTitle: "Open links from other apps in a little window",
         target: nil,
         action: nil
     )
+    private let makeDefaultBrowserButton = NSButton(title: "Make Default Browser…", target: nil, action: nil)
     private var profileChangeObserver: NSObjectProtocol?
 
     /// "Test" affordance (browser-ymx): Brady pastes a URL (and optionally
@@ -32,7 +48,8 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
     /// this pane and the CLI can never disagree about which rule matched.
     private let testURLField = NSTextField(string: "")
     private let testSourceAppPopup = NSPopUpButton()
-    private let testResultLabel = NSTextField(wrappingLabelWithString: "")
+    private let testButton = NSButton(title: "Test", target: nil, action: nil)
+    private let testResultLabel = SettingsForm.footnote()
 
     override init() {
         super.init()
@@ -52,152 +69,27 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         tableView.reloadData()
         reloadDefaultProfilePopup()
         littleWindowCheckbox.state = LinkHandlingPreferences.littleWindowForExternalLinks ? .on : .off
+        updateListButtons()
+    }
+
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat {
+        let margin = SettingsForm.margin
+        return (margin + Self.preferredTableHeight + listButtons.fittingSize.height
+            + SettingsForm.sectionSpacing + form.grid.fittingSize.height + margin).rounded(.up)
     }
 
     // MARK: - View setup
 
-    /// Bottom-up layout (AppKit's y-axis): "Make Default Browser…" at the
-    /// very bottom, then the default-profile picker, then the rule
-    /// add/edit/reorder controls, then the rules table filling the rest,
-    /// with a "Routing Rules" section header pinned to the top.
+    /// Top-down: the rules table (stretching with the window) with its
+    /// add/remove/reorder control flush under it and Edit… at its right,
+    /// then a form of the pane's other settings.
     private func setUpViews() {
-        let margin: CGFloat = 12
-        let rowGap: CGFloat = 10
-        let headerHeight: CGFloat = 22
-        let makeDefaultRowHeight: CGFloat = 28
-        let defaultRowHeight: CGFloat = 32
-        let buttonRowHeight: CGFloat = 28
-
-        let makeDefaultBrowserButton = NSButton(
-            title: "Make Default Browser…",
-            target: self,
-            action: #selector(makeDefaultBrowserClicked)
-        )
-        makeDefaultBrowserButton.bezelStyle = .rounded
-        makeDefaultBrowserButton.frame = NSRect(x: margin, y: margin, width: 190, height: makeDefaultRowHeight)
-        makeDefaultBrowserButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(makeDefaultBrowserButton)
-
-        let defaultRowY = margin + makeDefaultRowHeight + rowGap
-        let defaultLabel = NSTextField(labelWithString: "Unmatched links, no window open:")
-        defaultLabel.frame = NSRect(x: margin, y: defaultRowY + 6, width: 230, height: 20)
-        defaultLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(defaultLabel)
-
-        defaultProfilePopup.frame = NSRect(x: margin + 234, y: defaultRowY, width: 200, height: 28)
-        defaultProfilePopup.autoresizingMask = [.minXMargin, .maxYMargin]
-        defaultProfilePopup.target = self
-        defaultProfilePopup.action = #selector(defaultProfileChanged)
-        view.addSubview(defaultProfilePopup)
-
-        // A rule's own "Open in" overrides this in either direction.
-        let littleWindowRowY = defaultRowY + defaultRowHeight + rowGap
-        let littleWindowRowHeight: CGFloat = 20
-        littleWindowCheckbox.target = self
-        littleWindowCheckbox.action = #selector(littleWindowToggled)
-        littleWindowCheckbox.frame = NSRect(x: margin, y: littleWindowRowY, width: view.bounds.width - margin * 2, height: littleWindowRowHeight)
-        littleWindowCheckbox.autoresizingMask = [.width, .maxYMargin]
-        view.addSubview(littleWindowCheckbox)
-
-        let buttonRowY = littleWindowRowY + littleWindowRowHeight + rowGap
-        let addButton = NSButton(title: "＋", target: self, action: #selector(addRule))
-        addButton.frame = NSRect(x: margin, y: buttonRowY, width: 32, height: buttonRowHeight)
-        addButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(addButton)
-
-        let removeButton = NSButton(title: "－", target: self, action: #selector(removeSelectedRule))
-        removeButton.frame = NSRect(x: margin + 34, y: buttonRowY, width: 32, height: buttonRowHeight)
-        removeButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(removeButton)
-
-        let editButton = NSButton(title: "Edit…", target: self, action: #selector(editSelectedRule))
-        editButton.frame = NSRect(x: margin + 74, y: buttonRowY, width: 60, height: buttonRowHeight)
-        editButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(editButton)
-
-        let upButton = NSButton(title: "▲", target: self, action: #selector(moveSelectedRuleUp))
-        upButton.frame = NSRect(x: view.bounds.width - margin - 68, y: buttonRowY, width: 32, height: buttonRowHeight)
-        upButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        view.addSubview(upButton)
-
-        let downButton = NSButton(title: "▼", target: self, action: #selector(moveSelectedRuleDown))
-        downButton.frame = NSRect(x: view.bounds.width - margin - 34, y: buttonRowY, width: 32, height: buttonRowHeight)
-        downButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        view.addSubview(downButton)
-
-        let headerLabel = NSTextField(labelWithString: "Routing Rules")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(
-            x: margin,
-            y: view.bounds.height - margin - headerHeight,
-            width: view.bounds.width - margin * 2,
-            height: headerHeight
-        )
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        // Test affordance -- a fixed-height strip between the add/edit/
-        // reorder button row and the rules table, so it's visible without
-        // scrolling regardless of how many rules exist.
-        let testRowHeight: CGFloat = 24
-        let testResultHeight: CGFloat = 32
-        let testSectionY = buttonRowY + buttonRowHeight + rowGap
-        let testButtonWidth: CGFloat = 60
-        let testSourceWidth: CGFloat = 150
-
-        testURLField.placeholderString = "Paste a URL to test…"
-        testURLField.frame = NSRect(
-            x: margin,
-            y: testSectionY + testResultHeight + 4,
-            width: view.bounds.width - margin * 2 - testSourceWidth - testButtonWidth - 8,
-            height: testRowHeight
-        )
-        testURLField.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(testURLField)
-
-        testSourceAppPopup.frame = NSRect(
-            x: view.bounds.width - margin - testSourceWidth - testButtonWidth - 4,
-            y: testSectionY + testResultHeight + 4,
-            width: testSourceWidth,
-            height: testRowHeight
-        )
-        testSourceAppPopup.autoresizingMask = [.minXMargin, .minYMargin]
-        view.addSubview(testSourceAppPopup)
-
-        let testButton = NSButton(title: "Test", target: self, action: #selector(runTest))
-        testButton.frame = NSRect(
-            x: view.bounds.width - margin - testButtonWidth,
-            y: testSectionY + testResultHeight + 4,
-            width: testButtonWidth,
-            height: testRowHeight
-        )
-        testButton.autoresizingMask = [.minXMargin, .minYMargin]
-        view.addSubview(testButton)
-
-        testResultLabel.font = .systemFont(ofSize: 11)
-        testResultLabel.textColor = .secondaryLabelColor
-        testResultLabel.frame = NSRect(x: margin, y: testSectionY, width: view.bounds.width - margin * 2, height: testResultHeight)
-        testResultLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(testResultLabel)
-
-        reloadTestSourceAppPopup()
-
-        let scrollViewY = testSectionY + testResultHeight + testRowHeight + 4 + rowGap
-        let scrollView = NSScrollView(frame: NSRect(
-            x: margin,
-            y: scrollViewY,
-            width: view.bounds.width - margin * 2,
-            height: view.bounds.height - margin - headerHeight - scrollViewY
-        ))
-        scrollView.autoresizingMask = [.width, .height]
-        scrollView.hasVerticalScroller = true
-
         let matchColumn = NSTableColumn(identifier: .init("match"))
         matchColumn.title = "Match (first match wins)"
-        matchColumn.width = 340
+        matchColumn.width = 440
         let profileColumn = NSTableColumn(identifier: .init("profile"))
         profileColumn.title = "Profile"
-        profileColumn.width = 140
+        profileColumn.width = 160
 
         tableView.addTableColumn(matchColumn)
         tableView.addTableColumn(profileColumn)
@@ -205,9 +97,105 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         tableView.delegate = self
         tableView.doubleAction = #selector(editSelectedRule)
         tableView.target = self
-        ListAppearance.apply(to: tableView, in: scrollView)
-        scrollView.documentView = tableView
-        view.addSubview(scrollView)
+        tableScrollView.hasVerticalScroller = true
+        ListAppearance.apply(to: tableView, in: tableScrollView)
+        tableScrollView.documentView = tableView
+
+        listButtons.target = self
+        listButtons.action = #selector(listButtonClicked)
+
+        editButton.bezelStyle = .rounded
+        editButton.controlSize = .small
+        editButton.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        editButton.target = self
+        editButton.action = #selector(editSelectedRule)
+
+        defaultProfilePopup.target = self
+        defaultProfilePopup.action = #selector(defaultProfileChanged)
+        form.addRow("Unmatched links open in:", defaultProfilePopup)
+        form.addFootnote(SettingsForm.footnote(
+            "When no window is open. Otherwise they open in the frontmost window\u{2019}s profile."))
+
+        // A rule's own "Open in" overrides this in either direction.
+        littleWindowCheckbox.target = self
+        littleWindowCheckbox.action = #selector(littleWindowToggled)
+        form.addRow(nil, littleWindowCheckbox)
+
+        form.beginSection()
+        testURLField.placeholderString = "Paste a URL to test…"
+        testURLField.target = self
+        testURLField.action = #selector(runTest)
+        form.addFillingRow("Test a link:", testURLField)
+        testButton.bezelStyle = .rounded
+        testButton.target = self
+        testButton.action = #selector(runTest)
+        form.addRow(SettingsForm.label("From:"), [testSourceAppPopup, testButton])
+        form.addFootnote(testResultLabel)
+        reloadTestSourceAppPopup()
+
+        form.beginSection()
+        makeDefaultBrowserButton.bezelStyle = .rounded
+        makeDefaultBrowserButton.target = self
+        makeDefaultBrowserButton.action = #selector(makeDefaultBrowserClicked)
+        form.addRow("Default browser:", makeDefaultBrowserButton)
+
+        for subview in [tableScrollView, listButtons, editButton, form.grid] as [NSView] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(subview)
+        }
+        let margin = SettingsForm.margin
+        let fillBottom = form.grid.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -margin)
+        // Gives way rather than squeezing the table below its minimum while
+        // the pane is still at its initial, pre-fit size.
+        fillBottom.priority = .init(999)
+        NSLayoutConstraint.activate([
+            tableScrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: margin),
+            tableScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: margin),
+            tableScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -margin),
+            tableScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumTableHeight),
+            listButtons.topAnchor.constraint(equalTo: tableScrollView.bottomAnchor),
+            listButtons.leadingAnchor.constraint(equalTo: tableScrollView.leadingAnchor),
+            editButton.centerYAnchor.constraint(equalTo: listButtons.centerYAnchor),
+            editButton.trailingAnchor.constraint(equalTo: tableScrollView.trailingAnchor),
+            form.grid.topAnchor.constraint(equalTo: listButtons.bottomAnchor, constant: SettingsForm.sectionSpacing),
+            form.grid.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            fillBottom,
+        ])
+
+        // Reading order, looping back to the table.
+        tableView.nextKeyView = listButtons
+        listButtons.nextKeyView = editButton
+        editButton.nextKeyView = defaultProfilePopup
+        defaultProfilePopup.nextKeyView = littleWindowCheckbox
+        littleWindowCheckbox.nextKeyView = testURLField
+        testURLField.nextKeyView = testSourceAppPopup
+        testSourceAppPopup.nextKeyView = testButton
+        testButton.nextKeyView = makeDefaultBrowserButton
+        makeDefaultBrowserButton.nextKeyView = tableView
+    }
+
+    @objc private func listButtonClicked() {
+        switch listButtons.selectedSegment {
+        case SettingsListButtons.addSegment: addRule()
+        case SettingsListButtons.removeSegment: removeSelectedRule()
+        case Self.upSegment: moveSelectedRuleUp()
+        case Self.downSegment: moveSelectedRuleDown()
+        default: break
+        }
+    }
+
+    private func updateListButtons() {
+        let index = tableView.selectedRow
+        let count = RoutingRulesStore.shared.rules.count
+        let hasSelection = index >= 0 && index < count
+        listButtons.canRemove = hasSelection
+        listButtons.setEnabled(hasSelection && index > 0, forSegment: Self.upSegment)
+        listButtons.setEnabled(hasSelection && index < count - 1, forSegment: Self.downSegment)
+        editButton.isEnabled = hasSelection
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateListButtons()
     }
 
     /// Only "http" matters for default-browser purposes (see
@@ -326,6 +314,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         guard !rawURL.isEmpty else {
             testResultLabel.stringValue = ""
             tableView.deselectAll(nil)
+            invalidateContentHeight()
             return
         }
 
@@ -367,6 +356,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         }
 
         testResultLabel.stringValue = lines.joined(separator: "\n")
+        invalidateContentHeight()
     }
 
     // MARK: - NSTableViewDataSource / Delegate
