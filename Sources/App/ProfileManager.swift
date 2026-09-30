@@ -27,7 +27,9 @@ extension Notification.Name {
 final class ProfileManager {
     static let shared = ProfileManager()
 
-    static let defaultProfileName = "default"
+    /// The only profile a brand-new install starts with, and the fallback
+    /// for a link that matches no rule while no browser window is open.
+    static let bootstrapProfileName = "Personal"
 
     private let fileURL: URL
     private(set) var profiles: [Profile] = []
@@ -56,7 +58,7 @@ final class ProfileManager {
         fileURL = dir.appendingPathComponent("profiles.json")
         load()
         if profiles.isEmpty {
-            _ = createProfile(name: Self.defaultProfileName, colorHex: ProfileColorPalette.hexValues[7])
+            _ = createProfile(name: Self.bootstrapProfileName, colorHex: ProfileColorPalette.hexValues[7])
         }
         // Every profile is now known (existing or freshly bootstrapped) --
         // the one point in the app's lifecycle before anything (CEF's own
@@ -139,6 +141,22 @@ final class ProfileManager {
         // recolor/delete after launch still notifies exactly as before.
         guard !isBootstrapping else { return }
         NotificationCenter.default.post(name: .profileManagerDidChange, object: self)
+    }
+
+    /// Where anything with no profile of its own lands: a link that matches
+    /// no rule while no window is open, ⌘N with no window, a CLI command
+    /// with no `--profile`. It is the Routing pane's configured fallback,
+    /// which RoutingRulesStore keeps pointing at a profile that exists.
+    var fallbackProfile: Profile {
+        profile(id: RoutingRulesStore.shared.defaultProfileId) ?? profiles[0]
+    }
+
+    /// The configured fallback's replacement when it no longer exists (or
+    /// was never set): the bootstrap profile if there is one, else the first.
+    /// `profiles` is never empty -- init bootstraps one and deleteProfiles
+    /// refuses to remove the last.
+    var implicitFallbackProfile: Profile {
+        profile(named: Self.bootstrapProfileName) ?? profiles[0]
     }
 
     func profile(named name: String) -> Profile? {

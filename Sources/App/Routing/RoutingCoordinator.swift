@@ -73,21 +73,36 @@ final class RoutingCoordinator {
     }
 
     private func routeCleaned(url: String, sourceBundleId: String?) {
+        openURL(url, in: resolveProfile(url: url, sourceBundleId: sourceBundleId).profile)
+    }
+
+    enum Resolution {
+        case matchedRule(index: Int)
+        case activeWindow
+        case fallbackProfile
+    }
+
+    /// Where an incoming link belongs, in order:
+    /// 1. the profile of the first matching rule (if that profile still exists),
+    /// 2. the profile of the frontmost browser window, if one is open,
+    /// 3. the configured fallback profile.
+    /// The CLI's `open` without `--profile` resolves through this too, so a
+    /// CLI open and a clicked link can never land in different places.
+    func resolveProfile(url: String, sourceBundleId: String?) -> (profile: Profile, resolution: Resolution) {
         let store = RoutingRulesStore.shared
-        let context = RoutingContext(url: url, sourceBundleId: sourceBundleId)
-        let evaluation = RuleMatcher.evaluate(
-            context: context,
-            rules: store.rules,
-            defaultProfileId: store.defaultProfileId
-        )
-
         let profiles = ProfileManager.shared
-        let profile = evaluation
-            .existingProfileId(configuredDefaultId: store.defaultProfileId) { profiles.profile(id: $0) != nil }
-            .flatMap { profiles.profile(id: $0) }
-            ?? profiles.profileOrCreate(named: ProfileManager.defaultProfileName)
+        let context = RoutingContext(url: url, sourceBundleId: sourceBundleId)
+        let evaluation = RuleMatcher.evaluate(context: context, rules: store.rules, defaultProfileId: store.defaultProfileId)
 
-        openURL(url, in: profile)
+        if case .matched(let rule, let profileId) = evaluation,
+           let profile = profiles.profile(id: profileId),
+           let index = store.rules.firstIndex(where: { $0.id == rule.id }) {
+            return (profile, .matchedRule(index: index))
+        }
+        if let controller = WindowManager.shared.frontmostBrowserWindowController {
+            return (controller.profile, .activeWindow)
+        }
+        return (profiles.fallbackProfile, .fallbackProfile)
     }
 
     /// Opens `url` as a new tab in the frontmost existing window of

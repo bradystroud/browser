@@ -83,7 +83,16 @@ final class RouteTestEngineTests: XCTestCase {
         XCTAssertEqual(result.profileName, "work")
     }
 
-    func testDeletedRuleAndDefaultProfilesFallBackToProfileNamedDefault() throws {
+    func testDeletedRuleAndDefaultProfilesFallBackToPersonal() throws {
+        let withPersonal = profiles + [ProfileRecord(id: "personal-id", name: "Personal", colorHex: "#34C759")]
+        let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "deleted-id"))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "also-deleted-id")
+        let url = "https://example.com"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: withPersonal)
+        XCTAssertEqual(result.profileName, "Personal")
+    }
+
+    func testDeletedRuleAndDefaultProfilesWithNoPersonalFallBackToFirstProfile() throws {
         let rule = RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "deleted-id"))
         let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "also-deleted-id")
         let url = "https://example.com"

@@ -16,8 +16,9 @@ public struct RouteTestOutput: Codable, Equatable {
     public let effectiveURL: String
     public let fromApp: String?
     /// 1-based position in the rule list, matching how the Routing Rules
-    /// pane displays them to a human -- nil means no rule matched and the
-    /// default profile fallback was used.
+    /// pane displays them to a human -- nil means no rule matched. The app
+    /// then uses its frontmost window, which this offline tool cannot see,
+    /// so `profileId` is the fallback for when no window is open.
     public let matchedRuleIndex: Int?
     public let matchedRuleSummary: String?
     public let profileId: String
@@ -40,7 +41,7 @@ public enum RouteTestError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .noProfilesFound:
-            return "No profiles found -- launch the app at least once first (it creates the default profile on first launch)."
+            return "No profiles found -- launch the app at least once first (it creates a profile on first launch)."
         }
     }
 }
@@ -76,7 +77,7 @@ public enum RouteTestEngine {
         let resolvedProfile = evaluation
             .existingProfileId(configuredDefaultId: configuration.defaultProfileId) { id in profiles.contains { $0.id == id } }
             .flatMap { id in profiles.first { $0.id == id } }
-            ?? profiles.first { $0.name == "default" }
+            ?? RoutingConfigurationStore.implicitFallback(in: profiles)
         let profileId = resolvedProfile?.id ?? evaluation.profileId
         let profileName = resolvedProfile?.name ?? "(unknown profile id \(evaluation.profileId))"
 
@@ -120,19 +121,29 @@ public enum RouteTestEngine {
 
 public enum RoutingConfigurationStore {
     /// Reads `<directory>/routing.json` (`RoutingRulesStore`'s own file).
-    /// If it doesn't exist yet, falls back to "no rules, default profile =
-    /// whichever profile is named 'default'" -- the same fallback
-    /// `RoutingRulesStore.init` itself uses, just without that type's own
-    /// side effect of creating the profile if it's somehow also missing
-    /// (this is a read-only tool; it reports what it finds, it doesn't
-    /// bootstrap state).
+    /// If it doesn't exist yet, falls back to "no rules, fallback profile =
+    /// `implicitFallback(in:)`" -- the same fallback `RoutingRulesStore`
+    /// itself uses. This is a read-only tool: it reports what it finds and
+    /// never bootstraps state.
     public static func load(directory: String, profiles: [ProfileRecord]) -> RoutingConfiguration {
         let path = (directory as NSString).appendingPathComponent("routing.json")
         if let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
            let decoded = try? JSONDecoder().decode(RoutingConfiguration.self, from: data) {
             return decoded
         }
-        let fallbackDefaultId = profiles.first(where: { $0.name == "default" })?.id ?? profiles.first?.id ?? ""
-        return RoutingConfiguration(rules: [], defaultProfileId: fallbackDefaultId)
+        return RoutingConfiguration(rules: [], defaultProfileId: implicitFallback(in: profiles)?.id ?? "")
+    }
+
+    /// Mirrors the app's `ProfileManager.implicitFallbackProfile`: the
+    /// profile a fresh install starts with, else the first one.
+    public static func implicitFallback(in profiles: [ProfileRecord]) -> ProfileRecord? {
+        profiles.first { $0.name == "Personal" } ?? profiles.first
+    }
+
+    /// The profile an unmatched link opens in when no window is open: the
+    /// configured fallback if it still exists, else `implicitFallback(in:)`.
+    public static func fallbackProfile(directory: String, profiles: [ProfileRecord]) -> ProfileRecord? {
+        let configuredId = load(directory: directory, profiles: profiles).defaultProfileId
+        return profiles.first { $0.id == configuredId } ?? implicitFallback(in: profiles)
     }
 }

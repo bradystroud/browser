@@ -155,7 +155,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // when restore already provided one.
         if coldLaunchWasRouted || !restoredAnyWindow || CommandLineArgs.hasExplicitProfileOrURLOverride() {
             if !coldLaunchWasRouted {
-                let profile = ProfileManager.shared.profileOrCreate(named: CommandLineArgs.profileName())
+                let profile = CommandLineArgs.profileName().map { ProfileManager.shared.profileOrCreate(named: $0) }
+                    ?? ProfileManager.shared.fallbackProfile
                 WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
             }
         }
@@ -190,11 +191,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // for a CEF-backed app.
 
     /// ⌘N -- new window in the same profile as the key window (falls back to
-    /// the default profile if no window is open), per
+    /// ProfileManager.fallbackProfile if no window is open), per
     /// docs/plans/2026-07-27-browser-plan.md's per-window profile identity.
     @objc func newWindow(_ sender: Any?) {
         let profile = WindowManager.shared.keyBrowserWindowController?.profile
-            ?? ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
+            ?? ProfileManager.shared.fallbackProfile
         WindowManager.shared.openNewWindow(profile: profile)
     }
 
@@ -290,8 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if let controller = WindowManager.shared.keyBrowserWindowController {
             controller.addTab(url: url, makeActive: true)
         } else {
-            let profile = ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
-            WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
+            WindowManager.shared.openNewWindow(profile: ProfileManager.shared.fallbackProfile, initialURL: url)
         }
     }
 

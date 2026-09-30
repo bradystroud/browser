@@ -1,15 +1,16 @@
 import Foundation
 
 enum CommandLineArgs {
-    /// `--profile <name>` launch argument; defaults to "default". This is the
-    /// M0 profile-isolation proof: launch two instances with different
+    /// `--profile <name>` launch argument; nil when absent, and the caller
+    /// then uses ProfileManager.fallbackProfile. This is the M0
+    /// profile-isolation proof: launch two instances with different
     /// `--profile` values and their cookies must not be shared.
-    static func profileName() -> String {
+    static func profileName() -> String? {
         let args = CommandLine.arguments
         if let index = args.firstIndex(of: "--profile"), index + 1 < args.count {
             return args[index + 1]
         }
-        return "default"
+        return nil
     }
 
     /// `--url <url>` launch argument override, for testing without UI

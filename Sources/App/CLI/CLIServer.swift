@@ -198,15 +198,15 @@ final class CLIServer {
             return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (explicit --profile, \(placement)).")
         }
 
-        let store = RoutingRulesStore.shared
-        let context = RoutingContext(url: url, sourceBundleId: nil)
-        let matchedIndex = store.rules.firstIndex { RuleMatcher.matches($0.match, context: context) }
-        let profileId = RuleMatcher.resolveProfileId(for: context, rules: store.rules, defaultProfileId: store.defaultProfileId)
-        let profile = ProfileManager.shared.profile(id: profileId)
-            ?? ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
+        let (profile, resolution) = RoutingCoordinator.shared.resolveProfile(url: url, sourceBundleId: nil)
         let placement = open(url, in: profile, forceNewWindow: forceNewWindow)
 
-        let matchNote = matchedIndex.map { "matched rule #\($0 + 1)" } ?? "no rule matched, used default profile"
+        let matchNote: String
+        switch resolution {
+        case .matchedRule(let index): matchNote = "matched rule #\(index + 1)"
+        case .activeWindow: matchNote = "no rule matched, used the frontmost window's profile"
+        case .fallbackProfile: matchNote = "no rule matched and no window open, used the fallback profile"
+        }
         return CLIResponse(ok: true, message: "Opened \(url) in profile '\(profile.name)' (\(matchNote), \(placement)).")
     }
 
@@ -242,8 +242,8 @@ final class CLIServer {
     /// land on the start page, not navigate to a real external site.
     private static func handleWindowNew(_ request: CLIRequest) -> CLIResponse {
         let url = request.args["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
-        let profileName = request.args["profile"] ?? ProfileManager.defaultProfileName
-        let profile = ProfileManager.shared.profileOrCreate(named: profileName)
+        let profile = request.args["profile"].map { ProfileManager.shared.profileOrCreate(named: $0) }
+            ?? ProfileManager.shared.fallbackProfile
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
         let target = url == "about:blank" ? "the start page" : url
         return CLIResponse(ok: true, message: "Opened a new window in profile '\(profile.name)' showing \(target).")
@@ -266,8 +266,8 @@ final class CLIServer {
     /// right even when the currently-key window belongs to another profile
     /// -- the usual case when this is invoked from Raycast.
     private static func handleFocus(_ request: CLIRequest) -> CLIResponse {
-        let profileName = request.args["profile"] ?? ProfileManager.defaultProfileName
-        let profile = ProfileManager.shared.profileOrCreate(named: profileName)
+        let profile = request.args["profile"].map { ProfileManager.shared.profileOrCreate(named: $0) }
+            ?? ProfileManager.shared.fallbackProfile
 
         guard let controller = WindowManager.shared.frontmostWindowController(forProfileId: profile.id) else {
             WindowManager.shared.openNewWindow(profile: profile, initialURL: "about:blank")

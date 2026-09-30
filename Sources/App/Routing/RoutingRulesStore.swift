@@ -30,17 +30,24 @@ final class RoutingRulesStore {
         if let decoded = JSONFile<RoutingConfiguration?>(url: fileURL).load(default: nil) {
             configuration = decoded
         } else {
-            // defaultProfileId is a Profile.id (UUID), not a name -- resolve
-            // (and, on a brand-new install, implicitly create) the "default"
-            // profile now rather than persisting its name string, which
-            // would never match a profile(id:) lookup.
-            let defaultProfile = ProfileManager.shared.profileOrCreate(named: ProfileManager.defaultProfileName)
-            configuration = RoutingConfiguration(rules: [], defaultProfileId: defaultProfile.id)
+            // defaultProfileId is a Profile.id (UUID), not a name, so it
+            // would never match a profile(id:) lookup if it held a name.
+            configuration = RoutingConfiguration(rules: [], defaultProfileId: ProfileManager.shared.implicitFallbackProfile.id)
         }
     }
 
     var rules: [RoutingRule] { configuration.rules }
-    var defaultProfileId: String { configuration.defaultProfileId }
+    /// The fallback profile for an unmatched link when no window is open.
+    /// Self-healing: once the configured profile is deleted, this resolves
+    /// to ProfileManager.implicitFallbackProfile instead of a dead id, so the
+    /// Routing pane, the router and the CLI all agree on the replacement.
+    var defaultProfileId: String {
+        let profiles = ProfileManager.shared
+        if profiles.profile(id: configuration.defaultProfileId) != nil {
+            return configuration.defaultProfileId
+        }
+        return profiles.implicitFallbackProfile.id
+    }
 
     func setDefaultProfileId(_ profileId: String) {
         configuration.defaultProfileId = profileId

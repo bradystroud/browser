@@ -30,7 +30,7 @@ public enum RouteTestCommand {
         do {
             let result = try RouteTestEngine.run(url: url, effectiveURL: effectiveURL, fromApp: fromApp, configuration: configuration, profiles: profiles)
             return Output.emit(result, json: args.jsonOutput) { output in
-                let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- default profile"
+                let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- the frontmost window, or this profile if no window is open"
                 let strippedNote = output.effectiveURL == output.url ? "" : " [tracking params stripped -> \(output.effectiveURL)]"
                 return "\(output.url) -> profile '\(output.profileName)' [\(ruleNote)]\(strippedNote)"
             }

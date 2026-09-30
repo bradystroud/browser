@@ -73,7 +73,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
         view.addSubview(makeDefaultBrowserButton)
 
         let defaultRowY = margin + makeDefaultRowHeight + rowGap
-        let defaultLabel = NSTextField(labelWithString: "Default profile for unmatched links:")
+        let defaultLabel = NSTextField(labelWithString: "Unmatched links, no window open:")
         defaultLabel.frame = NSRect(x: margin, y: defaultRowY + 6, width: 230, height: 20)
         defaultLabel.autoresizingMask = [.maxXMargin, .maxYMargin]
         view.addSubview(defaultLabel)
@@ -335,7 +335,7 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
             }
         case .noMatch(let defaultProfileId):
             let profileName = ProfileManager.shared.profile(id: defaultProfileId)?.name ?? "(unknown profile)"
-            lines.append("No rule matched → default profile \u{201C}\(profileName)\u{201D}")
+            lines.append("No rule matched → the frontmost window, or \u{201C}\(profileName)\u{201D} if no window is open")
             tableView.deselectAll(nil)
         }
 

@@ -135,6 +135,22 @@ final class WindowManager {
         return nil
     }
 
+    /// The frontmost open non-private window of any profile -- where a link
+    /// that matches no routing rule lands. Z-order, not key status, because
+    /// the link usually arrives from another app, so no browser window is
+    /// key. Private windows are skipped: a link from another app must never
+    /// land silently in one.
+    var frontmostBrowserWindowController: BrowserWindowController? {
+        for window in NSApp.orderedWindows {
+            if let controller = window.windowController as? BrowserWindowController,
+               !controller.isPrivate,
+               windowControllers.contains(where: { $0 === controller }) {
+                return controller
+            }
+        }
+        return nil
+    }
+
     /// Closes every open window for `profileId` -- used before deleting a
     /// profile, so CEF isn't left holding a browser against a cache
     /// directory that's about to be removed. Iterates a snapshot of

@@ -2,8 +2,8 @@ import Foundation
 import BrowserCore
 
 /// Shared by `history search` and `bookmarks list`: resolves a `--profile
-/// <name>` (defaulting to "default", matching `ProfileManager.
-/// defaultProfileName`) against the profiles this `--profiles-root` actually
+/// <name>` (defaulting to the app's fallback profile, see
+/// `RoutingConfigurationStore.fallbackProfile`) against the profiles this `--profiles-root` actually
 /// knows about, and opens that profile's real `browser.db` with the same
 /// `Database`/`HistoryStore`/`BookmarkStore` classes the app uses, so there
 /// is one copy of the schema and query logic.
@@ -18,7 +18,9 @@ import BrowserCore
 public enum ProfileDatabaseResolver {
     public static func resolve(profileNameFlag: String?, directory: String, profilesRootPath: String) throws -> (profile: ProfileRecord, database: Database) {
         let profiles = ProfileRecordStore.load(directory: directory)
-        let requestedName = profileNameFlag ?? "default"
+        let requestedName = profileNameFlag
+            ?? RoutingConfigurationStore.fallbackProfile(directory: directory, profiles: profiles)?.name
+            ?? ""
         guard let profile = profiles.first(where: { $0.name == requestedName }) else {
             let known = profiles.map(\.name).joined(separator: ", ")
             throw SimpleError("no profile named '\(requestedName)' (known profiles: \(known.isEmpty ? "none -- launch the app at least once first" : known))")

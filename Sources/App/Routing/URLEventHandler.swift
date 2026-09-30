@@ -33,7 +33,7 @@ final class URLEventHandler: NSObject {
         // (the `open` CLI, a shell script, another router) is the actual
         // Apple Event sender rather than the original app -- both cases are
         // indistinguishable from "no source" here and treated the same by
-        // RoutingCoordinator (falls back to the default profile).
+        // RoutingCoordinator (source-app rules cannot match).
         var sourceBundleId: String?
         if let senderPIDDescriptor = event.attributeDescriptor(forKeyword: keySenderPIDAttr) {
             let pid = senderPIDDescriptor.int32Value

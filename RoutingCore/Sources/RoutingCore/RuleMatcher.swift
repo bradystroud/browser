@@ -37,11 +37,9 @@ public enum RuleEvaluation: Equatable {
         }
     }
 
-    /// The profile a link actually opens in: the resolved profile if it
-    /// still exists, else the configured default, else nil (the caller then
-    /// falls back to the profile named "default"). A rule can outlive the
-    /// profile it points at, and the app and `browser route-test` must pick
-    /// the same replacement.
+    /// The resolved profile if it still exists, else the configured default,
+    /// else nil. A rule can outlive the profile it points at, and the app and
+    /// `browser route-test` must pick the same replacement.
     public func existingProfileId(configuredDefaultId: String, exists: (String) -> Bool) -> String? {
         [profileId, configuredDefaultId].first(where: exists)
     }
