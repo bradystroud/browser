@@ -10,6 +10,9 @@ struct StartPageSettings: Codable, Equatable {
     var backgroundColorHex: String
     var showFavorites: Bool
     var showFrequentlyVisited: Bool
+    /// Every bookmark outside Favorites, grouped by folder. Off by default:
+    /// a large bookmark collection makes a long page.
+    var showBookmarks: Bool
     /// The background image's file name inside this profile's own directory,
     /// or nil for none (browser-1wo). Only ever
     /// StartPageBackgroundImageStore.fileName -- stored by name rather than as
@@ -24,12 +27,27 @@ struct StartPageSettings: Codable, Equatable {
         backgroundColorHex: String = ProfileColorPalette.hexValues[7],
         showFavorites: Bool = true,
         showFrequentlyVisited: Bool = true,
+        showBookmarks: Bool = false,
         backgroundImageFileName: String? = nil
     ) {
         self.backgroundColorHex = backgroundColorHex
         self.showFavorites = showFavorites
         self.showFrequentlyVisited = showFrequentlyVisited
+        self.showBookmarks = showBookmarks
         self.backgroundImageFileName = backgroundImageFileName
+    }
+
+    /// Every key but the color falls back to its default when missing, so a
+    /// startpage.json written before a field existed still loads -- a failed
+    /// decode would otherwise reset the profile's whole start page.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = StartPageSettings()
+        backgroundColorHex = try container.decodeIfPresent(String.self, forKey: .backgroundColorHex) ?? defaults.backgroundColorHex
+        showFavorites = try container.decodeIfPresent(Bool.self, forKey: .showFavorites) ?? defaults.showFavorites
+        showFrequentlyVisited = try container.decodeIfPresent(Bool.self, forKey: .showFrequentlyVisited) ?? defaults.showFrequentlyVisited
+        showBookmarks = try container.decodeIfPresent(Bool.self, forKey: .showBookmarks) ?? defaults.showBookmarks
+        backgroundImageFileName = try container.decodeIfPresent(String.self, forKey: .backgroundImageFileName)
     }
 }
 

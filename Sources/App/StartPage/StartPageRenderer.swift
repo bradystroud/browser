@@ -96,7 +96,13 @@ enum StartPageRenderer {
                 ? emptySection(title: built.title, message: built.emptyMessage)
                 : section(built, profileId: profileId)
         }
-        // Both sections turned off in Settings -- the one case neither
+        if settings.showBookmarks {
+            let groups = StartPageSections.bookmarkGroups(profileId: profileId)
+            sections += groups.isEmpty
+                ? emptySection(title: StartPageSections.bookmarksTitle, message: StartPageSections.bookmarksEmptyMessage)
+                : bookmarksSection(groups, profileId: profileId)
+        }
+        // Every section turned off in Settings -- the one case no
         // per-section empty state above ever fires for. The panel narrows to
         // suit one sentence instead of stretching a full-width bar around it.
         let isBare = sections.isEmpty
@@ -227,15 +233,69 @@ enum StartPageRenderer {
         """
     }
 
+    /// Favicon bytes (base64) the Bookmarks section may embed. The whole page
+    /// is a `data:` URL capped at 2 MiB, and a background picture can already
+    /// use most of that (see StartPageBackgroundImageStore.maxEncodedBytes), so
+    /// a large bookmark collection can't embed every icon. Past the budget,
+    /// rows fall back to a monogram.
+    private static let bookmarkFaviconBudget = 100_000
+
+    /// Loose top-level bookmarks first, then one collapsible group per
+    /// folder, closed by default so a big collection doesn't push the rest of
+    /// the page away.
+    private static func bookmarksSection(_ groups: [StartPageSections.BookmarkGroup], profileId: String) -> String {
+        var budget = bookmarkFaviconBudget
+        func rows(_ tiles: [StartPageTile]) -> String {
+            let body = tiles.map { tile -> String in
+                let host = displayHost(of: tile.url)
+                let hostSpan = host.isEmpty ? "" : "<span class=\"row-host\">\(escape(host))</span>"
+                return """
+                <a class="row" href="\(escape(tile.url))" title="\(escape(tile.url))">
+                  \(well(for: tile, profileId: profileId, faviconBudget: &budget))
+                  <span class="row-line"><span class="row-title">\(escape(tile.title))</span>\(hostSpan)</span>
+                </a>
+                """
+            }.joined()
+            return "<div class=\"rows\">\(body)</div>"
+        }
+
+        let body = groups.map { group -> String in
+            guard let title = group.title else { return rows(group.tiles) }
+            return """
+            <details class="folder">
+            <summary>\(escape(title))<span class="count">\(group.tiles.count)</span></summary>
+            \(rows(group.tiles))
+            </details>
+            """
+        }.joined()
+
+        return """
+        <section class="sec">
+        <h2>\(escape(StartPageSections.bookmarksTitle))</h2>
+        \(body)
+        </section>
+        """
+    }
+
     /// A tile's icon well: the site's cached favicon when there is one,
     /// otherwise the monogram. Both shapes carry the same box metrics so a
     /// mixed grid stays on one baseline; the grid and the row list size the
     /// same markup differently in CSS.
     private static func well(for tile: StartPageTile, profileId: String) -> String {
+        var unlimited = Int.max
+        return well(for: tile, profileId: profileId, faviconBudget: &unlimited)
+    }
+
+    /// Embeds the favicon only while `faviconBudget` covers it, and charges
+    /// the budget for it.
+    private static func well(for tile: StartPageTile, profileId: String, faviconBudget: inout Int) -> String {
         if let host = URL(string: tile.url)?.host, !host.isEmpty,
            let data = FaviconLoader.shared.cachedFaviconData(host: host, profileId: profileId) {
             let base64 = data.base64EncodedString()
-            return "<span class=\"well\"><img src=\"data:image/png;base64,\(base64)\" alt=\"\"></span>"
+            if base64.count <= faviconBudget {
+                faviconBudget -= base64.count
+                return "<span class=\"well\"><img src=\"data:image/png;base64,\(base64)\" alt=\"\"></span>"
+            }
         }
         let monogramSource = tile.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let monogram = monogramSource.isEmpty ? "?" : String(monogramSource.prefix(1)).uppercased()
@@ -519,6 +579,33 @@ enum StartPageRenderer {
         .row-line { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .row-title { font-size: 13px; }
         .row-host { font-size: 11.5px; color: var(--ink-3); margin-left: 7px; }
+        .folder { margin: 2px 0; }
+        .folder summary {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 10px;
+          border-radius: 11px;
+          font-size: 13px;
+          font-weight: 590;
+          cursor: default;
+          list-style: none;
+        }
+        .folder summary::-webkit-details-marker { display: none; }
+        .folder summary::before {
+          content: "";
+          width: 6px;
+          height: 6px;
+          border-right: 1.5px solid var(--ink-2);
+          border-bottom: 1.5px solid var(--ink-2);
+          transform: rotate(-45deg);
+          transition: transform 0.15s ease;
+          margin: 0 4px 0 2px;
+        }
+        .folder[open] summary::before { transform: rotate(45deg); }
+        .folder summary:hover { background: var(--hover); }
+        .folder .count { font-size: 11.5px; font-weight: 400; color: var(--ink-3); }
+        .folder .rows { padding-left: 18px; }
         .empty-inline {
           display: flex;
           align-items: center;

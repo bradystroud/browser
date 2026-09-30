@@ -115,6 +115,45 @@ enum StartPageSections {
         return sections
     }
 
+    /// A folder's bookmarks for the start page's Bookmarks section. `title` is
+    /// nil for bookmarks that sit at the top level, outside any folder.
+    struct BookmarkGroup: Equatable {
+        let title: String?
+        let tiles: [StartPageTile]
+    }
+
+    static let bookmarksTitle = "Bookmarks"
+    static let bookmarksEmptyMessage = "No bookmarks outside Favorites yet — press ⌘D on any page and pick a folder."
+
+    /// Every bookmark except those in Favorites (the section above already
+    /// shows them), one group per folder in bookmark-bar order. A nested
+    /// folder becomes its own group titled with its path ("Work › Clients"),
+    /// so the page stays one level deep. Empty folders are left out. Kept out
+    /// of build(): the omnibox panel shares that and has no room for a whole
+    /// bookmark collection.
+    static func bookmarkGroups(profileId: String) -> [BookmarkGroup] {
+        guard let profile = ProfileManager.shared.profile(id: profileId) else { return [] }
+        let bookmarks = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
+        let favoritesId = FavoritesFolder.id(in: bookmarks)
+
+        var groups: [BookmarkGroup] = []
+        func collect(parentId: Int64?, path: [String]) {
+            let items = (try? bookmarks.children(of: parentId)) ?? []
+            let tiles = items.compactMap { item -> StartPageTile? in
+                guard item.kind == .bookmark, let url = item.url, isPresentable(url) else { return nil }
+                return StartPageTile(title: item.title.isEmpty ? url : item.title, url: url)
+            }
+            if !tiles.isEmpty {
+                groups.append(BookmarkGroup(title: path.isEmpty ? nil : path.joined(separator: " › "), tiles: tiles))
+            }
+            for item in items where item.kind != .bookmark && item.id != favoritesId {
+                collect(parentId: item.id, path: path + [item.title.isEmpty ? "Untitled" : item.title])
+            }
+        }
+        collect(parentId: nil, path: [])
+        return groups
+    }
+
     /// Internal/synthetic URLs are never worth offering as a tile: the start
     /// page itself is a giant base64 `data:` URL (see StartPageRenderer), and
     /// a history row for one would render as an unreadable tile that

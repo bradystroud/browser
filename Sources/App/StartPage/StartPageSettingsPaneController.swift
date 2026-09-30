@@ -27,7 +27,7 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
     /// it needs its own accurate value instead of SettingsPaneController's
     /// generic table-filler default.
     static let preferredContentHeight: CGFloat =
-        margin + headerHeight + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 6 + checkboxRowHeight
+        margin + headerHeight + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 6 + checkboxRowHeight + 6 + checkboxRowHeight
             + rowGap + swatchLabelHeight + 6 + swatchRowHeight
             + rowGap + swatchLabelHeight + 6 + imageRowHeight + margin
     func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { Self.preferredContentHeight }
@@ -37,6 +37,7 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
     private let profilePopup = NSPopUpButton()
     private let favoritesCheckbox = NSButton(checkboxWithTitle: "Show Favorites", target: nil, action: nil)
     private let frequentlyVisitedCheckbox = NSButton(checkboxWithTitle: "Show Frequently Visited", target: nil, action: nil)
+    private let bookmarksCheckbox = NSButton(checkboxWithTitle: "Show Bookmarks", target: nil, action: nil)
     private var swatchPicker: ColorSwatchPicker?
     private let swatchContainer = NSView()
     private let imageThumbnail = NSImageView()
@@ -117,9 +118,16 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
         frequentlyVisitedCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
         view.addSubview(frequentlyVisitedCheckbox)
 
+        let checkbox3Y = checkbox2Y - 6 - checkboxRowHeight
+        bookmarksCheckbox.target = self
+        bookmarksCheckbox.action = #selector(toggleChanged)
+        bookmarksCheckbox.frame = NSRect(x: margin, y: checkbox3Y, width: 260, height: checkboxRowHeight)
+        bookmarksCheckbox.autoresizingMask = [.maxXMargin, .minYMargin]
+        view.addSubview(bookmarksCheckbox)
+
         // The label sits above the swatches it describes (it used to sit
         // below them -- same inverted-order bug as General's popup label).
-        let swatchLabelY = checkbox2Y - rowGap - swatchLabelHeight
+        let swatchLabelY = checkbox3Y - rowGap - swatchLabelHeight
         let swatchLabel = NSTextField(labelWithString: "Background color:")
         swatchLabel.frame = NSRect(x: margin, y: swatchLabelY, width: 200, height: swatchLabelHeight)
         swatchLabel.autoresizingMask = [.maxXMargin, .minYMargin]
@@ -178,6 +186,7 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
         guard let profile = selectedProfile else {
             favoritesCheckbox.isEnabled = false
             frequentlyVisitedCheckbox.isEnabled = false
+            bookmarksCheckbox.isEnabled = false
             chooseImageButton.isEnabled = false
             hasBackgroundImage = false
             updateBackgroundImageControls(forProfileId: nil)
@@ -185,11 +194,13 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
         }
         favoritesCheckbox.isEnabled = true
         frequentlyVisitedCheckbox.isEnabled = true
+        bookmarksCheckbox.isEnabled = true
         chooseImageButton.isEnabled = true
 
         let settings = StartPageSettingsStore.load(forProfileId: profile.id)
         favoritesCheckbox.state = settings.showFavorites ? .on : .off
         frequentlyVisitedCheckbox.state = settings.showFrequentlyVisited ? .on : .off
+        bookmarksCheckbox.state = settings.showBookmarks ? .on : .off
         // Trusts the file, not just the setting: a background recorded in
         // startpage.json whose file has since been deleted (or was never
         // written) shows as "None" here, matching what the start page itself
@@ -223,6 +234,7 @@ final class StartPageSettingsPaneController: NSObject, SettingsPaneController {
             backgroundColorHex: swatchPicker?.selectedHex ?? ProfileColorPalette.hexValues[7],
             showFavorites: favoritesCheckbox.state == .on,
             showFrequentlyVisited: frequentlyVisitedCheckbox.state == .on,
+            showBookmarks: bookmarksCheckbox.state == .on,
             backgroundImageFileName: hasBackgroundImage ? StartPageBackgroundImageStore.fileName : nil
         )
         StartPageSettingsStore.save(settings, forProfileId: profile.id)
