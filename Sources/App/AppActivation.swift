@@ -7,6 +7,6 @@ import AppKit
 enum AppActivation {
     static func activate() {
         guard !CommandLineArgs.testNoActivate() else { return }
-        AppActivation.activate()
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
