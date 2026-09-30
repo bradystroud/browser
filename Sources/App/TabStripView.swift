@@ -150,6 +150,12 @@ final class TabStripView: NSView {
     private var selectedIndex = 0
     private var stripItems: [StripItem] = []
 
+    /// Every tab/group-header frame in window coordinates, in strip order --
+    /// read by BrowserWindowController's `--chrome-frames-report`.
+    var itemFramesInWindow: [NSRect] {
+        stripItems.map { $0.view.convert($0.view.bounds, to: nil) }
+    }
+
     /// In-flight drag-to-reorder (browser-rhi.6), nil the rest of the time.
     private var drag: DragSession?
 
@@ -213,7 +219,7 @@ final class TabStripView: NSView {
     }()
     /// The item area itself: a direct subview of `self` in horizontal mode,
     /// and the sidebar scroll view's document view in vertical mode. Every
-    /// tab pill/group header lives inside it (via glassContentHost below), so
+    /// tab pill/group header lives inside it (via itemHost below), so
     /// swapping which of the two it is parented to is the whole of the
     /// "sidebar scrolls, strip doesn't" difference -- nothing downstream of
     /// it, drag included, has to know which mode it is in.
@@ -224,38 +230,13 @@ final class TabStripView: NSView {
     /// tabs past the window's height would be worse than no sidebar.
     private let scrollView = NSScrollView()
 
-    /// macOS 26+ only: hosts every tab/group-header's own NSGlassEffectView
-    /// so they batch-render and merge together when close, matching how
-    /// Safari's own adjacent tab pills blend into each other rather than
-    /// reading as separate frosted rectangles (see
-    /// NSGlassEffectContainerView's own header doc comment, and browser-qpy-
-    /// notes.md for the spacing value's rationale). `nil` pre-26.
-    private var glassContainer: NSView?
-    /// Where rebuildButtons() actually adds each tab/group-header subview --
-    /// the glass container's contentView on macOS 26+, stripContentView
-    /// otherwise. Set once, read (never reassigned after) by rebuildButtons
-    /// on every reload; every slot frame this view computes is in *this*
-    /// view's coordinates, which is why the drag converts pointer locations
-    /// through it rather than through `self`.
-    private lazy var glassContentHost: NSView = {
-        guard #available(macOS 26.0, *) else { return stripContentView }
-        let container = NSGlassEffectContainerView(frame: stripContentView.bounds)
-        container.autoresizingMask = [.width, .height]
-        // Nonzero so adjacent pills within this distance visually merge
-        // (the default, zero, only batches rendering -- see the class's own
-        // doc comment) -- a starting guess, not verified against a real
-        // render; see browser-qpy-notes.md's Deviations for why this is
-        // flagged for Brady to tune once he can actually see it.
-        container.spacing = 4
-        // Flipped for the same reason stripContentView is -- this, not that,
-        // is what the item frames are measured in on macOS 26+.
-        let content = TabStripContentView(frame: stripContentView.bounds)
-        content.autoresizingMask = [.width, .height]
-        container.contentView = content
-        stripContentView.addSubview(container)
-        glassContainer = container
-        return content
-    }()
+    /// Where rebuildButtons() adds each tab/group-header subview. Every slot
+    /// frame this view computes is in *this* view's coordinates, which is
+    /// why the drag converts pointer locations through it rather than
+    /// through `self`. There is no NSGlassEffectContainerView around the
+    /// items: only the selected tab is glass, so there is never a second
+    /// glass pill for a container to batch or merge with.
+    private var itemHost: NSView { stripContentView }
 
     /// Horizontal row or vertical sidebar. Set by BrowserWindowController,
     /// which owns the surrounding geometry this only describes the inside of
@@ -281,12 +262,15 @@ final class TabStripView: NSView {
     /// name, collapsed just a color dot + count badge.
     private static let groupHeaderWidth: CGFloat = 110
     private static let collapsedGroupHeaderWidth: CGFloat = 50
-    /// Gap between adjacent pills. Has to clear the pill's own rounded ends
-    /// *and* the soft edge NSGlassEffectView renders slightly beyond its
-    /// bounds -- at the original 2pt the two together read as tabs touching,
-    /// and in places overlapping, rather than as a deliberate gap.
-    private static let tabSpacing: CGFloat = 7
-    private static let sidePadding: CGFloat = 4
+    /// Gap between adjacent pills. Unselected tabs have no background, so
+    /// this mostly separates hover washes and the selected tab's glass
+    /// from its neighbours' titles; it has to clear the soft edge
+    /// NSGlassEffectView renders slightly beyond the selected pill's bounds.
+    private static let tabSpacing: CGFloat = ChromeMetrics.controlSpacing
+    /// The strip's own leading/trailing inset -- the same edge inset as the
+    /// toolbar row above it, so the first tab lines up under the traffic
+    /// lights and the last one ends under the toolbar's "+".
+    private static let sidePadding: CGFloat = ChromeMetrics.edgeInset
 
     // MARK: Vertical (sidebar) metrics
 
@@ -341,9 +325,6 @@ final class TabStripView: NSView {
         stripContentView.frame = bounds
         stripContentView.autoresizingMask = [.width, .height]
         addSubview(stripContentView)
-        // Force the glass container to be created (and added) now, before
-        // newTabButton below, so the button always renders above it.
-        _ = glassContentHost
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
         // Horizontal (the initial orientation) shows no "+" -- see
@@ -361,7 +342,7 @@ final class TabStripView: NSView {
         scrollView.scrollerStyle = .overlay
         scrollView.horizontalScrollElasticity = .none
         // The clip view must not paint either, or it draws an opaque slab
-        // over the sidebar's own glass material.
+        // over the sidebar's own material.
         scrollView.contentView.drawsBackground = false
     }
 
@@ -553,7 +534,7 @@ final class TabStripView: NSView {
         // Pinned tabs first.
         for (index, info) in indexed where info.isPinned {
             let button = makeButton(index, info)
-            glassContentHost.addSubview(button)
+            itemHost.addSubview(button)
             stripItems.append(.tab(button))
         }
 
@@ -585,13 +566,13 @@ final class TabStripView: NSView {
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestCloseGroup: group.id)
             }
-            glassContentHost.addSubview(header)
+            itemHost.addSubview(header)
             stripItems.append(.groupHeader(header))
 
             guard !group.isCollapsed else { continue }
             for (index, info) in members {
                 let button = makeButton(index, info)
-                glassContentHost.addSubview(button)
+                itemHost.addSubview(button)
                 stripItems.append(.tab(button))
             }
         }
@@ -599,7 +580,7 @@ final class TabStripView: NSView {
         // Then loose (unpinned, ungrouped) tabs.
         for (index, info) in indexed where !info.isPinned && info.groupId == nil {
             let button = makeButton(index, info)
-            glassContentHost.addSubview(button)
+            itemHost.addSubview(button)
             stripItems.append(.tab(button))
         }
     }
@@ -754,7 +735,7 @@ final class TabStripView: NSView {
         hasRunDragSelfTest = true
 
         func event(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
-            let inWindow = glassContentHost.convert(point, to: nil)
+            let inWindow = itemHost.convert(point, to: nil)
             return NSEvent.mouseEvent(
                 with: type, location: inWindow, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
@@ -1032,7 +1013,7 @@ extension TabStripView: TabButtonDragDelegate {
             button: button,
             itemIndex: itemIndex,
             range: range,
-            startPoint: glassContentHost.convert(event.locationInWindow, from: nil),
+            startPoint: itemHost.convert(event.locationInWindow, from: nil),
             startFrame: button.frame,
             originalItems: stripItems
         )
@@ -1083,7 +1064,7 @@ extension TabStripView: TabButtonDragDelegate {
 
     private func continueDrag(_ button: TabButtonView, with event: NSEvent, source: String) {
         guard let session = drag, session.button === button else { return }
-        let point = glassContentHost.convert(event.locationInWindow, from: nil)
+        let point = itemHost.convert(event.locationInWindow, from: nil)
         let delta = NSSize(width: point.x - session.startPoint.x, height: point.y - session.startPoint.y)
         // Vertical rows travel on y, but a pinned tile in the sidebar's grid
         // travels on both axes, so the threshold there is plain distance
@@ -1103,7 +1084,7 @@ extension TabStripView: TabButtonDragDelegate {
             ])
             // Above its neighbours for the rest of the drag, so the pill it
             // slides over never renders on top of the one being dragged.
-            glassContentHost.addSubview(button, positioned: .above, relativeTo: nil)
+            itemHost.addSubview(button, positioned: .above, relativeTo: nil)
         }
 
         // Slot geometry is identical for every item in one section (see
