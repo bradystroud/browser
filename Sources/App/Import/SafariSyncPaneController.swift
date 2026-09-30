@@ -7,33 +7,21 @@ import AppKit
 /// cosmetic.
 /// Every change saves immediately, like the other panes.
 final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    private static let margin: CGFloat = 12
-    private static let rowGap: CGFloat = 10
-    private static let headerHeight: CGFloat = 22
-    private static let captionHeight: CGFloat = 44
-    private static let checkboxRowHeight: CGFloat = 20
-    private static let accessNoticeHeight: CGFloat = 32
-    private static let buttonRowHeight: CGFloat = 28
-    private static let sectionLabelHeight: CGFloat = 16
     private static let tableHeight: CGFloat = 170
 
-    /// Computed bottom-up from the same constants setUpViews lays out with
-    /// top-down: header, caption, checkbox, the Full Disk Access notice and
-    /// its button, the profiles section, and the status row.
-    static let preferredContentHeight: CGFloat =
-        margin + headerHeight + rowGap + captionHeight + rowGap + checkboxRowHeight
-            + rowGap + accessNoticeHeight + 4 + buttonRowHeight
-            + rowGap + sectionLabelHeight + 4 + tableHeight + rowGap + buttonRowHeight + margin
-    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { Self.preferredContentHeight }
+    private let form = SettingsForm()
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { form.fittingHeight }
 
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: SafariSyncPaneController.preferredContentHeight))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 420))
 
     private let enabledCheckbox = NSButton(checkboxWithTitle: "Sync Safari history into this browser", target: nil, action: nil)
-    private let accessNoticeLabel = NSTextField(wrappingLabelWithString: "")
+    private let accessNoticeLabel = SettingsForm.footnote()
     private let openAccessSettingsButton = NSButton(title: "Open Full Disk Access Settings…", target: nil, action: nil)
     private let tableView = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let syncNowButton = NSButton(title: "Sync Now", target: nil, action: nil)
+    /// Shown only while Safari's data can't be read.
+    private var accessRows: [NSGridRow] = []
 
     private var safariProfiles: [SafariImportScanner.ProfileSource] = []
     /// Nil until the first discovery finishes; false when Safari's data
@@ -73,8 +61,10 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
         syncNowButton.isEnabled = coordinator.settings.isEnabled && coordinator.status != .running
 
         let notReadable = discoverySucceeded == false || coordinator.status == .safariNotReadable
-        accessNoticeLabel.isHidden = !notReadable
-        openAccessSettingsButton.isHidden = !notReadable
+        if accessRows.contains(where: { $0.isHidden == notReadable }) {
+            accessRows.forEach { $0.isHidden = !notReadable }
+            invalidateContentHeight()
+        }
 
         switch coordinator.status {
         case _ where !coordinator.settings.isEnabled:
@@ -94,91 +84,54 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
     // MARK: - View setup
 
     private func setUpViews() {
-        let margin = Self.margin
-        let rowGap = Self.rowGap
-        let width = view.bounds.width - margin * 2
-
-        let headerLabel = NSTextField(labelWithString: "Safari History Sync")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(x: margin, y: view.bounds.height - margin - Self.headerHeight, width: width, height: Self.headerHeight)
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        let captionY = headerLabel.frame.minY - rowGap - Self.captionHeight
-        let captionLabel = NSTextField(wrappingLabelWithString: "Every few minutes, new Safari history is copied into this browser, "
-            + "including pages Safari synced from your other devices through iCloud. Safari's own data is only read, never changed.")
-        captionLabel.font = .systemFont(ofSize: 11)
-        captionLabel.textColor = .secondaryLabelColor
-        captionLabel.frame = NSRect(x: margin, y: captionY, width: width, height: Self.captionHeight)
-        captionLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(captionLabel)
-
-        let checkboxY = captionY - rowGap - Self.checkboxRowHeight
         enabledCheckbox.target = self
         enabledCheckbox.action = #selector(enabledToggled)
-        enabledCheckbox.frame = NSRect(x: margin, y: checkboxY, width: width, height: Self.checkboxRowHeight)
-        enabledCheckbox.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(enabledCheckbox)
+        form.addRow("History:", enabledCheckbox)
+        form.addFootnote(SettingsForm.footnote("Every few minutes, new Safari history is copied into this browser, "
+            + "including pages Safari synced from your other devices through iCloud. Safari's own data is only read, never changed."),
+            indented: true)
 
-        let noticeY = checkboxY - rowGap - Self.accessNoticeHeight
         accessNoticeLabel.stringValue = "macOS protects Safari's history. To sync it, turn on Browser in "
             + "System Settings > Privacy & Security > Full Disk Access. Sync starts on its own once access is granted."
-        accessNoticeLabel.font = .systemFont(ofSize: 11)
         accessNoticeLabel.textColor = .systemOrange
-        accessNoticeLabel.frame = NSRect(x: margin, y: noticeY, width: width, height: Self.accessNoticeHeight)
-        accessNoticeLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(accessNoticeLabel)
-
-        let accessButtonY = noticeY - 4 - Self.buttonRowHeight
         openAccessSettingsButton.target = self
         openAccessSettingsButton.action = #selector(openFullDiskAccessSettings)
-        openAccessSettingsButton.frame = NSRect(x: margin, y: accessButtonY, width: 240, height: Self.buttonRowHeight)
-        openAccessSettingsButton.autoresizingMask = [.maxXMargin, .minYMargin]
-        view.addSubview(openAccessSettingsButton)
+        accessRows = [
+            form.addFootnote(accessNoticeLabel, indented: true),
+            form.addRow(nil, openAccessSettingsButton),
+        ]
 
-        let sectionY = accessButtonY - rowGap - Self.sectionLabelHeight
-        let sectionLabel = NSTextField(labelWithString: "Safari Profiles")
-        sectionLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        sectionLabel.textColor = .secondaryLabelColor
-        sectionLabel.frame = NSRect(x: margin, y: sectionY, width: width, height: Self.sectionLabelHeight)
-        sectionLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(sectionLabel)
-
-        // Bottom row: status on the left, Sync Now on the right.
-        let syncNowWidth: CGFloat = 100
-        syncNowButton.target = self
-        syncNowButton.action = #selector(syncNow)
-        syncNowButton.frame = NSRect(x: view.bounds.width - margin - syncNowWidth, y: margin, width: syncNowWidth, height: Self.buttonRowHeight)
-        syncNowButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        view.addSubview(syncNowButton)
-
-        statusLabel.font = .systemFont(ofSize: 11)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.frame = NSRect(x: margin, y: margin + 6, width: width - syncNowWidth - 8, height: 16)
-        statusLabel.autoresizingMask = [.width, .maxYMargin]
-        view.addSubview(statusLabel)
+        syncNowButton.target = self
+        syncNowButton.action = #selector(syncNow)
+        form.addRow(SettingsForm.label("Status:"), [statusLabel, syncNowButton])
 
-        // The table fills the space between its header and the bottom row.
-        let tableTop = sectionY - 4
-        let tableBottom = margin + Self.buttonRowHeight + rowGap
-        let scrollView = NSScrollView(frame: NSRect(x: margin, y: tableBottom, width: width, height: tableTop - tableBottom))
-        scrollView.autoresizingMask = [.width, .height]
+        form.beginSection()
+        let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            scrollView.widthAnchor.constraint(equalToConstant: SettingsForm.controlColumnWidth),
+            scrollView.heightAnchor.constraint(equalToConstant: Self.tableHeight),
+        ])
         let profileColumn = NSTableColumn(identifier: .init("profile"))
         profileColumn.title = "Safari Profile"
-        profileColumn.width = 280
+        profileColumn.width = 210
         let destinationColumn = NSTableColumn(identifier: .init("destination"))
         destinationColumn.title = "Sync Into"
-        destinationColumn.width = 220
+        destinationColumn.width = 160
         tableView.addTableColumn(profileColumn)
         tableView.addTableColumn(destinationColumn)
         tableView.dataSource = self
         tableView.delegate = self
         ListAppearance.apply(to: tableView, in: scrollView, rowHeight: 40)
         scrollView.documentView = tableView
-        view.addSubview(scrollView)
+        let tableRow = form.addRow("Safari profiles:", scrollView)
+        tableRow.rowAlignment = .none
+        tableRow.yPlacement = .top
+
+        form.install(in: view)
     }
 
     // MARK: - Actions

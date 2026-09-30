@@ -1,43 +1,22 @@
 import AppKit
 
-/// The "Privacy" pane of the Settings window (see SettingsWindowController,
-/// which hosts this alongside RoutingRulesPaneController and
-/// ProfilesPaneController in an NSTabView). Content blocking is per-profile
-/// (BlockingSettings, BlockListCore), so this pane starts with a profile
-/// picker, then shows that profile's master on/off toggle, remembered
-/// per-site permission decisions (camera/microphone/geolocation/
-/// notifications -- browser-12m.2.1, PermissionStore), and per-site
-/// content-blocking allowlist ("turn off blocking on this site") below it.
-/// Every change saves immediately via ContentBlockerCoordinator/
-/// PermissionStore -- there is no separate "Apply" step.
+/// The "Privacy" pane of the Settings window (see SettingsWindowController).
+/// Two groups: the global link-handling toggles (browser-ymx), then
+/// everything scoped to the picked profile -- content blocking
+/// (BlockingSettings, BlockListCore) and its allowlist ("turn off blocking
+/// on this site"), the dangerous-site warning (browser-12m.6), and the
+/// remembered per-site camera/microphone/geolocation/notifications decisions
+/// (browser-12m.2.1, PermissionStore). Every change saves immediately via
+/// ContentBlockerCoordinator/ThreatListCoordinator/PermissionStore -- there
+/// is no separate "Apply" step.
 final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewDelegate, SettingsPaneController {
-    private static let margin: CGFloat = 12
-    private static let rowGap: CGFloat = 10
-    private static let headerHeight: CGFloat = 22
-    private static let profileRowHeight: CGFloat = 28
-    private static let checkboxRowHeight: CGFloat = 20
-    private static let buttonRowHeight: CGFloat = 28
-    private static let sectionLabelHeight: CGFloat = 16
     private static let permissionsTableHeight: CGFloat = 110
     private static let allowlistTableHeight: CGFloat = 100
 
-    /// This pane's natural content height -- SettingsWindowController
-    /// resizes the Settings window to this whenever Privacy becomes the
-    /// selected tab, and below it the pane scrolls (see
-    /// SettingsPaneController.preferredContentHeight(forWidth:)). Computed
-    /// bottom-up from the same constants setUpViews lays out with top-down,
-    /// so the two can't drift apart: margin, header, Link Handling section,
-    /// profile row, ad-block + threat-warning checkboxes, the Site Permissions section (label + table + button
-    /// row), the Allowed Sites section (label + table + button row), and
-    /// the final bottom margin.
-    static let preferredContentHeight: CGFloat =
-        margin + headerHeight + rowGap + sectionLabelHeight + 4 + checkboxRowHeight + 2 + checkboxRowHeight
-            + rowGap + profileRowHeight + rowGap + checkboxRowHeight + 4 + checkboxRowHeight
-            + rowGap + sectionLabelHeight + 4 + permissionsTableHeight + rowGap + buttonRowHeight
-            + rowGap + sectionLabelHeight + 4 + allowlistTableHeight + rowGap + buttonRowHeight + margin
-    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { Self.preferredContentHeight }
+    private let form = SettingsForm()
+    func preferredContentHeight(forWidth width: CGFloat) -> CGFloat { form.fittingHeight }
 
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 536, height: PrivacyPaneController.preferredContentHeight))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 680, height: 560))
 
     private let profilePopup = NSPopUpButton()
     private let enabledCheckbox = NSButton(checkboxWithTitle: "Block ads & trackers in this profile", target: nil, action: nil)
@@ -48,6 +27,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     /// piggybacking on BlockingSettings.
     private let threatWarningCheckbox = NSButton(checkboxWithTitle: "Warn about dangerous sites (phishing/malware)", target: nil, action: nil)
     private let allowlistTableView = NSTableView()
+    private let allowlistButtons = SettingsListButtons(target: nil, action: nil)
 
     /// browser-12m.2.1: remembered per-origin camera/microphone/
     /// geolocation/notifications decisions for the selected profile (see
@@ -55,6 +35,17 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     /// per-row removal and a "Reset All" for the whole profile.
     private let permissionsTableView = NSTableView()
     private var permissionEntries: [PermissionDecisionEntry] = []
+    /// Remove only: a decision is made by a site asking, never added here.
+    private let removePermissionControl: NSSegmentedControl = {
+        let control = NSSegmentedControl(
+            images: [NSImage(named: NSImage.removeTemplateName)!],
+            trackingMode: .momentary, target: nil, action: nil)
+        control.segmentStyle = .smallSquare
+        control.setWidth(24, forSegment: 0)
+        control.setToolTip("Remove", forSegment: 0)
+        return control
+    }()
+    private let resetAllPermissionsButton = NSButton(title: "Reset All…", target: nil, action: nil)
 
     /// Global (not per-profile) settings, per browser-ymx -- see
     /// LinkHandlingPreferences' own doc comment for why these live outside
@@ -91,115 +82,63 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     // MARK: - View setup
 
-    /// Top-down: header, then the global Link Handling section, then the
-    /// profile picker and everything scoped to it (ad-block/threat-warning
-    /// toggles, the Site Permissions table, the Allowed Sites table), each
-    /// pinned to the top (.minYMargin) so extra height the window picks up
-    /// collects below the last section instead of pushing content toward
-    /// the bottom -- except the very last row (Allowed Sites' Add/Remove
-    /// buttons), which stays bottom-pinned like every other pane's
-    /// trailing action row.
+    /// The global link toggles first, then the profile picker and everything
+    /// scoped to it: content blocking and its allowlist, the dangerous-site
+    /// warning, and the remembered site permissions.
     private func setUpViews() {
-        let margin = Self.margin
-        let rowGap = Self.rowGap
-        let headerHeight = Self.headerHeight
-        let profileRowHeight = Self.profileRowHeight
-        let checkboxRowHeight = Self.checkboxRowHeight
-        let buttonRowHeight = Self.buttonRowHeight
-        let sectionLabelHeight = Self.sectionLabelHeight
-
-        let headerLabel = NSTextField(labelWithString: "Privacy")
-        headerLabel.font = .boldSystemFont(ofSize: 13)
-        headerLabel.frame = NSRect(
-            x: margin,
-            y: view.bounds.height - margin - headerHeight,
-            width: view.bounds.width - margin * 2,
-            height: headerHeight
-        )
-        headerLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(headerLabel)
-
-        // Link Handling -- global, not per-profile (browser-ymx), so it
-        // sits above the profile-scoped content below rather than inside
-        // it.
-        let linkHandlingHeaderY = headerLabel.frame.minY - rowGap - sectionLabelHeight
-        let linkHandlingHeaderLabel = NSTextField(labelWithString: "Link Handling")
-        linkHandlingHeaderLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        linkHandlingHeaderLabel.textColor = .secondaryLabelColor
-        linkHandlingHeaderLabel.frame = NSRect(x: margin, y: linkHandlingHeaderY, width: view.bounds.width - margin * 2, height: sectionLabelHeight)
-        linkHandlingHeaderLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(linkHandlingHeaderLabel)
-
-        let stripCheckboxY = linkHandlingHeaderY - 4 - checkboxRowHeight
         stripTrackingParamsCheckbox.target = self
         stripTrackingParamsCheckbox.action = #selector(stripTrackingParamsToggled)
-        stripTrackingParamsCheckbox.frame = NSRect(x: margin, y: stripCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
-        stripTrackingParamsCheckbox.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(stripTrackingParamsCheckbox)
-
-        let unshortenCheckboxY = stripCheckboxY - 2 - checkboxRowHeight
         unshortenLinksCheckbox.target = self
         unshortenLinksCheckbox.action = #selector(unshortenLinksToggled)
-        unshortenLinksCheckbox.frame = NSRect(x: margin, y: unshortenCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
-        unshortenLinksCheckbox.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(unshortenLinksCheckbox)
+        form.addRow("Links:", stripTrackingParamsCheckbox)
+        form.addRow(nil, unshortenLinksCheckbox)
 
-        // Profile picker -- same "right after the global section" position
-        // every other per-profile pane uses (Start Page, Passwords, Cards,
-        // Addresses), rather than buried near the bottom as it used to be.
-        let profileRowY = unshortenCheckboxY - rowGap - profileRowHeight
-        let profileLabel = NSTextField(labelWithString: "Profile:")
-        profileLabel.frame = NSRect(x: margin, y: profileRowY + 6, width: 60, height: 20)
-        profileLabel.autoresizingMask = [.maxXMargin, .minYMargin]
-        view.addSubview(profileLabel)
-
-        profilePopup.frame = NSRect(x: margin + 64, y: profileRowY, width: 200, height: profileRowHeight)
-        profilePopup.autoresizingMask = [.maxXMargin, .minYMargin]
+        form.beginSection()
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
-        view.addSubview(profilePopup)
+        form.addRow("Profile:", profilePopup)
 
-        let enabledCheckboxY = profileRowY - rowGap - checkboxRowHeight
+        // Content blocking.
         enabledCheckbox.target = self
         enabledCheckbox.action = #selector(enabledToggled)
-        enabledCheckbox.frame = NSRect(x: margin, y: enabledCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
-        enabledCheckbox.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(enabledCheckbox)
+        form.addRow("Content blocking:", enabledCheckbox).topPadding = Self.groupGap
+        // The report is something you read, not a setting, so it opens its
+        // own window (browser-e7r) -- the same one the shield popover opens.
+        let privacyReportButton = NSButton(title: "Privacy Report…", target: self, action: #selector(showPrivacyReport))
+        form.addRow(nil, privacyReportButton)
 
-        let threatWarningCheckboxY = enabledCheckboxY - 4 - checkboxRowHeight
+        let allowlistScrollView = NSScrollView()
+        allowlistScrollView.hasVerticalScroller = true
+        let hostColumn = NSTableColumn(identifier: .init("host"))
+        hostColumn.title = "Host"
+        hostColumn.width = 360
+        allowlistTableView.addTableColumn(hostColumn)
+        allowlistTableView.dataSource = self
+        allowlistTableView.delegate = self
+        ListAppearance.apply(to: allowlistTableView, in: allowlistScrollView)
+        allowlistScrollView.documentView = allowlistTableView
+        allowlistButtons.target = self
+        allowlistButtons.action = #selector(allowlistButtonClicked(_:))
+        addTableRow("Allowed sites:", tableBlock(allowlistScrollView, height: Self.allowlistTableHeight, controls: [allowlistButtons]))
+        form.addFootnote(SettingsForm.footnote("Content blocking is always off on these sites and their subdomains."))
+
+        // Threat protection.
         threatWarningCheckbox.target = self
         threatWarningCheckbox.action = #selector(threatWarningToggled)
-        threatWarningCheckbox.frame = NSRect(x: margin, y: threatWarningCheckboxY, width: view.bounds.width - margin * 2, height: checkboxRowHeight)
-        threatWarningCheckbox.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(threatWarningCheckbox)
+        form.addRow("Dangerous sites:", threatWarningCheckbox).topPadding = Self.groupGap
 
-        // Site Permissions -- header, table, then Remove/Reset All below
-        // the table (same order Profiles/Passwords/Cards/Addresses use).
-        let permissionsHeaderY = threatWarningCheckboxY - rowGap - sectionLabelHeight
-        let permissionsHeaderLabel = NSTextField(labelWithString: "Site Permissions")
-        permissionsHeaderLabel.font = .systemFont(ofSize: 11, weight: .semibold)
-        permissionsHeaderLabel.textColor = .secondaryLabelColor
-        permissionsHeaderLabel.frame = NSRect(x: margin, y: permissionsHeaderY, width: view.bounds.width - margin * 2, height: sectionLabelHeight)
-        permissionsHeaderLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(permissionsHeaderLabel)
-
-        let permissionsTableY = permissionsHeaderY - 4 - Self.permissionsTableHeight
-        let permissionsScrollView = NSScrollView(frame: NSRect(
-            x: margin, y: permissionsTableY, width: view.bounds.width - margin * 2, height: Self.permissionsTableHeight
-        ))
-        permissionsScrollView.autoresizingMask = [.width, .minYMargin]
+        // Site permissions.
+        let permissionsScrollView = NSScrollView()
         permissionsScrollView.hasVerticalScroller = true
-
         let originColumn = NSTableColumn(identifier: .init("origin"))
         originColumn.title = "Site"
-        originColumn.width = 250
+        originColumn.width = 180
         let kindColumn = NSTableColumn(identifier: .init("kind"))
         kindColumn.title = "Permission"
-        kindColumn.width = 140
+        kindColumn.width = 100
         let decisionColumn = NSTableColumn(identifier: .init("decision"))
         decisionColumn.title = "Decision"
-        decisionColumn.width = 90
-
+        decisionColumn.width = 70
         permissionsTableView.addTableColumn(originColumn)
         permissionsTableView.addTableColumn(kindColumn)
         permissionsTableView.addTableColumn(decisionColumn)
@@ -207,80 +146,42 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         permissionsTableView.delegate = self
         ListAppearance.apply(to: permissionsTableView, in: permissionsScrollView)
         permissionsScrollView.documentView = permissionsTableView
-        view.addSubview(permissionsScrollView)
+        removePermissionControl.target = self
+        removePermissionControl.action = #selector(removeSelectedPermission)
+        resetAllPermissionsButton.target = self
+        resetAllPermissionsButton.action = #selector(resetAllPermissions)
+        resetAllPermissionsButton.controlSize = .small
+        addTableRow("Site permissions:", tableBlock(
+            permissionsScrollView, height: Self.permissionsTableHeight,
+            controls: [removePermissionControl, resetAllPermissionsButton]))
+        form.install(in: view)
+        updateListButtons()
+    }
 
-        let permissionsButtonRowY = permissionsTableY - rowGap - buttonRowHeight
-        let removePermissionButton = NSButton(title: "Remove", target: self, action: #selector(removeSelectedPermission))
-        removePermissionButton.frame = NSRect(x: margin, y: permissionsButtonRowY, width: 90, height: buttonRowHeight)
-        removePermissionButton.autoresizingMask = [.maxXMargin, .minYMargin]
-        view.addSubview(removePermissionButton)
+    /// Extra space above each profile-scoped group, short of a full section
+    /// break: a separator there would read as leaving the profile's scope.
+    private static let groupGap: CGFloat = SettingsForm.sectionSpacing - SettingsForm.rowSpacing
 
-        let resetAllButton = NSButton(title: "Reset All…", target: self, action: #selector(resetAllPermissions))
-        resetAllButton.frame = NSRect(x: margin + 94, y: permissionsButtonRowY, width: 100, height: buttonRowHeight)
-        resetAllButton.autoresizingMask = [.maxXMargin, .minYMargin]
-        view.addSubview(resetAllButton)
+    /// A row whose control is a table: its label sits level with the
+    /// table's top edge rather than on a baseline.
+    private func addTableRow(_ label: String, _ block: NSView) {
+        let row = form.addRow(SettingsForm.label(label), [block])
+        row.rowAlignment = .none
+        row.yPlacement = .top
+        row.topPadding = SettingsForm.rowSpacing
+    }
 
-        // Allowed Sites (content blocking) -- unchanged section, just
-        // repositioned below Site Permissions instead of below the
-        // checkboxes directly.
-        let allowlistHeaderY = permissionsButtonRowY - rowGap - sectionLabelHeight
-        let allowlistHeaderLabel = NSTextField(labelWithString: "Allowed sites (blocking is always off here):")
-        allowlistHeaderLabel.font = .systemFont(ofSize: 11)
-        allowlistHeaderLabel.textColor = .secondaryLabelColor
-        allowlistHeaderLabel.frame = NSRect(x: margin, y: allowlistHeaderY, width: view.bounds.width - margin * 2, height: sectionLabelHeight)
-        allowlistHeaderLabel.autoresizingMask = [.width, .minYMargin]
-        view.addSubview(allowlistHeaderLabel)
-
-        // The allowlist table fills the remaining space between its
-        // header and the Add/Remove buttons pinned to the very bottom.
-        let addHostButton = NSButton(title: "Add Allowed Site…", target: self, action: #selector(addAllowlistHost))
-        addHostButton.frame = NSRect(x: margin, y: margin, width: 150, height: buttonRowHeight)
-        addHostButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(addHostButton)
-
-        let removeHostButton = NSButton(title: "Remove", target: self, action: #selector(removeSelectedAllowlistHost))
-        removeHostButton.frame = NSRect(x: margin + 154, y: margin, width: 70, height: buttonRowHeight)
-        removeHostButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        view.addSubview(removeHostButton)
-
-        // Right-aligned on the same bottom row rather than in a section of
-        // its own (browser-e7r): the report is something you read, not a
-        // setting, so it opens its own window -- and putting it here costs
-        // no vertical space, which this pane's hand-computed
-        // preferredContentHeight has none of to spare.
-        let reportButtonWidth: CGFloat = 140
-        let privacyReportButton = NSButton(title: "Privacy Report…", target: self, action: #selector(showPrivacyReport))
-        privacyReportButton.frame = NSRect(
-            x: view.bounds.width - margin - reportButtonWidth, y: margin,
-            width: reportButtonWidth, height: buttonRowHeight
-        )
-        privacyReportButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        view.addSubview(privacyReportButton)
-
-        let allowlistScrollTop = allowlistHeaderY - 4
-        let allowlistScrollBottom = margin + buttonRowHeight + rowGap
-        let allowlistScrollView = NSScrollView(frame: NSRect(
-            x: margin, y: allowlistScrollBottom, width: view.bounds.width - margin * 2,
-            height: max(0, allowlistScrollTop - allowlistScrollBottom)
-        ))
-        allowlistScrollView.autoresizingMask = [.width, .height]
-        allowlistScrollView.hasVerticalScroller = true
-
-        let hostColumn = NSTableColumn(identifier: .init("host"))
-        hostColumn.title = "Host"
-        hostColumn.width = 460
-
-        allowlistTableView.addTableColumn(hostColumn)
-        allowlistTableView.dataSource = self
-        allowlistTableView.delegate = self
-        ListAppearance.apply(to: allowlistTableView, in: allowlistScrollView)
-        allowlistScrollView.documentView = allowlistTableView
-        view.addSubview(allowlistScrollView)
+    private func updateListButtons() {
+        allowlistButtons.setEnabled(selectedProfile != nil, forSegment: SettingsListButtons.addSegment)
+        allowlistButtons.canRemove = allowlistedHosts.indices.contains(allowlistTableView.selectedRow)
+        removePermissionControl.setEnabled(permissionEntries.indices.contains(permissionsTableView.selectedRow), forSegment: 0)
+        resetAllPermissionsButton.isEnabled = !permissionEntries.isEmpty
     }
 
     // MARK: - Data
 
     private func loadSettingsForSelectedProfile() {
+        defer { updateListButtons() }
         guard let profile = selectedProfile else {
             enabledCheckbox.isEnabled = false
             threatWarningCheckbox.isEnabled = false
@@ -302,6 +203,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     }
 
     private func loadPermissionsForSelectedProfile() {
+        defer { updateListButtons() }
         guard let profile = selectedProfile else {
             permissionEntries = []
             permissionsTableView.reloadData()
@@ -385,7 +287,15 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         PrivacyReportWindowController.shared.show(for: profile)
     }
 
-    @objc private func addAllowlistHost() {
+    @objc private func allowlistButtonClicked(_ sender: NSSegmentedControl) {
+        switch sender.selectedSegment {
+        case SettingsListButtons.addSegment: addAllowlistHost()
+        case SettingsListButtons.removeSegment: removeSelectedAllowlistHost()
+        default: break
+        }
+    }
+
+    private func addAllowlistHost() {
         guard selectedProfile != nil else { return }
 
         let alert = NSAlert()
@@ -405,14 +315,16 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
         allowlistedHosts.append(host)
         allowlistTableView.reloadData()
+        updateListButtons()
         saveCurrentSettings()
     }
 
-    @objc private func removeSelectedAllowlistHost() {
+    private func removeSelectedAllowlistHost() {
         let index = allowlistTableView.selectedRow
         guard allowlistedHosts.indices.contains(index) else { return }
         allowlistedHosts.remove(at: index)
         allowlistTableView.reloadData()
+        updateListButtons()
         saveCurrentSettings()
     }
 
@@ -421,6 +333,10 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === permissionsTableView { return permissionEntries.count }
         return allowlistedHosts.count
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        updateListButtons()
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -444,4 +360,28 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         guard allowlistedHosts.indices.contains(row) else { return nil }
         return ListAppearance.textCell(in: tableView, identifier: "hostCell", text: allowlistedHosts[row])
     }
+}
+
+/// A fixed-height table in the form's control column, with its list
+/// controls in a row just under it.
+private func tableBlock(_ scrollView: NSScrollView, height: CGFloat, controls: [NSView]) -> NSView {
+    let container = NSView()
+    let buttons = NSStackView(views: controls)
+    buttons.orientation = .horizontal
+    buttons.spacing = 8
+    for subview in [scrollView, buttons] as [NSView] {
+        subview.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(subview)
+    }
+    NSLayoutConstraint.activate([
+        scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+        scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        scrollView.widthAnchor.constraint(equalToConstant: SettingsForm.controlColumnWidth),
+        scrollView.heightAnchor.constraint(equalToConstant: height),
+        buttons.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 6),
+        buttons.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+        buttons.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+    ])
+    return container
 }
