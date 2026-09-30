@@ -63,6 +63,90 @@ final class BrowserWindow: NSWindow {
         fatalError("init(coder:) is not supported")
     }
 
+    // MARK: - Traffic lights
+
+    /// How far below the window's top edge the traffic lights' centre line
+    /// sits -- the toolbar row's own centre, set by BrowserWindowController
+    /// (it accounts for the dev-build banner above the row). nil leaves them
+    /// where AppKit puts them.
+    var trafficLightCenterFromTop: CGFloat? {
+        didSet { positionTrafficLights() }
+    }
+
+    /// The traffic lights' trailing edge, in window coordinates, once moved:
+    /// where the toolbar's leading controls may begin.
+    var trafficLightsMaxX: CGFloat {
+        guard let close = standardWindowButton(.closeButton),
+              let zoom = standardWindowButton(.zoomButton) else { return ChromeMetrics.edgeInset + 60 }
+        return ChromeMetrics.edgeInset + (zoom.frame.minX - close.frame.minX) + zoom.frame.width
+    }
+
+    /// AppKit re-tiles the titlebar -- and puts the traffic lights back at
+    /// its own 32pt titlebar's centre -- on every title change, resize, key
+    /// change and fullscreen exit, and posts nothing that reliably arrives
+    /// after it has done so. This is the one hook that runs after every one
+    /// of those passes, so the lights are moved back in the same pass,
+    /// before anything is drawn.
+    override func layoutIfNeeded() {
+        super.layoutIfNeeded()
+        positionTrafficLights()
+    }
+
+    /// Puts the traffic lights on the toolbar row's centre line, the close
+    /// button `ChromeMetrics.edgeInset` in from the leading edge (so the
+    /// lights line up with the first tab below them), keeping AppKit's own
+    /// spacing between the three.
+    ///
+    /// The titlebar container is grown to hold the moved buttons first: a
+    /// button moved outside its superview's bounds would still draw but
+    /// could no longer be clicked. Content controls under the taller
+    /// titlebar still receive their own clicks -- the full-size content
+    /// view's controls win the titlebar's hit test, as they already did for
+    /// the part of the row the default titlebar covered.
+    ///
+    /// Skipped in fullscreen, where the lights live in the menu-bar reveal
+    /// rather than in this window's titlebar.
+    private func positionTrafficLights() {
+        guard let centre = trafficLightCenterFromTop, !styleMask.contains(.fullScreen),
+              let close = standardWindowButton(.closeButton),
+              let titlebarView = close.superview,
+              let container = titlebarView.superview,
+              let themeFrame = container.superview else { return }
+
+        // Just tall enough to hold the moved buttons: no taller than it must
+        // be, so it never reaches over the tab strip below the row.
+        let containerHeight = (centre + close.frame.height / 2 + 4).rounded(.up)
+        let containerFrame = NSRect(
+            x: 0, y: themeFrame.bounds.height - containerHeight,
+            width: themeFrame.bounds.width, height: containerHeight)
+        if container.frame != containerFrame { container.frame = containerFrame }
+        if titlebarView.frame != container.bounds { titlebarView.frame = container.bounds }
+
+        let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { standardWindowButton($0) }
+        let closeMinX = close.frame.minX
+        var moved = false
+        for button in buttons {
+            let height = button.frame.height
+            let y = titlebarView.isFlipped
+                ? centre - height / 2
+                : titlebarView.bounds.height - centre - height / 2
+            let origin = NSPoint(
+                x: ChromeMetrics.edgeInset + (button.frame.minX - closeMinX),
+                y: y.rounded())
+            if button.frame.origin != origin {
+                button.setFrameOrigin(origin)
+                moved = true
+            }
+        }
+        // The group's hover state (the x/-/+ glyphs appearing together) is
+        // tracked by areas AppKit computed for the old positions.
+        if moved {
+            titlebarView.updateTrackingAreas()
+            buttons.forEach { $0.updateTrackingAreas() }
+        }
+    }
+
     /// The modifier flags that count when matching the chords handled below.
     /// Caps Lock is excluded from the comparison because AppKit's own menu
     /// key-equivalent matching ignores it: without this, leaving Caps Lock on
