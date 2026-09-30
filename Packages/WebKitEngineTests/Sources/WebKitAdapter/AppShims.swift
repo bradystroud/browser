@@ -23,6 +23,7 @@ enum CEFEngine: BrowserEngine {
     static func setWindowCloseHandler(_ handler: @escaping () -> Void) {}
     static var isTerminating: Bool { false }
     static func setVisualLookUpAvailable(_ available: Bool) {}
+    static func setBackgroundTabPolicy(_ policy: BackgroundTabPolicy) {}
     static func setDownloadDirectory(_ path: String) {}
     static func updateContentBlocking(domains: [String], profileSettings: [String: EngineProfileBlockingSettings]) {}
     static func setThreatInterstitialBuilder(_ builder: @escaping (String, String) -> String) {}

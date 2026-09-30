@@ -121,6 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if #available(macOS 13.0, *) {
             ActiveEngine.setVisualLookUpAvailable(ImageAnalyzer.isSupported)
         }
+        ActiveEngine.setBackgroundTabPolicy(BackgroundTabPolicyPreference.current)
 
         // See -[BRWApplication terminate:] and WindowManager.closeAllWindowsForShutdown:
         // quitting must close every Swift-owned window (and thus its tabs'
@@ -140,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         RoutingCoordinator.shared.markReady()
         CLIServer.shared.start() // browser-82d: the `browser` CLI's control socket -- see CLI/CLIServer.swift.
         HandoffCoordinator.shared.start()
+        TabMemoryDiagnostics.shared.start()
 
         // Holding Shift at launch skips restore entirely -- the standard
         // "hold a modifier to skip the usual startup behavior" convention

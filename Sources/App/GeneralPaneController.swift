@@ -94,6 +94,23 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     }()
     private static let engineOrder: [EngineChoice] = [.cef, .webkit]
 
+    private let backgroundTabsLabel = NSTextField(labelWithString: "Background tabs:")
+    private let backgroundTabsSlider: NSSlider = {
+        let slider = NSSlider(value: 1, minValue: 0, maxValue: Double(BackgroundTabPolicy.allCases.count - 1), target: nil, action: nil)
+        slider.numberOfTickMarks = BackgroundTabPolicy.allCases.count
+        slider.allowsTickMarkValuesOnly = true
+        return slider
+    }()
+    private let backgroundTabsMinLabel = GeneralPaneController.sliderEndLabel("Save memory", alignment: .left)
+    private let backgroundTabsMidLabel = GeneralPaneController.sliderEndLabel("Balanced", alignment: .center)
+    private let backgroundTabsMaxLabel = GeneralPaneController.sliderEndLabel("Keep tabs ready", alignment: .right)
+    private let backgroundTabsHelpLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        return label
+    }()
+
     override init() {
         super.init()
         setUpViews()
@@ -127,6 +144,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             enginePopup.selectItem(at: index)
         }
         updateEngineHelpText(for: engine)
+
+        let policy = BackgroundTabPolicyPreference.current
+        backgroundTabsSlider.integerValue = BackgroundTabPolicy.allCases.firstIndex(of: policy) ?? 1
+        updateBackgroundTabsRow(for: policy)
     }
 
     private func setUpViews() {
@@ -206,6 +227,12 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         enginePopup.action = #selector(engineChanged)
         view.addSubview(enginePopup)
         view.addSubview(engineHelpLabel)
+
+        backgroundTabsSlider.target = self
+        backgroundTabsSlider.action = #selector(backgroundTabsChanged)
+        for subview in [backgroundTabsLabel, backgroundTabsSlider, backgroundTabsMinLabel, backgroundTabsMidLabel, backgroundTabsMaxLabel, backgroundTabsHelpLabel] {
+            view.addSubview(subview)
+        }
     }
 
     // MARK: - Layout
@@ -289,6 +316,15 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         y += rowGap
         placeHelp(engineHelpLabel)
 
+        y += rowGap
+        placeLabeledRow(backgroundTabsLabel, [(backgroundTabsSlider, 0, Self.backgroundTabsSliderWidth)])
+        let thirdSlider = Self.backgroundTabsSliderWidth / 3
+        place(backgroundTabsMinLabel, width: thirdSlider, height: Self.labelHeight)
+        place(backgroundTabsMidLabel, x: margin + thirdSlider, width: thirdSlider, height: Self.labelHeight)
+        place(backgroundTabsMaxLabel, x: margin + thirdSlider * 2, width: thirdSlider, height: Self.labelHeight)
+        y += Self.labelHeight + rowGap
+        placeHelp(backgroundTabsHelpLabel)
+
         return (y + margin).rounded(.up)
     }
 
@@ -338,6 +374,46 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         guard let last = missing.popLast() else { return "" }
         let list = missing.isEmpty ? last : missing.joined(separator: ", ") + " and " + last
         return "\(list) don\u{2019}t work. "
+    }
+
+    private static let backgroundTabsSliderWidth: CGFloat = 320
+
+    private static func sliderEndLabel(_ text: String, alignment: NSTextAlignment) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 11)
+        label.textColor = .secondaryLabelColor
+        label.alignment = alignment
+        return label
+    }
+
+    /// The setting only exists where the running engine can honour it.
+    /// Chromium never suspends a hidden tab, so there it is shown disabled
+    /// with the reason, rather than hidden.
+    private func updateBackgroundTabsRow(for policy: BackgroundTabPolicy) {
+        let supported = ActiveEngine.capabilities.backgroundTabPolicy
+        backgroundTabsSlider.isEnabled = supported
+        guard supported else {
+            backgroundTabsHelpLabel.stringValue = "Chromium keeps every open tab loaded, so there is nothing to adjust. This setting applies to the WebKit engine on macOS 14 or later."
+            helpTextDidChange()
+            return
+        }
+        switch policy {
+        case .saveMemory:
+            backgroundTabsHelpLabel.stringValue = "Tabs you aren\u{2019}t looking at stop running. macOS can take back their memory, and then the page reloads when you return to it. Uses the least memory and battery."
+        case .balanced:
+            backgroundTabsHelpLabel.stringValue = "Tabs you aren\u{2019}t looking at keep running slowly and stay loaded, so they rarely reload when you return. Uses more memory than Save memory."
+        case .keepReady:
+            backgroundTabsHelpLabel.stringValue = "Tabs you aren\u{2019}t looking at keep running at full speed, so music, timers and live pages never pause. Uses the most memory and battery."
+        }
+        helpTextDidChange()
+    }
+
+    @objc private func backgroundTabsChanged() {
+        let cases = BackgroundTabPolicy.allCases
+        let policy = cases[min(max(backgroundTabsSlider.integerValue, 0), cases.count - 1)]
+        guard policy != BackgroundTabPolicyPreference.current else { return }
+        BackgroundTabPolicyPreference.current = policy
+        updateBackgroundTabsRow(for: policy)
     }
 
     private func updateHelpText(for mode: OmniboxDisplayMode) {

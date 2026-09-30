@@ -222,6 +222,7 @@ extension WebKitTab: WKNavigationDelegate {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         let url = webView.url
         NSLog("Browser: WebKit web content process terminated for %@", url?.absoluteString ?? "(nil)")
+        NotificationCenter.default.post(name: .engineTabContentProcessDidTerminate, object: self)
         let now = Date()
         if let last = navigationState.lastCrashReload, now.timeIntervalSince(last) < 30 {
             guard let url, url.scheme == "http" || url.scheme == "https" else { return }

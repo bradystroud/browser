@@ -66,6 +66,8 @@ set(BROWSER_SWIFT_SRCS
   Tab.swift
   TabLifecycleCenter.swift
   HandoffCoordinator.swift
+  BackgroundTabPolicyPreference.swift
+  TabMemoryDiagnostics.swift
   TabButtonView.swift
   TabDragDiagnostics.swift
   TabStripView.swift
@@ -85,6 +87,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
   Engine/WebKitEngineAdapter.swift
+  Engine/WebKitBackgroundTabPolicy.swift
   Engine/WebKitContentBlocking.swift
   Engine/WebKitTab+Navigation.swift
   Engine/WebKitTab+UIDelegate.swift

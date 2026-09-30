@@ -58,7 +58,8 @@ enum WebKitEngine: BrowserEngine {
             responsiveDesignMode: WebKitResponsiveDesign.isAvailable,
             perTabCPUUsage: false,
             perTabAudioMute: true,
-            customContextMenuItems: false)
+            customContextMenuItems: false,
+            backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable)
     }
 
     static var contentRuleListStore: WKContentRuleListStore?
@@ -160,6 +161,15 @@ enum WebKitEngine: BrowserEngine {
     }
 
     private static var terminationObserver: NSObjectProtocol?
+
+    static func setBackgroundTabPolicy(_ policy: BackgroundTabPolicy) {
+        WebKitBackgroundTabPolicy.current = policy
+        for table in liveTabsByProfile.values {
+            for tab in table.allObjects {
+                WebKitBackgroundTabPolicy.apply(to: tab.webView.configuration.preferences)
+            }
+        }
+    }
 
     static func setVisualLookUpAvailable(_ available: Bool) {
         // No macOS WKWebView hook to wire this to at all: WKUIDelegate's
@@ -338,6 +348,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         // user gesture at all. False makes WebKit's own popup blocker refuse
         // them before WKUIDelegate is ever asked; a click still opens one.
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        WebKitBackgroundTabPolicy.apply(to: config.preferences)
         // Every tab is listed in Safari's Develop menu from the start, not
         // only once "Developer Tools" has been chosen for it.
         if #available(macOS 13.3, *) {
@@ -507,6 +518,16 @@ final class WebKitTab: NSObject, EnginePopupTab {
     func clearResponsiveDesignMode() {
         responsiveDesign?.restore()
         responsiveDesign = nil
+    }
+
+    /// Private `_webProcessIdentifier` SPI, checked at runtime like this
+    /// adapter's other SPI; nil when it is missing or no process is running.
+    var contentProcessIdentifier: pid_t? {
+        let selector = NSSelectorFromString("_webProcessIdentifier")
+        guard webView.responds(to: selector),
+              let pid = (webView.value(forKey: "_webProcessIdentifier") as? NSNumber)?.int32Value,
+              pid > 0 else { return nil }
+        return pid
     }
 
     func cpuUsagePercent() -> Double {

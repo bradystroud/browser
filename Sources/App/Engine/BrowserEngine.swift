@@ -213,8 +213,17 @@ protocol EngineTabDelegate: AnyObject {
 /// Conformers: CEFTab (Sources/App/Engine/CEFEngineAdapter.swift), a thin
 /// wrapper around the bridge's BRWBrowser, and WebKitTab
 /// (Sources/App/Engine/WebKitEngineAdapter.swift), a WKWebView wrapper.
+extension Notification.Name {
+    /// Posted with the EngineTab as `object` when the process rendering its
+    /// page ends -- a crash, or the system reclaiming a hidden tab's memory.
+    static let engineTabContentProcessDidTerminate = Notification.Name("EngineTabContentProcessDidTerminate")
+}
+
 protocol EngineTab: AnyObject {
     var delegate: EngineTabDelegate? { get set }
+    /// The process rendering this tab's page, for memory diagnostics. Nil
+    /// when the engine can't say (CEF), or the tab has no process yet.
+    var contentProcessIdentifier: pid_t? { get }
     func loadURL(_ url: String)
     func goBack()
     func goForward()
@@ -376,6 +385,21 @@ struct EngineCapabilities {
     /// The native context menu carries this app's own items (Look Up Image,
     /// Copy Image, View Page Source and so on).
     var customContextMenuItems: Bool
+    /// setBackgroundTabPolicy(_:) changes how hidden tabs are treated. When
+    /// false the engine has no such control, and the setting is not offered.
+    var backgroundTabPolicy: Bool = false
+}
+
+/// How hard the engine works to save memory in tabs the user can't see.
+/// Ordered from most memory saved to most responsive.
+enum BackgroundTabPolicy: String, CaseIterable {
+    /// Hidden tabs stop running. The system can reclaim their memory, and
+    /// a reclaimed tab reloads when it is shown again.
+    case saveMemory
+    /// Hidden tabs keep running at a reduced rate and stay loaded.
+    case balanced
+    /// Hidden tabs run as if they were visible.
+    case keepReady
 }
 
 /// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
@@ -458,6 +482,10 @@ protocol BrowserEngine {
     /// per-tab. Call once, before creating the first tab, with whatever
     /// VisionKit.ImageAnalyzer.isSupported reports.
     static func setVisualLookUpAvailable(_ available: Bool)
+
+    /// Applies to every open tab and every tab created afterwards. A no-op
+    /// when `capabilities.backgroundTabPolicy` is false.
+    static func setBackgroundTabPolicy(_ policy: BackgroundTabPolicy)
 
     /// Where completed downloads are written (browser-5kq.14) -- process-
     /// wide, set once at launch before any tab exists. See BrowserCore's

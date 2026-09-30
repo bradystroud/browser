@@ -46,6 +46,10 @@ enum CEFEngine: BrowserEngine {
         BRWBrowser.setVisualLookUpAvailable(available)
     }
 
+    /// CEF never unloads or suspends a hidden tab on its own, so there is
+    /// nothing to configure (capabilities.backgroundTabPolicy is false).
+    static func setBackgroundTabPolicy(_ policy: BackgroundTabPolicy) {}
+
     static func setDownloadDirectory(_ path: String) {
         BRWBrowser.setDownloadDirectory(path)
     }
@@ -128,6 +132,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     }
     func clearResponsiveDesignMode() { browser.clearResponsiveDesignMode() }
     func cpuUsagePercent() -> Double { browser.cpuUsagePercent() }
+    var contentProcessIdentifier: pid_t? { nil }
     func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
     func setZoomLevel(_ level: Double) { browser.setZoomLevel(level) }
     func zoomLevel() -> Double { browser.zoomLevel() }
