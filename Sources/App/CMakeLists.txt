@@ -65,6 +65,7 @@ set(BROWSER_SWIFT_SRCS
   ProfileManager.swift
   Tab.swift
   TabLifecycleCenter.swift
+  HandoffCoordinator.swift
   TabButtonView.swift
   TabDragDiagnostics.swift
   TabStripView.swift

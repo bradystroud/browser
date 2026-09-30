@@ -139,6 +139,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let coldLaunchWasRouted = RoutingCoordinator.shared.hasPendingRoutes
         RoutingCoordinator.shared.markReady()
         CLIServer.shared.start() // browser-82d: the `browser` CLI's control socket -- see CLI/CLIServer.swift.
+        HandoffCoordinator.shared.start()
 
         // Holding Shift at launch skips restore entirely -- the standard
         // "hold a modifier to skip the usual startup behavior" convention
@@ -293,6 +294,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         } else {
             WindowManager.shared.openNewWindow(profile: ProfileManager.shared.fallbackProfile, initialURL: url)
         }
+    }
+
+    func application(_ application: NSApplication, willContinueUserActivityWithType userActivityType: String) -> Bool {
+        userActivityType == NSUserActivityTypeBrowsingWeb
+    }
+
+    func application(
+        _ application: NSApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+    ) -> Bool {
+        HandoffCoordinator.shared.continueActivity(userActivity)
     }
 
     /// ⌘, -- standard macOS placement. Routing rules, the default-profile
