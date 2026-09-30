@@ -1,3 +1,4 @@
+import Foundation
 import SQLite3
 
 /// Thin wrapper over a single prepared `sqlite3_stmt`. Bind indices are
@@ -73,6 +74,11 @@ final class Statement {
     func text(_ column: Int32) -> String {
         guard let cString = sqlite3_column_text(handle, column) else { return "" }
         return String(cString: cString)
+    }
+
+    func dataOrNil(_ column: Int32) -> Data? {
+        guard !isNull(column), let bytes = sqlite3_column_blob(handle, column) else { return nil }
+        return Data(bytes: bytes, count: Int(sqlite3_column_bytes(handle, column)))
     }
 
     func textOrNil(_ column: Int32) -> String? {

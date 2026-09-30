@@ -133,8 +133,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             scanResult = result
             rows = result.profiles.map { Row(profile: $0) }
             tableView.reloadData()
-            summaryLabel.stringValue = "\(result.bookmarkCount) bookmark\(result.bookmarkCount == 1 ? "" : "s"), "
-                + "\(result.favoriteCount) favourite\(result.favoriteCount == 1 ? "" : "s") -- shared across every Safari profile."
+            summaryLabel.stringValue = "Each profile brings its own Safari Favorites folder. Safari Default also brings every bookmark that is in no profile\u{2019}s Favorites."
         } catch {
             // Deliberately does NOT close the window (unlike the plain
             // bookmarks-only Safari import, which has nothing else to
@@ -172,20 +171,19 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         // that case selectedRows is necessarily empty (see runScan's own
         // catch block), so this loop just doesn't run; passwords below
         // are entirely independent of this succeeding.
-        let favoriteURLs = scanResult.map { SafariImportScanner.favoriteURLs(in: $0.sharedBookmarks) } ?? []
         var totalBookmarks = 0
         var totalFavorites = 0
         var totalHistory = 0
         var importedProfileCount = 0
 
         for row in selectedRows {
-            guard let scanResult else { break }
+            let favoriteURLs = SafariImportScanner.favoriteURLs(in: row.profile.bookmarks)
             let profile = resolveDestinationProfile(for: row)
             let stores = ProfileDataStoreManager.shared.stores(for: profile)
             let favoritesFolderId = FavoritesFolder.id(in: stores.bookmarks)
 
             let insertedURLs = BookmarkImporter.importNodes(
-                scanResult.sharedBookmarks,
+                row.profile.bookmarks,
                 into: stores.bookmarks,
                 destinationParentId: nil,
                 favoritesFolderId: favoritesFolderId
@@ -506,7 +504,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
 
     private func profileLabelText(for profile: SafariImportProfile) -> NSAttributedString {
         let title = NSMutableAttributedString(string: profile.displayName + "\n", attributes: [.font: NSFont.systemFont(ofSize: 13)])
-        let counts = "\(scanResult?.bookmarkCount ?? 0) bookmarks, \(scanResult?.favoriteCount ?? 0) favourites, \(profile.historyCount) history entries"
+        let counts = "\(profile.bookmarkCount) bookmarks, \(profile.favoriteCount) favourites, \(profile.historyCount) history entries"
         title.append(NSAttributedString(string: counts, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.secondaryLabelColor,

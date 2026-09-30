@@ -122,3 +122,86 @@ extension SafariBookmarksPlistParser.ReadError: Equatable {
         }
     }
 }
+
+/// Safari shares one bookmark tree across profiles, and each profile shows
+/// one folder of it as its Favorites -- sometimes nested inside another
+/// profile's. These fixtures copy that shape.
+final class SafariBookmarksPartitionTests: XCTestCase {
+    private func leaf(_ url: String) -> [String: Any] {
+        ["WebBookmarkType": "WebBookmarkTypeLeaf", "URLString": url, "URIDictionary": ["title": url]]
+    }
+
+    private func folder(_ title: String, serverId: String?, _ children: [[String: Any]], extra: [String: Any] = [:]) -> [String: Any] {
+        var dict: [String: Any] = ["WebBookmarkType": "WebBookmarkTypeList", "Title": title, "Children": children]
+        if let serverId { dict["Sync"] = ["ServerID": serverId] }
+        return dict.merging(extra) { $1 }
+    }
+
+    private func urls(_ nodes: [ImportedBookmarkNode]) -> [String] {
+        nodes.flatMap { node -> [String] in
+            switch node {
+            case .bookmark(_, let url): return [url]
+            case .folder(_, _, let children): return urls(children)
+            }
+        }
+    }
+
+    private var tree: [[String: Any]] {
+        [
+            folder("BookmarksBar", serverId: "Favorites Bar", [
+                leaf("https://bar.example"),
+                folder("SSW", serverId: "ssw", [
+                    leaf("https://ssw.example"),
+                    folder("ASF Audits", serverId: "asf", [leaf("https://asf.example")]),
+                ]),
+            ]),
+            folder("BookmarksMenu", serverId: "Bookmarks Menu", [leaf("https://menu.example")]),
+            folder("com.apple.ReadingList", serverId: "Reading List", [leaf("https://later.example")], extra: ["ShouldOmitFromUI": true]),
+            folder("stroud.dev", serverId: "dev", [
+                leaf("https://dev.example"),
+                folder("Rove", serverId: "rove", [leaf("https://rove.example")]),
+            ]),
+            folder("Build", serverId: "build", [leaf("https://build.example")]),
+        ]
+    }
+
+    func testEachFavoritesFolderExcludesNestedFavoritesFolders() {
+        let partition = SafariBookmarksPlistParser.partition(
+            rootChildren: tree,
+            favoritesFolderServerIds: ["Favorites Bar", "ssw", "asf", "dev", "rove"]
+        )
+
+        XCTAssertEqual(urls(partition.favorites["Favorites Bar"] ?? []), ["https://bar.example"])
+        XCTAssertEqual(urls(partition.favorites["ssw"] ?? []), ["https://ssw.example"])
+        XCTAssertEqual(urls(partition.favorites["asf"] ?? []), ["https://asf.example"])
+        XCTAssertEqual(urls(partition.favorites["dev"] ?? []), ["https://dev.example"])
+        XCTAssertEqual(urls(partition.favorites["rove"] ?? []), ["https://rove.example"])
+    }
+
+    func testRemainderHoldsEverythingOutsideFavoritesAndSkipsHiddenFolders() {
+        let partition = SafariBookmarksPlistParser.partition(
+            rootChildren: tree,
+            favoritesFolderServerIds: ["Favorites Bar", "ssw", "asf", "dev", "rove"]
+        )
+
+        XCTAssertEqual(urls(partition.remainder), ["https://menu.example", "https://build.example"])
+    }
+
+    func testUnrequestedFolderStaysInPlace() {
+        let partition = SafariBookmarksPlistParser.partition(rootChildren: tree, favoritesFolderServerIds: ["Favorites Bar"])
+
+        XCTAssertEqual(urls(partition.favorites["Favorites Bar"] ?? []), ["https://bar.example", "https://ssw.example", "https://asf.example"])
+        XCTAssertNil(partition.favorites["ssw"])
+    }
+
+    func testReadsTheFavoritesFolderChoiceFromExtraAttributes() throws {
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: ["CustomFavoritesFolderServerID": "ssw", "SymbolImageName": "building.2.fill"],
+            format: .binary,
+            options: 0
+        )
+
+        XCTAssertEqual(SafariProfileDiscovery.favoritesFolderServerId(fromExtraAttributes: data), "ssw")
+        XCTAssertNil(SafariProfileDiscovery.favoritesFolderServerId(fromExtraAttributes: Data("not a plist".utf8)))
+    }
+}

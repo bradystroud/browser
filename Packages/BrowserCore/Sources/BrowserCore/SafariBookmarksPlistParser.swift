@@ -25,16 +25,62 @@ public enum SafariBookmarksPlistParser {
     }
 
     public static func parse(fileURL: URL) throws -> [ImportedBookmarkNode] {
+        func convert(_ raw: [[String: Any]]) -> [ImportedBookmarkNode] {
+            raw.compactMap { node(from: $0, children: convert) }
+        }
+        return convert(try rootChildren(fileURL: fileURL))
+    }
+
+    /// `Sync.ServerID` of the Favorites Bar folder, the root profile's
+    /// Favorites.
+    public static let favoritesBarServerId = "Favorites Bar"
+
+    /// Safari's bookmark tree split by profile. Every Safari profile shares
+    /// one tree, and each profile shows one folder of it as its Favorites
+    /// (a folder can sit inside another profile's). `favorites` holds, for
+    /// each requested folder `Sync.ServerID` found, that folder's contents
+    /// minus any nested folder that is itself requested -- so one profile's
+    /// favourites are never imported again as part of another's.
+    /// `remainder` is everything in no requested folder. Folders Safari hides
+    /// from its own UI (the Reading List) are left out of both.
+    public struct Partition: Equatable {
+        public var favorites: [String: [ImportedBookmarkNode]]
+        public var remainder: [ImportedBookmarkNode]
+    }
+
+    public static func partition(fileURL: URL, favoritesFolderServerIds: Set<String>) throws -> Partition {
+        partition(rootChildren: try rootChildren(fileURL: fileURL), favoritesFolderServerIds: favoritesFolderServerIds)
+    }
+
+    public static func partition(rootChildren: [[String: Any]], favoritesFolderServerIds ids: Set<String>) -> Partition {
+        var favorites: [String: [ImportedBookmarkNode]] = [:]
+        func convert(_ raw: [[String: Any]]) -> [ImportedBookmarkNode] {
+            raw.compactMap { child in
+                if child["ShouldOmitFromUI"] as? Bool == true { return nil }
+                if let serverId = (child["Sync"] as? [String: Any])?["ServerID"] as? String,
+                   ids.contains(serverId),
+                   let grandchildren = child["Children"] as? [[String: Any]] {
+                    favorites[serverId] = convert(grandchildren)
+                    return nil
+                }
+                return node(from: child, children: convert)
+            }
+        }
+        let remainder = convert(rootChildren)
+        return Partition(favorites: favorites, remainder: remainder)
+    }
+
+    private static func rootChildren(fileURL: URL) throws -> [[String: Any]] {
         guard let root = NSDictionary(contentsOf: fileURL) as? [String: Any] else {
             throw ReadError.fileNotReadable
         }
         guard let children = root["Children"] as? [[String: Any]] else {
             throw ReadError.unexpectedFormat
         }
-        return children.compactMap(node(from:))
+        return children
     }
 
-    private static func node(from dict: [String: Any]) -> ImportedBookmarkNode? {
+    private static func node(from dict: [String: Any], children convertChildren: ([[String: Any]]) -> [ImportedBookmarkNode]) -> ImportedBookmarkNode? {
         let type = dict["WebBookmarkType"] as? String
 
         if type == "WebBookmarkTypeLeaf" {
@@ -58,7 +104,7 @@ public enum SafariBookmarksPlistParser {
         let identifier = (dict["WebBookmarkIdentifier"] as? String) ?? ""
         let isFavoritesBar = identifier.localizedCaseInsensitiveContains("BookmarksBar")
             || NetscapeBookmarkParser.isKnownFavoritesBarTitle(title)
-        let children = rawChildren.compactMap(node(from:))
+        let children = convertChildren(rawChildren)
         return .folder(title: title, isFavoritesBar: isFavoritesBar, children: children)
     }
 }
