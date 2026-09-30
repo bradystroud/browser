@@ -99,7 +99,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     /// need to add surface area to AppDelegate.
     @objc func show(_ sender: Any?) {
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
         runScan()
     }
 

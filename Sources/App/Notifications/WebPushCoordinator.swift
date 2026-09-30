@@ -245,7 +245,7 @@ final class WebPushCoordinator: NSObject, UNUserNotificationCenterDelegate {
     private func focusTab(_ tab: Tab) {
         for controller in WindowManager.shared.windowControllers {
             if let index = controller.tabs.firstIndex(where: { $0 === tab }) {
-                NSApp.activate(ignoringOtherApps: true)
+                AppActivation.activate()
                 controller.window?.makeKeyAndOrderFront(nil)
                 controller.selectTab(at: index)
                 return

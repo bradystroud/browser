@@ -6,6 +6,7 @@ import AppKit
 
 enum CommandLineArgs {
     static func engineChoice() -> EngineChoice { .webkit }
+    static func testNoActivate() -> Bool { true }
 }
 
 enum CEFEngine: BrowserEngine {

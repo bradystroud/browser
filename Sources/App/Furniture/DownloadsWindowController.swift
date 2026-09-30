@@ -75,7 +75,7 @@ final class DownloadsWindowController: NSWindowController, ProfileWindowControll
     func show() {
         reload()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     private func setUpViews() {

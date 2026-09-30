@@ -222,7 +222,7 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
         if CommandLineArgs.testNoActivate() {
             window.orderBack(nil)
         } else {
-            NSApp.activate(ignoringOtherApps: true)
+            AppActivation.activate()
             window.makeKeyAndOrderFront(nil)
         }
     }

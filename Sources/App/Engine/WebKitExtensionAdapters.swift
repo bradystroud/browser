@@ -126,7 +126,7 @@ final class WebKitExtensionWindowAdapter: NSObject, WKWebExtensionWindow {
     }
 
     func focus(for context: WKWebExtensionContext) async throws {
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
         nsWindow?.makeKeyAndOrderFront(nil)
     }
 

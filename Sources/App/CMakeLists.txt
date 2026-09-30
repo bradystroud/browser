@@ -35,6 +35,7 @@ source_group(Bridge FILES ${BROWSER_BRIDGE_SRCS})
 set(BROWSER_SWIFT_SRCS
   main.swift
   AppDelegate.swift
+  AppActivation.swift
   BrowserWindow.swift
   FindBarController.swift
   BrowserWindowController.swift

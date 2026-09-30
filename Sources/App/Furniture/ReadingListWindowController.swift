@@ -59,7 +59,7 @@ final class ReadingListWindowController: NSWindowController, ProfileWindowContro
     func show() {
         reload()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     private func setUpViews() {

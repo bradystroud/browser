@@ -317,7 +317,7 @@ final class CLIServer {
         // --test-no-activate for the same reason WindowManager skips it --
         // stealing real keyboard focus is exactly what that flag prevents.
         if !CommandLineArgs.testNoActivate() {
-            NSApp.activate(ignoringOtherApps: true)
+            AppActivation.activate()
         }
         controller.window?.makeKeyAndOrderFront(nil)
         return CLIResponse(ok: true, message: "Focused profile '\(profile.name)'.")

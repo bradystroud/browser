@@ -165,7 +165,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         resizeWindow(for: tabViewController.tabView.selectedTabViewItem, animated: false)
         window?.makeKeyAndOrderFront(nil)
         resizeWindow(for: tabViewController.tabView.selectedTabViewItem, animated: false)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     /// Opens Settings already on the "Start Page" pane -- reached from the

@@ -62,7 +62,7 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
             ? "No Chromium-based browsers with data to import were found on this Mac."
             : ""
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     // MARK: - Selection

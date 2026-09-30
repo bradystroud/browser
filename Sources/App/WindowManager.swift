@@ -109,7 +109,7 @@ final class WindowManager {
         // focus on the actual display, which is exactly what that flag exists
         // to avoid for contained test launches -- see CommandLineArgs.
         if !CommandLineArgs.testNoActivate() {
-            NSApp.activate(ignoringOtherApps: true)
+            AppActivation.activate()
         }
         controller.show(restoring: tabs, groups: groups, activeIndex: activeIndex)
     }

@@ -35,7 +35,7 @@ final class HistoryWindowController: NSWindowController, ProfileWindowController
     func show() {
         reload()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     private func setUpViews() {

@@ -27,8 +27,8 @@ enum CommandLineArgs {
     }
 
     /// `--test-no-activate` launch flag for contained, non-interactive quit
-    /// testing: WindowManager skips NSApp.activate(ignoringOtherApps:) and
-    /// positions new windows off the visible screen frame, so a test process
+    /// testing: every AppActivation.activate() call is skipped and
+    /// WindowManager positions new windows off the visible screen frame, so a test process
     /// exercises the same real NSWindow/close paths without ever stealing
     /// keyboard focus or becoming visible on the actual display -- see
     /// docs/ai-tasks/quit-crash-notes.md (a stray real click on a focus-

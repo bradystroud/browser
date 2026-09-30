@@ -136,6 +136,6 @@ final class RoutingCoordinator {
         } else {
             WindowManager.shared.openNewWindow(profile: profile, initialURL: url)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 }

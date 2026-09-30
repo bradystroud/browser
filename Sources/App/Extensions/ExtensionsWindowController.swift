@@ -65,7 +65,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         manager?.loadExtensions(profileId: profile.id)
         reload()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     // MARK: - Views

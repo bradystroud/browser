@@ -184,7 +184,7 @@ final class ProfileSwitcherController {
             // keyboard focus on the actual display, which is exactly what
             // that flag exists to avoid for contained test launches.
             if !CommandLineArgs.testNoActivate() {
-                NSApp.activate(ignoringOtherApps: true)
+                AppActivation.activate()
             }
             existing.window?.makeKeyAndOrderFront(nil)
         } else {

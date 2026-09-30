@@ -66,7 +66,7 @@ final class VisualLookUpPanelController: NSObject {
 
         panel.center()
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     private static func displaySize(for imageSize: NSSize) -> NSSize {

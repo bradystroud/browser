@@ -39,7 +39,7 @@ final class BookmarksWindowController: NSWindowController, ProfileWindowControll
     func show() {
         outlineView.reloadData()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        AppActivation.activate()
     }
 
     private func setUpViews() {
