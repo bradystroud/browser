@@ -463,11 +463,9 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
                 target: self, action: #selector(keyIconTapped(_:))
             )
             button.applyChromeAppearance(.glass)
-            // Slot 2 leaves stable space for Reader and Downloads even when
-            // either optional control is currently hidden.
-            button.frame = controller.trailingToolbarControlFrame(slot: 2)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
+            controller.placeTrailingToolbarControl(button, slot: 2)
             keyButtons.setObject(button, forKey: contentView)
         }
         windowForKeyButton.setObject(window, forKey: button)

@@ -119,14 +119,10 @@ final class DownloadsToolbarController: NSObject, NSPopoverDelegate {
         )
         button.applyChromeAppearance(.glass)
         button.toolTip = "Downloads"
-        // Immediately left of the Reader button's slot. The slot is reserved
-        // whether or not Reader is currently showing: Reader appears only on
-        // article-like pages, and a downloads button that slid sideways every
-        // time you navigated would be worse than one sitting a fixed distance
-        // in from the edge.
-        button.frame = controller.trailingToolbarControlFrame(slot: 1)
+        // Next to the Reader button's slot, further from the edge.
         button.autoresizingMask = [.minXMargin, .minYMargin]
         contentView.addSubview(button)
+        controller.placeTrailingToolbarControl(button, slot: 1)
         buttonView = button
     }
 

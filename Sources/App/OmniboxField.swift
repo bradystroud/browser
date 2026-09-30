@@ -19,6 +19,16 @@ final class OmniboxField: NSTextField {
     /// onBuildContextMenu above.
     var expandedTextProvider: (() -> String?)?
 
+    /// Called whenever what the field shows changes shape: its text is
+    /// replaced, or editing begins or ends. BrowserWindowController lays the
+    /// pill's contents out around the displayed text (centred while
+    /// collapsed), so it has to hear about both.
+    var onDisplayChange: (() -> Void)?
+
+    override var stringValue: String {
+        didSet { onDisplayChange?() }
+    }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         configureSingleLine()
@@ -50,13 +60,29 @@ final class OmniboxField: NSTextField {
     /// which fires on the first *keystroke* too: rewriting the text there
     /// discards the character the user just typed and restores the old URL,
     /// so Enter would re-navigate to the page already open.
+    ///
+    /// Editing always reads from the leading edge, so the collapsed display's
+    /// centred alignment is dropped *before* the field editor is set up --
+    /// the editor takes the alignment the field has when editing begins.
     override func becomeFirstResponder() -> Bool {
+        let previousAlignment = alignment
+        alignment = .natural
         let accepted = super.becomeFirstResponder()
-        if accepted, let text = expandedTextProvider?() {
+        guard accepted else {
+            alignment = previousAlignment
+            return false
+        }
+        if let text = expandedTextProvider?() {
             stringValue = text
             currentEditor()?.selectAll(nil)
         }
+        onDisplayChange?()
         return accepted
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        onDisplayChange?()
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {

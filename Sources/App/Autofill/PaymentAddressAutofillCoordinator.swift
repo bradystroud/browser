@@ -348,11 +348,9 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
                 target: self, action: #selector(fillIconTapped(_:))
             )
             button.applyChromeAppearance(.glass)
-            // Slot 3 leaves stable space for Reader, Downloads and password
-            // autofill even when any of those optional controls is hidden.
-            button.frame = controller.trailingToolbarControlFrame(slot: 3)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
+            controller.placeTrailingToolbarControl(button, slot: 3)
             fillButtons.setObject(button, forKey: contentView)
         }
         if let group {
