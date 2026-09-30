@@ -34,18 +34,32 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     private let tabStripView = TabStripView(frame: .zero)
     private let toolbarView = NSView()
-    /// The unified glass background behind the tab strip + toolbar (browser-
-    /// qpy's liquid-glass restyle) -- one continuous vibrant material,
-    /// Safari's own "unified toolbar" look, rather than each view tinting
-    /// itself separately. Sits behind both (added to contentView first);
-    /// falls back to a solid fill under Reduce Transparency (see
+    /// The one material behind the tab strip + toolbar -- Safari's own
+    /// "unified toolbar" look, rather than each view tinting itself
+    /// separately. Sits behind both (added to contentView first). A plain
+    /// titlebar material, never Liquid Glass: the controls on it (omnibox,
+    /// selected tab, glass buttons) are the glass, and glass laid on glass
+    /// reads as stacked panes. Solid under Reduce Transparency (see
     /// GlassBackgroundView).
     private let chromeBackground = GlassBackgroundView(
-        material: .underWindowBackground, blendingMode: .behindWindow,
-        solidFallbackColor: .windowBackgroundColor
+        material: .titlebar, blendingMode: .behindWindow,
+        solidFallbackColor: .windowBackgroundColor, usesGlass: false
     )
-    private let backButton = NSButton()
-    private let forwardButton = NSButton()
+    /// The hairline between the chrome and the web content, which is what
+    /// separates two surfaces that can otherwise be the same colour (a white
+    /// page under a light titlebar material).
+    private let chromeSeparator = HairlineView()
+    /// Back and forward as one control: two segments on a single glass
+    /// rounded rectangle with a hairline between them, like Safari's grouped
+    /// navigation, rather than two free-floating glyphs.
+    private let navigationGroup = GlassBackgroundView(
+        material: .hudWindow, blendingMode: .withinWindow,
+        solidFallbackColor: .controlBackgroundColor,
+        cornerRadius: ChromeMetrics.controlCornerRadius
+    )
+    private let backButton = HoverFillButton(shape: .rectangle)
+    private let forwardButton = HoverFillButton(shape: .rectangle)
+    private let navigationDivider = HairlineView()
     private let reloadButton = NSButton()
     private let omniboxField = OmniboxField()
     /// The omnibox floating pill (browser-qpy): hudWindow material,
@@ -58,11 +72,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         solidFallbackColor: .controlBackgroundColor,
         cornerRadius: ChromeMetrics.controlCornerRadius
     )
-    /// Thin, Safari-style loading-progress bar shown just below the
-    /// omnibox pill (browser-7z5, Brady's ask: navigation gave zero
-    /// feedback before). Fills as CEF's own real loading-progress signal
-    /// advances (Tab.loadingProgress -- a genuine percentage, not a fake/
-    /// eased approximation; see EngineTabDelegate.
+    /// Thin, Safari-style loading-progress bar along the omnibox pill's
+    /// bottom edge, inside the pill and clipped to its rounded shape
+    /// (browser-7z5, Brady's ask: navigation gave zero feedback before).
+    /// Fills as the engine's own real loading-progress signal advances
+    /// (Tab.loadingProgress -- a genuine percentage, not a fake/eased
+    /// approximation; see EngineTabDelegate.
     /// engineTabDidUpdateLoadingProgress's own doc comment for why no
     /// approximation is needed here), fades out shortly after completion.
     /// A plain NSView whose own frame width *is* the progress -- simpler
@@ -72,7 +87,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let view = NSView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        view.layer?.cornerRadius = 1
         view.alphaValue = 0
         return view
     }()
@@ -93,7 +107,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// second navigation doesn't have its own fresh progress bar fade away
     /// underneath it because of the *previous* navigation's stale timer.
     private var loadingProgressCompletionWorkItem: DispatchWorkItem?
-    private static let omniboxPillHeight: CGFloat = 30
+    private static let omniboxPillHeight = ChromeMetrics.omniboxHeight
     /// The collapsed (unfocused) pill scales with the window rather than
     /// sitting at one fixed width, which used to leave a full-screen window
     /// showing exactly the same small pill as a half-width one (Brady's ask).
@@ -104,14 +118,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private static let omniboxCollapsedMinWidth: CGFloat = 280
     private static let omniboxCollapsedMaxWidth: CGFloat = 820
     private static let omniboxCollapsedWidthFraction: CGFloat = 0.45
-    /// Minimum breathing room between the expanded pill and whatever sits
-    /// on either side of it (back/forward on the left, the private-browsing
-    /// pill if any on the right).
-    private static let omniboxHorizontalMargin: CGFloat = 16
-    /// A simple "Private" pill -- the whole visual distinction Private
-    /// Browsing gets for now (browser-12m.1). nil (never created) for a
-    /// normal window. Anchored off the toolbar's trailing edge.
-    private let privateLabel: NSView?
+    /// Minimum breathing room between the pill and whatever sits on either
+    /// side of it (the leading controls, the trailing buttons).
+    private static let omniboxHorizontalMargin = ChromeMetrics.groupSpacing
+    /// The "Private" badge at the toolbar's trailing edge (browser-12m.1).
+    /// nil (never created) for a normal window.
+    private let privateLabel: PrivateBadgeView?
     /// Safari-style profile indicator (browser-0y1, Brady's ask): a small
     /// glass pill showing this window's profile color + name, at the
     /// toolbar's leading edge next to navigation -- the chrome tint alone
@@ -123,13 +135,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// profile. nil (never created) for a Private window, which has no
     /// real profile identity to indicate.
     private let profilePillButton: NSButton?
-    private static let profilePillHeight: CGFloat = 30
-    private static let trailingToolbarControlSize: CGFloat = 30
-    private static let trailingToolbarControlGap: CGFloat = 6
-    /// Reader, Downloads, password key and payment autofill -- the slots
-    /// trailingToolbarControlFrame(slot:) hands out. The toolbar's own "+"
-    /// sits outside them, nearest the trailing edge.
-    private static let trailingToolbarControlCount = 4
+    private static let profilePillHeight = ChromeMetrics.controlHeight
+    private static let trailingToolbarControlSize = ChromeMetrics.controlHeight
+    private static let trailingToolbarControlGap = ChromeMetrics.controlSpacing
     /// The toolbar's "+" (new tab), at the trailing end of the toolbar row in
     /// horizontal mode, Safari-style. It lives here rather than in the tab
     /// strip because the strip is hidden while a window has one tab, and it
@@ -153,15 +161,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// out of the hierarchy on every toggle would buy nothing, and this way
     /// the toggle is a pure relayout.
     private let tabSidebarBackground = GlassBackgroundView(
-        material: .underWindowBackground, blendingMode: .behindWindow,
-        solidFallbackColor: .windowBackgroundColor
+        material: .sidebar, blendingMode: .behindWindow,
+        solidFallbackColor: .windowBackgroundColor, usesGlass: false
     )
-    private let tabSidebarSeparator: NSView = {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.separatorColor.cgColor
-        return view
-    }()
+    private let tabSidebarSeparator = HairlineView()
 
     /// Which way this window's tab strip runs. Initialised from the stored
     /// preference and kept in step with it by
@@ -169,16 +172,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// rather than only the one whose menu item was used.
     private var tabStripOrientation = TabStripOrientationPreference.current
 
-    private static let tabStripHeight: CGFloat = 32
-    /// Was 36 -- left only 3pt above/below the 30pt-tall omnibox pill, which
-    /// read as "almost touching the content" (Brady's report, browser-0y1)
-    /// even before the chrome-order flip changed what technically sits
-    /// directly below it. 44 gives the pill visible, symmetric breathing room
-    /// (7pt each side), closer to Safari's own proportions. Everything else
-    /// in setUpViews/setUpToolbarContents/omniboxFrame derives from this one
-    /// constant (via toolbarView.bounds.height), so nothing else needs
-    /// updating.
-    private static let toolbarHeight: CGFloat = 44
+    private static let tabStripHeight = ChromeMetrics.tabStripHeight
+    /// Everything in setUpViews/setUpToolbarContents/omniboxFrame derives
+    /// from this one constant (via toolbarView.bounds.height).
+    private static let toolbarHeight = ChromeMetrics.toolbarHeight
 
     /// The Y coordinate, in window.contentView's own coordinate space, of
     /// the real web content area's top edge -- i.e. immediately below all
@@ -214,45 +211,109 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Private window (privateLabel) when choosing an X position here.
     var toolbarRowHeight: CGFloat { toolbarView.frame.height }
 
-    /// A shared trailing-edge grid for the floating toolbar controls owned by
-    /// Reader, Downloads and autofill coordinators. Those features are
-    /// intentionally separate controllers, but their buttons still need one
-    /// geometry contract or optional controls can overlap each other.
-    func trailingToolbarControlFrame(slot: Int) -> NSRect {
-        guard let contentView = window?.contentView else { return .zero }
+    /// The floating trailing controls owned by Reader, Downloads, the two
+    /// autofill coordinators and the extensions toolbar, keyed by slot.
+    /// Those features are intentionally separate controllers, but their
+    /// buttons share one row, so each hands its button to
+    /// placeTrailingToolbarControl(_:slot:) and this controller owns the
+    /// geometry: whichever are visible are packed against the trailing edge
+    /// in slot order, with no hole left for a hidden one, and re-packed
+    /// whenever one shows or hides.
+    private var trailingControls: [Int: TrailingControl] = [:]
+
+    private struct TrailingControl {
+        weak var view: NSView?
+        let visibilityObservation: NSKeyValueObservation
+    }
+
+    /// The contentView x where the leftmost trailing control (or the
+    /// Private badge) begins -- the omnibox band's trailing limit.
+    private var trailingControlsMinX: CGFloat = 0
+
+    /// Registers `view` as the trailing control in `slot` and frames it.
+    /// Slot 0 is Reader, 1 Downloads, 2 the password key, 3 card/address
+    /// autofill, 4 the extensions button and 5... the pinned extensions;
+    /// lower slots sit nearer the trailing edge, after the toolbar's own
+    /// "+". `view` must already be a subview of the window's contentView.
+    /// Calling this again for the same view is cheap and simply re-packs.
+    func placeTrailingToolbarControl(_ view: NSView, slot: Int) {
+        for (otherSlot, control) in trailingControls where control.view === view && otherSlot != slot {
+            trailingControls[otherSlot] = nil
+        }
+        if trailingControls[slot]?.view !== view {
+            let observation = view.observe(\.isHidden, options: [.new]) { [weak self] _, _ in
+                self?.trailingControlsDidChange()
+            }
+            trailingControls[slot] = TrailingControl(view: view, visibilityObservation: observation)
+        }
+        trailingControlsDidChange()
+    }
+
+    private func trailingControlsDidChange() {
+        layoutTrailingToolbarControls()
+        layoutOmniboxContainer()
+        logChromeFramesIfRequested()
+    }
+
+    /// Packs the trailing edge of the toolbar row, from the edge inwards:
+    /// the Private badge, the "+" (horizontal mode only), then every visible
+    /// slot control in slot order. Only what is visible takes space, so the
+    /// omnibox band -- and therefore its centring -- reflects the row as it
+    /// really is.
+    private func layoutTrailingToolbarControls() {
+        guard let contentView = window?.contentView else { return }
+        let toolbarOriginX = toolbarView.frame.minX
+        var minX = contentView.bounds.width - ChromeMetrics.edgeInset
+        var previousWasBadge = false
+        var placedAny = false
+
+        func nextMaxX(gap: CGFloat) -> CGFloat {
+            placedAny ? minX - gap : minX
+        }
+
+        if let privateLabel {
+            let size = privateLabel.fittingSize
+            let maxX = nextMaxX(gap: 0)
+            privateLabel.frame = NSRect(
+                x: maxX - size.width - toolbarOriginX,
+                y: ((toolbarView.bounds.height - size.height) / 2).rounded(),
+                width: size.width, height: size.height
+            )
+            minX = maxX - size.width
+            placedAny = true
+            previousWasBadge = true
+        }
+
         let size = Self.trailingToolbarControlSize
-        return NSRect(
-            x: trailingToolbarPositionMinX(slot + 1, containerWidth: contentView.bounds.width),
-            y: toolbarView.frame.midY - size / 2,
-            width: size,
-            height: size
-        )
-    }
+        func gapBeforeButton() -> CGFloat {
+            previousWasBadge ? ChromeMetrics.groupSpacing : Self.trailingToolbarControlGap
+        }
+        if !newTabToolbarButton.isHidden {
+            let maxX = nextMaxX(gap: gapBeforeButton())
+            newTabToolbarButton.frame = NSRect(
+                x: maxX - size - toolbarOriginX,
+                y: ((toolbarView.bounds.height - size) / 2).rounded(),
+                width: size, height: size
+            )
+            minX = maxX - size
+            placedAny = true
+            previousWasBadge = false
+        }
 
-    /// Position 0 is the toolbar's own "+"; slot N of
-    /// trailingToolbarControlFrame(slot:) is position N + 1. The "+" position
-    /// is reserved in both orientations so the other controls, which are
-    /// framed once and then ride autoresizing, never need moving on a toggle.
-    private func trailingToolbarPositionMinX(_ position: Int, containerWidth: CGFloat) -> CGFloat {
-        let size = Self.trailingToolbarControlSize
-        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
-        return containerWidth - trailingInset - size
-            - CGFloat(position) * (size + Self.trailingToolbarControlGap)
-    }
-
-    /// Slots beyond the fixed four that a controller currently fills (the
-    /// extensions button and pinned extensions), so the omnibox stays clear
-    /// of them.
-    var extraTrailingToolbarSlots = 0 {
-        didSet { if extraTrailingToolbarSlots != oldValue { layoutOmniboxContainer() } }
-    }
-
-    private var trailingToolbarControlsReservedWidth: CGFloat {
-        let trailingInset: CGFloat = privateLabel == nil ? 10 : 8 + 54 + Self.trailingToolbarControlGap
-        let positions = Self.trailingToolbarControlCount + 1 + extraTrailingToolbarSlots
-        return trailingInset
-            + Self.trailingToolbarControlSize * CGFloat(positions)
-            + Self.trailingToolbarControlGap * CGFloat(positions - 1)
+        let midY = toolbarView.frame.midY
+        for slot in trailingControls.keys.sorted() {
+            guard let view = trailingControls[slot]?.view, view.superview != nil else {
+                trailingControls[slot] = nil
+                continue
+            }
+            guard !view.isHidden else { continue }
+            let maxX = nextMaxX(gap: gapBeforeButton())
+            view.frame = NSRect(x: maxX - size, y: (midY - size / 2).rounded(), width: size, height: size)
+            minX = maxX - size
+            placedAny = true
+            previousWasBadge = false
+        }
+        trailingControlsMinX = minX
     }
 
     private let autocomplete = OmniboxAutocompleteController()
@@ -298,25 +359,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         self.isPrivate = isPrivate
         self.initialURL = initialURL
         if isPrivate {
-            // The badge is a plain view with the text centered inside it: a
-            // label NSTextField draws its line at the top of its own frame,
-            // so a label that is itself the badge shows its text too high.
-            let badge = NSView()
-            badge.wantsLayer = true
-            badge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.7).cgColor
-            badge.layer?.cornerRadius = ChromeMetrics.controlCornerRadius
-            badge.layer?.cornerCurve = .continuous
-            let label = NSTextField(labelWithString: "Private")
-            label.font = .systemFont(ofSize: 11, weight: .semibold)
-            label.textColor = .white
-            label.alignment = .center
-            label.translatesAutoresizingMaskIntoConstraints = false
-            badge.addSubview(label)
-            NSLayoutConstraint.activate([
-                label.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
-                label.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
-            ])
-            self.privateLabel = badge
+            self.privateLabel = PrivateBadgeView()
             self.profilePillButton = nil
         } else {
             self.privateLabel = nil
@@ -468,25 +511,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - View setup
 
-    /// Space reserved at the toolbar row's leading edge for the traffic-
-    /// light buttons, which float over this area now that the titlebar is
-    /// hidden (browser-qpy) -- wide enough to clear them at any window
-    /// size (they don't move), a touch more generous than their tightest
-    /// possible fit. Was the tab strip's own leadingInset until browser-0y1
-    /// flipped the chrome order (toolbar/omnibox row now on top, tab strip
-    /// below it -- Brady's ask, matching where the traffic lights actually
-    /// float once the order changes); TabStripView.leadingInset now stays
-    /// at its default 0. Zero in fullscreen, where macOS hides the traffic
-    /// lights and the leading controls move over to take their place.
-    private static let trafficLightWidth: CGFloat = 78
-
     /// Tracked from the will-enter/will-exit delegate calls rather than read
     /// from styleMask, so the leading controls move at the start of the
     /// fullscreen transition instead of after it.
     private var isEnteringOrInFullScreen = false
 
+    /// Where the toolbar row's leading controls start, in toolbarView
+    /// coordinates. Past the traffic lights (BrowserWindow puts them on this
+    /// row's centre line) plus the gap between groups when they sit over
+    /// this row; the plain edge inset when they don't -- in fullscreen,
+    /// where macOS hides them, and in sidebar mode, where they sit over the
+    /// sidebar and the toolbar row starts beside it.
     private var trafficLightReservedWidth: CGFloat {
-        isEnteringOrInFullScreen ? 0 : Self.trafficLightWidth
+        guard !isEnteringOrInFullScreen, tabStripOrientation == .horizontal else {
+            return ChromeMetrics.edgeInset
+        }
+        let lightsMaxX = (window as? BrowserWindow)?.trafficLightsMaxX ?? ChromeMetrics.edgeInset + 60
+        return lightsMaxX + ChromeMetrics.groupSpacing
     }
 
     private func setUpViews() {
@@ -494,14 +535,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         // Hidden titlebar + full-size content view (browser-qpy): the
         // toolbar row effectively becomes the titlebar area, with the
-        // traffic lights floating over its leading edge (see
-        // trafficLightReservedWidth, applied in setUpToolbarContents/
-        // expandedOmniboxWidth below). True in both orientations -- the
-        // sidebar starts below the toolbar row, not beside it, so the
-        // traffic lights keep floating over the same band.
+        // traffic lights floating on its centre line (BrowserWindow moves
+        // them there; see trafficLightReservedWidth). In sidebar mode the
+        // sidebar runs the full height of the window and the lights sit at
+        // its top, on the same line.
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
+        (window as? BrowserWindow)?.trafficLightCenterFromTop =
+            DevBuildIndicator.topInset + Self.toolbarHeight / 2
 
         // Added back to front. Every frame here is provisional; the real
         // geometry is applyChromeLayout()'s, which also runs on every later
@@ -522,11 +564,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentView.addSubview(toolbarView)
         setUpToolbarContents()
 
-        // The tab strip no longer needs leadingInset (it stays at its
-        // default 0) in either orientation: the traffic lights float over the
-        // toolbar row above it.
+        // The tab strip never needs leadingInset: in horizontal mode the
+        // traffic lights sit on the toolbar row above it, and in sidebar
+        // mode on a band of the sidebar above the strip.
         tabStripView.delegate = self
         contentView.addSubview(tabStripView)
+        contentView.addSubview(chromeSeparator)
 
         contentContainerView.wantsLayer = true
         contentView.addSubview(contentContainerView)
@@ -591,10 +634,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let width = contentView.bounds.width
         let height = contentView.bounds.height - DevBuildIndicator.topInset
         let toolbarHeight = Self.toolbarHeight
+        let hairline: CGFloat = 0.5
 
         tabStripView.orientation = tabStripOrientation
-        toolbarView.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
-        toolbarView.autoresizingMask = [.width, .minYMargin]
 
         switch tabStripOrientation {
         case .horizontal:
@@ -602,6 +644,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             isHorizontalTabStripShown = showsStrip
             let stripHeight = showsStrip ? Self.tabStripHeight : 0
             let chromeHeight = stripHeight + toolbarHeight
+            toolbarView.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
             chromeBackground.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: chromeHeight)
             tabSidebarBackground.isHidden = true
             tabSidebarSeparator.isHidden = true
@@ -609,26 +652,34 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             newTabToolbarButton.isHidden = false
             tabStripView.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: stripHeight)
             tabStripView.autoresizingMask = [.width, .minYMargin]
+            chromeSeparator.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: hairline)
             contentContainerView.frame = NSRect(x: 0, y: 0, width: width, height: height - chromeHeight)
         case .vertical:
+            // The sidebar runs the full height of the window, Safari/Arc
+            // style: its top band, level with the toolbar row, carries the
+            // traffic lights, and the toolbar row starts beside it.
             tabStripView.isHidden = false
             newTabToolbarButton.isHidden = true
             let sidebarWidth = TabStripView.sidebarWidth
-            let sidebarHeight = height - toolbarHeight
-            chromeBackground.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
+            let rowWidth = max(0, width - sidebarWidth)
+            toolbarView.frame = NSRect(x: sidebarWidth, y: height - toolbarHeight, width: rowWidth, height: toolbarHeight)
+            chromeBackground.frame = toolbarView.frame
             tabSidebarBackground.isHidden = false
-            tabSidebarBackground.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: sidebarHeight)
+            tabSidebarBackground.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: height)
             tabSidebarBackground.autoresizingMask = [.height, .maxXMargin]
             tabSidebarSeparator.isHidden = false
-            tabSidebarSeparator.frame = NSRect(x: sidebarWidth - 1, y: 0, width: 1, height: sidebarHeight)
+            tabSidebarSeparator.frame = NSRect(x: sidebarWidth - hairline, y: 0, width: hairline, height: height)
             tabSidebarSeparator.autoresizingMask = [.height, .maxXMargin]
-            tabStripView.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: sidebarHeight)
+            tabStripView.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: height - toolbarHeight)
             tabStripView.autoresizingMask = [.height, .maxXMargin]
+            chromeSeparator.frame = NSRect(x: sidebarWidth, y: height - toolbarHeight, width: rowWidth, height: hairline)
             contentContainerView.frame = NSRect(
-                x: sidebarWidth, y: 0, width: max(0, width - sidebarWidth), height: sidebarHeight
+                x: sidebarWidth, y: 0, width: rowWidth, height: height - toolbarHeight
             )
         }
+        toolbarView.autoresizingMask = [.width, .minYMargin]
         chromeBackground.autoresizingMask = [.width, .minYMargin]
+        chromeSeparator.autoresizingMask = [.width, .minYMargin]
         // .width with a fixed leading margin: the sidebar's own width is
         // constant, so a resize's whole delta lands on the content area.
         contentContainerView.autoresizingMask = [.width, .height]
@@ -637,8 +688,68 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // moves the container's origin as well as its size, which is one
         // change autoresizing cannot express.
         activeTab?.hostView.frame = contentContainerView.bounds
+        layoutLeadingToolbarControls()
+        layoutTrailingToolbarControls()
         layoutOmniboxContainer()
         (window as? BrowserWindow)?.chromeLayoutDidChange()
+        logChromeFramesIfRequested()
+    }
+
+    // MARK: - Chrome geometry report
+
+    private static let isChromeFramesReportRequested = CommandLine.arguments.contains("--chrome-frames-report")
+
+    /// `--chrome-frames-report`: logs where the chrome's controls actually
+    /// landed, in window coordinates measured down from the window's top
+    /// edge -- traffic lights against the toolbar row's centre line,
+    /// control heights and the gaps between them, the omnibox's centre
+    /// against the window's, the first/last tab against the row edges. The
+    /// alignment this layout promises is arithmetic, so it can be checked
+    /// as numbers without a screenshot; logged half a second after each
+    /// relayout, once AppKit has finished its own titlebar and display pass.
+    private func logChromeFramesIfRequested() {
+        guard Self.isChromeFramesReportRequested else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self, let window = self.window, let contentView = window.contentView else { return }
+            let top = contentView.bounds.height
+            func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value)) }
+            func describe(_ name: String, _ view: NSView?) -> String? {
+                guard let view, !view.isHidden, view.superview != nil else { return nil }
+                let r = view.convert(view.bounds, to: nil)
+                return "\(name){x=\(f(r.minX)) maxX=\(f(r.maxX)) top=\(f(top - r.maxY)) h=\(f(r.height)) midFromTop=\(f(top - r.midY))}"
+            }
+            var parts: [String] = [
+                "orientation=\(self.tabStripOrientation.rawValue)",
+                "windowW=\(f(contentView.bounds.width))",
+                "bannerInset=\(f(DevBuildIndicator.topInset))",
+                "toolbarMidFromTop=\(f(top - self.toolbarView.frame.midY))",
+            ]
+            let lights: [(String, NSWindow.ButtonType)] = [("close", .closeButton), ("minimize", .miniaturizeButton), ("zoom", .zoomButton)]
+            for (name, type) in lights {
+                if let entry = describe(name, window.standardWindowButton(type)) { parts.append(entry) }
+            }
+            let named: [(String, NSView?)] = [
+                ("nav", self.navigationGroup), ("profilePill", self.profilePillButton),
+                ("omnibox", self.omniboxContainerView), ("newTab", self.newTabToolbarButton),
+                ("privateBadge", self.privateLabel), ("hairline", self.chromeSeparator),
+                ("siteGlyph", self.siteButton), ("field", self.omniboxField),
+            ]
+            for (name, view) in named {
+                if let entry = describe(name, view) { parts.append(entry) }
+            }
+            for slot in self.trailingControls.keys.sorted() {
+                if let entry = describe("slot\(slot)", self.trailingControls[slot]?.view) { parts.append(entry) }
+            }
+            let omnibox = self.omniboxContainerView.convert(self.omniboxContainerView.bounds, to: nil)
+            parts.append("omniboxMidX=\(f(omnibox.midX)) windowMidX=\(f(contentView.bounds.midX)) toolbarMidX=\(f(self.toolbarView.frame.midX))")
+            let textWidth = self.omniboxField.attributedStringValue.size().width
+            parts.append("omniboxText=\"\(self.omniboxField.stringValue)\" textW=\(f(textWidth)) centred=\(self.omniboxField.alignment == .center)")
+            let tabs = self.tabStripView.isHidden ? [] : self.tabStripView.itemFramesInWindow
+            if let first = tabs.first, let last = tabs.last {
+                parts.append("tabs{count=\(tabs.count) firstX=\(f(first.minX)) lastMaxX=\(f(last.maxX)) h=\(f(first.height)) midFromTop=\(f(top - first.midY))}")
+            }
+            NSLog("[chrome-frames] %@", parts.joined(separator: " "))
+        }
     }
 
     /// View > Show/Hide Tab Sidebar. Flips the shared preference rather than
@@ -656,39 +767,23 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     private func setUpToolbarContents() {
-        let buttonSize: CGFloat = 28
-        let margin: CGFloat = 8
-        // Traffic lights float over this toolbar row now (browser-0y1's
-        // chrome-order flip put it on top) -- back/forward start clear of
-        // them, not at the bare left margin. Only the leading edge needs
-        // this; the trailing edge (privateLabel below) still uses the
-        // plain margin.
-        let leadingMargin: CGFloat = margin + trafficLightReservedWidth
-        let gap: CGFloat = 4
-        let toolbarHeight = toolbarView.bounds.height
-
-        backButton.frame = NSRect(x: leadingMargin, y: (toolbarHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
-        backButton.applyChromeAppearance(.inline)
-        backButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Back")
-        // Navigation stays visually quiet on the unified glass, but uses a
-        // native toolbar bezel on hover instead of providing no response.
-        backButton.toolTip = "Back"
-        backButton.target = self
-        backButton.action = #selector(goBackAction(_:))
-        toolbarView.addSubview(backButton)
-
-        forwardButton.frame = NSRect(
-            x: leadingMargin + buttonSize + gap,
-            y: (toolbarHeight - buttonSize) / 2,
-            width: buttonSize,
-            height: buttonSize
-        )
-        forwardButton.applyChromeAppearance(.inline)
-        forwardButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Forward")
-        forwardButton.toolTip = "Forward"
-        forwardButton.target = self
-        forwardButton.action = #selector(goForwardAction(_:))
-        toolbarView.addSubview(forwardButton)
+        // Back/forward: one glass group, two segments. The segments are
+        // borderless with their own hover fill, clipped to the group's
+        // rounded corners by the glass itself.
+        for (button, symbol, label, action) in [
+            (backButton, "chevron.left", "Back", #selector(goBackAction(_:))),
+            (forwardButton, "chevron.right", "Forward", #selector(goForwardAction(_:))),
+        ] {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+                .withSymbolConfiguration(.init(pointSize: 13, weight: .medium))
+            button.contentTintColor = .secondaryLabelColor
+            button.toolTip = label
+            button.target = self
+            button.action = action
+            navigationGroup.contentContainer.addSubview(button)
+        }
+        navigationGroup.contentContainer.addSubview(navigationDivider)
+        toolbarView.addSubview(navigationGroup)
 
         // Profile indicator pill (browser-0y1) -- right after navigation,
         // matching Safari's own placement. nil for a Private window (see
@@ -696,24 +791,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if let profilePillButton {
             profilePillButton.applyChromeAppearance(.glass)
             profilePillButton.imagePosition = .imageLeading
-            profilePillButton.font = .systemFont(ofSize: 13, weight: .medium)
+            profilePillButton.font = .systemFont(ofSize: 12)
             profilePillButton.target = self
             profilePillButton.action = #selector(profilePillTapped(_:))
             profilePillButton.toolTip = "Switch Profile"
             toolbarView.addSubview(profilePillButton)
-
             updateProfilePillContent()
-            layoutProfilePill()
         }
 
         if let privateLabel {
-            let labelSize = CGSize(width: 54, height: 18)
-            privateLabel.frame = NSRect(
-                x: toolbarView.bounds.width - margin - labelSize.width,
-                y: (toolbarHeight - labelSize.height) / 2,
-                width: labelSize.width,
-                height: labelSize.height
-            )
             privateLabel.autoresizingMask = [.minXMargin]
             toolbarView.addSubview(privateLabel)
         }
@@ -721,13 +807,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // Omnibox pill (browser-qpy): a centered floating rounded rect, domain-
         // only when unfocused, expanding to the full editable URL on focus/
         // ⌘L (see setOmniboxFocused(_:animated:)) -- reload lives inside its
-        // trailing edge, not as a separate toolbar button.
-        omniboxContainerView.layer?.borderWidth = 0.5
-        omniboxContainerView.layer?.borderColor = NSColor.separatorColor.cgColor
-        omniboxContainerView.shadow = NSShadow()
-        omniboxContainerView.layer?.shadowOpacity = 0.15
-        omniboxContainerView.layer?.shadowRadius = 4
-        omniboxContainerView.layer?.shadowOffset = NSSize(width: 0, height: -1)
+        // trailing edge, not as a separate toolbar button. No border: the
+        // glass draws its own edge. The pre-26 material gets a soft shadow
+        // instead (see GlassBackgroundView.castsShadow).
+        omniboxContainerView.castsShadow = true
+        if isPrivate {
+            // A private window's omnibox is a dark field in either
+            // appearance, so the window reads as private at a glance and not
+            // only from the badge. The dark appearance is what keeps the
+            // text, placeholder and glyphs light on it.
+            omniboxContainerView.appearance = NSAppearance(named: .darkAqua)
+            omniboxContainerView.tintColor = NSColor.black.withAlphaComponent(0.6)
+        }
         toolbarView.addSubview(omniboxContainerView)
 
         omniboxField.isBordered = false
@@ -750,6 +841,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // Focus (a click or ⌘L) swaps the collapsed display for the full,
         // selected URL -- see OmniboxField.becomeFirstResponder().
         omniboxField.expandedTextProvider = { [weak self] in self?.activeTab?.urlString }
+        // The collapsed text is centred with the site glyph beside it, so
+        // both move whenever the text changes or editing starts.
+        omniboxField.onDisplayChange = { [weak self] in self?.layoutOmniboxInnerContent() }
         // Real content lives in contentContainer, not omniboxContainerView
         // itself (browser-0y1) -- see GlassBackgroundView.contentContainer's
         // own doc comment for why a plain sibling subview of the glass view
@@ -781,23 +875,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         reloadButton.action = #selector(reloadPage(_:))
         omniboxContainerView.contentContainer.addSubview(reloadButton)
 
-        newTabToolbarButton.frame = NSRect(
-            x: trailingToolbarPositionMinX(0, containerWidth: toolbarView.bounds.width),
-            y: (toolbarHeight - Self.trailingToolbarControlSize) / 2,
-            width: Self.trailingToolbarControlSize,
-            height: Self.trailingToolbarControlSize
-        )
         newTabToolbarButton.autoresizingMask = [.minXMargin]
         newTabToolbarButton.target = self
         newTabToolbarButton.action = #selector(newTab(_:))
         toolbarView.addSubview(newTabToolbarButton)
 
-        // Sits in the toolbar's own padding below the pill (browser-0y1's
-        // breathing-room fix left room for exactly this) -- not inside
-        // omniboxContainerView itself, so it isn't clipped to the pill's
-        // rounded corners or affected by its glass material.
-        toolbarView.addSubview(loadingProgressView)
+        // Inside the pill, above the field, so the pill's own rounded
+        // clipping shapes the bar's ends.
+        omniboxContainerView.contentContainer.addSubview(loadingProgressView)
 
+        layoutLeadingToolbarControls()
+        layoutTrailingToolbarControls()
         layoutOmniboxContainer()
     }
 
@@ -820,11 +908,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func omniboxFrame() -> NSRect {
         let toolbarHeight = toolbarView.bounds.height
         let width = isOmniboxFocused ? expandedOmniboxWidth() : collapsedOmniboxWidth()
-        let bandMinX = omniboxLeadingReserved()
-        let bandMaxX = max(bandMinX, toolbarView.bounds.width - omniboxTrailingReserved())
-        let centered = (toolbarView.bounds.width - width) / 2
-        let x = min(max(centered, bandMinX), max(bandMinX, bandMaxX - width))
-        return NSRect(x: x, y: (toolbarHeight - Self.omniboxPillHeight) / 2, width: width, height: Self.omniboxPillHeight)
+        let band = omniboxBand()
+        // An even width, so a centred pill lands on a whole point.
+        let evenWidth = (width / 2).rounded(.down) * 2
+        let x = min(max((toolbarView.bounds.width - evenWidth) / 2, band.minX), max(band.minX, band.maxX - evenWidth))
+        return NSRect(
+            x: x.rounded(), y: ((toolbarHeight - Self.omniboxPillHeight) / 2).rounded(),
+            width: evenWidth, height: Self.omniboxPillHeight
+        )
     }
 
     /// The unfocused pill's width for the current window size -- see
@@ -833,38 +924,29 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let proportional = toolbarView.bounds.width * Self.omniboxCollapsedWidthFraction
         let clamped = min(Self.omniboxCollapsedMaxWidth, max(Self.omniboxCollapsedMinWidth, proportional))
         // Never wider than the focused pill: expandedOmniboxWidth() is what
-        // actually fits between back/forward and the private-browsing pill, so
-        // a collapsed pill past it would both overlap them and, absurdly,
+        // actually fits between the leading and trailing controls, so a
+        // collapsed pill past it would both overlap them and, absurdly,
         // *shrink* when clicked into.
         return min(clamped, expandedOmniboxWidth())
     }
 
-    /// How wide the expanded pill can get before it would crowd navigation /
-    /// profile controls on the left or floating toolbar controls (and the
-    /// Private label, if present) on the right -- never narrower than the
-    /// collapsed minimum even in a very small window.
+    /// The whole band between the leading and trailing controls -- never
+    /// narrower than the collapsed minimum even in a very small window.
     private func expandedOmniboxWidth() -> CGFloat {
-        let band = toolbarView.bounds.width - omniboxLeadingReserved() - omniboxTrailingReserved()
-        return max(Self.omniboxCollapsedMinWidth, band)
+        let band = omniboxBand()
+        return max(Self.omniboxCollapsedMinWidth, band.maxX - band.minX)
     }
 
-    /// Where the pill's own band starts: everything the toolbar has already
-    /// committed to the leading edge, plus breathing room. Traffic lights
-    /// float over this row (browser-0y1), so back/forward start past them
-    /// (see setUpToolbarContents) and the profile pill sits right after.
-    private func omniboxLeadingReserved() -> CGFloat {
-        let margin: CGFloat = 8
-        let buttonSize: CGFloat = 28
-        let gap: CGFloat = 4
-        let profilePillReserved = profilePillButton.map { $0.frame.width + gap } ?? 0
-        return margin + trafficLightReservedWidth + (buttonSize + gap) * 2
-            + profilePillReserved + Self.omniboxHorizontalMargin
-    }
-
-    /// Where the pill's own band ends: the floating toolbar controls (and
-    /// the Private label, if this is a private window), plus breathing room.
-    private func omniboxTrailingReserved() -> CGFloat {
-        trailingToolbarControlsReservedWidth + Self.omniboxHorizontalMargin
+    /// The span of the toolbar row, in toolbarView coordinates, the pill may
+    /// occupy: from the leading controls' trailing edge to the trailing
+    /// controls' leading edge, less breathing room on each side. Both ends
+    /// are read from where those controls actually are, so a hidden
+    /// trailing button gives its width back to the pill.
+    private func omniboxBand() -> (minX: CGFloat, maxX: CGFloat) {
+        let leadingMaxX = profilePillButton?.frame.maxX ?? navigationGroup.frame.maxX
+        let minX = leadingMaxX + Self.omniboxHorizontalMargin
+        let maxX = trailingControlsMinX - toolbarView.frame.minX - Self.omniboxHorizontalMargin
+        return (minX, max(minX, maxX))
     }
 
     /// Repositions the pill itself (not animated -- see
@@ -886,10 +968,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// position and width even if the fill animation isn't mid-flight.
     private func layoutLoadingProgressTrack(pillFrame: NSRect? = nil) {
         let pill = pillFrame ?? omniboxContainerView.frame
-        let barY: CGFloat = 2
         let currentFillWidth = loadingProgressView.frame.width
         loadingProgressView.frame = NSRect(
-            x: pill.minX, y: barY,
+            x: 0, y: 0,
             width: min(currentFillWidth, pill.width),
             height: Self.loadingProgressBarHeight
         )
@@ -911,32 +992,64 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let width = width ?? omniboxFrame().width
         let reloadSize: CGFloat = 20
         let innerMargin: CGFloat = 8
+        let glyphSize: CGFloat = 20
         let reloadFrame = NSRect(
             x: width - reloadSize - innerMargin, y: (Self.omniboxPillHeight - reloadSize) / 2,
             width: reloadSize, height: reloadSize
         )
         // Only occupies real width once it actually has something to show
-        // (see refreshContentBlockerButton) -- otherwise 0-width so the
-        // field's leading edge doesn't leave an empty gap on an ordinary
-        // page with nothing blocked.
-        let siteWidth: CGFloat = siteButton.isHidden ? 0 : 20
-        let siteFrame = NSRect(x: innerMargin, y: (Self.omniboxPillHeight - 20) / 2, width: siteWidth, height: 20)
-        let blockerX = innerMargin + siteWidth + (siteWidth > 0 ? 2 : 0)
+        // (see refreshSiteButton/refreshContentBlockerButton) -- otherwise
+        // 0-width so the field's leading edge doesn't leave an empty gap.
+        let siteWidth: CGFloat = siteButton.isHidden ? 0 : glyphSize
         let blockerWidth = contentBlockerButton.isHidden ? 0 : contentBlockerButton.frame.width
-        let blockerFrame = NSRect(
-            x: blockerX, y: (Self.omniboxPillHeight - 20) / 2,
-            width: blockerWidth, height: 20
-        )
-        let fieldX = blockerX + blockerWidth + (blockerWidth > 0 ? 4 : 0)
+        let leadingWidth = siteWidth + (siteWidth > 0 && blockerWidth > 0 ? 2 : 0) + blockerWidth
+        let leadingGap: CGFloat = leadingWidth > 0 ? 4 : 0
         // A borderless NSTextField draws its single line at the top of an
         // oversized frame. Size the field to its real one-line height, then
         // center that frame in the pill so both the empty placeholder and
         // the focused/editable URL share the same vertically centred baseline.
         let fieldHeight = omniboxField.intrinsicContentSize.height
-        let fieldFrame = NSRect(
-            x: fieldX, y: (Self.omniboxPillHeight - fieldHeight) / 2,
-            width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: fieldHeight
+        let fieldY = (Self.omniboxPillHeight - fieldHeight) / 2
+        let glyphY = (Self.omniboxPillHeight - glyphSize) / 2
+
+        // Collapsed, the site glyph (and blocker count) and the text are
+        // centred in the pill together, as Safari does. The field spans a
+        // band centred on where the text belongs -- the pill's centre, moved
+        // right by half the glyph's width -- so centre-aligned text in the
+        // field lands exactly there. Editing, or text too long to centre,
+        // reads from the leading edge.
+        let isEditing = isOmniboxFocused || omniboxField.currentEditor() != nil
+        let sideReserve = innerMargin + reloadSize + 4
+        let textWidth = ceil(omniboxField.attributedStringValue.size().width) + 4
+        let groupWidth = leadingWidth + leadingGap + textWidth
+        let shift = (leadingWidth + leadingGap) / 2
+        let centredFieldWidth = max(0, width - sideReserve * 2 - shift * 2)
+        let centredLeadingMinX = (width - groupWidth) / 2
+        let centres = !isEditing && textWidth <= centredFieldWidth && centredLeadingMinX >= innerMargin
+
+        let leadingMinX = centres ? centredLeadingMinX.rounded() : innerMargin
+        let siteFrame = NSRect(x: leadingMinX, y: glyphY, width: siteWidth, height: glyphSize)
+        let blockerFrame = NSRect(
+            x: leadingMinX + leadingWidth - blockerWidth, y: glyphY,
+            width: blockerWidth, height: glyphSize
         )
+        let fieldFrame: NSRect
+        if centres {
+            fieldFrame = NSRect(x: sideReserve + shift * 2, y: fieldY, width: centredFieldWidth, height: fieldHeight)
+        } else {
+            let fieldX = innerMargin + leadingWidth + leadingGap
+            fieldFrame = NSRect(
+                x: fieldX, y: fieldY,
+                width: max(0, width - fieldX - innerMargin - reloadSize - 4), height: fieldHeight
+            )
+        }
+        // Alignment is only ever changed outside an edit: the field editor
+        // takes its alignment when editing begins (OmniboxField switches to
+        // leading alignment itself, just before), and changing it under an
+        // active editor would move the caret.
+        if !isEditing {
+            omniboxField.alignment = centres ? .center : .natural
+        }
         guard animated else {
             reloadButton.frame = reloadFrame
             siteButton.frame = siteFrame
@@ -1003,7 +1116,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func updateProfilePillContent() {
         guard let profilePillButton else { return }
         let current = ProfileManager.shared.profile(id: profile.id) ?? profile
-        profilePillButton.image = Self.dotImage(colorHex: current.colorHex, diameter: 12)
+        profilePillButton.image = Self.dotImage(colorHex: current.colorHex, diameter: 8)
         profilePillButton.title = current.name
         layoutProfilePill()
     }
@@ -1015,12 +1128,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func layoutProfilePill() {
         guard let profilePillButton else { return }
         profilePillButton.sizeToFit()
-        let gap: CGFloat = 8
-        let pillWidth = max(44, profilePillButton.frame.width)
+        let pillWidth = max(44, profilePillButton.frame.width).rounded()
         let toolbarHeight = toolbarView.bounds.height
         profilePillButton.frame = NSRect(
-            x: forwardButton.frame.maxX + gap,
-            y: (toolbarHeight - Self.profilePillHeight) / 2,
+            x: navigationGroup.frame.maxX + ChromeMetrics.groupSpacing,
+            y: ((toolbarHeight - Self.profilePillHeight) / 2).rounded(),
             width: pillWidth,
             height: Self.profilePillHeight
         )
@@ -1703,7 +1815,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// which every navigation and load-state change already goes through.
     private func refreshSiteButton(for tab: Tab) {
         let wasHidden = siteButton.isHidden
-        if tab.urlString.isEmpty {
+        if !Self.showsSiteGlyph(for: tab.urlString) {
             siteButton.isHidden = true
         } else {
             let security = tab.connectionSecurity().security
@@ -1716,7 +1828,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
     }
 
-    /// Drives the thin loading-progress bar below the omnibox pill
+    /// Only web pages get the lock / not-secure glyph: nothing for the start
+    /// page (no address) or for the app's own internal pages, where "secure"
+    /// has no meaning and a glyph would only be noise.
+    private static func showsSiteGlyph(for urlString: String) -> Bool {
+        guard !urlString.isEmpty, let scheme = URL(string: urlString)?.scheme?.lowercased() else { return false }
+        return scheme == "https" || scheme == "http"
+    }
+
+    /// Drives the thin loading-progress bar along the omnibox pill's bottom edge
     /// (browser-7z5) from Tab.loadingProgress/isLoading. Safari-style
     /// completion: rather than instantly disappearing at 100%, the bar
     /// briefly shows a full fill before fading out, so a very fast
@@ -1800,7 +1920,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// every possible glass/vibrancy combination.
     private func updateChromeTint(for tab: Tab) {
         let themeColor = tab.themeColorHex.flatMap { NSColor(hex: $0) }
-        let profileColor = isPrivate ? nil : (NSColor(hex: profile.colorHex) ?? .controlAccentColor)
+        // A private window's baseline is a faint darkening rather than a
+        // profile color, alongside its dark omnibox.
+        let profileColor: NSColor? = isPrivate ? .black : (NSColor(hex: profile.colorHex) ?? .controlAccentColor)
         guard let tintColor = themeColor ?? profileColor else {
             chromeBackground.tintColor = nil
             tabSidebarBackground.tintColor = nil
@@ -2729,11 +2851,20 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Back/forward, the profile pill and the omnibox band all start after
     /// trafficLightReservedWidth, which changes with fullscreen.
     private func layoutLeadingToolbarControls() {
-        let buttonSize: CGFloat = 28
-        let gap: CGFloat = 4
-        let leadingMargin: CGFloat = 8 + trafficLightReservedWidth
-        backButton.frame.origin.x = leadingMargin
-        forwardButton.frame.origin.x = leadingMargin + buttonSize + gap
+        let height = ChromeMetrics.controlHeight
+        let segment = ChromeMetrics.navigationSegmentWidth
+        navigationGroup.frame = NSRect(
+            x: trafficLightReservedWidth,
+            y: ((toolbarView.bounds.height - height) / 2).rounded(),
+            width: segment * 2, height: height
+        )
+        backButton.frame = NSRect(x: 0, y: 0, width: segment, height: height)
+        forwardButton.frame = NSRect(x: segment, y: 0, width: segment, height: height)
+        let dividerHeight: CGFloat = 16
+        navigationDivider.frame = NSRect(
+            x: segment - 0.25, y: ((height - dividerHeight) / 2).rounded(),
+            width: 0.5, height: dividerHeight
+        )
         layoutProfilePill()
         layoutOmniboxContainer()
     }
@@ -2745,6 +2876,72 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // depends on the current toolbar width) -- reposition it live as
         // the window is dragged, same as any other manually-framed chrome
         // would need to on a resize.
+        layoutTrailingToolbarControls()
         layoutOmniboxContainer()
+        logChromeFramesIfRequested()
+    }
+}
+
+/// The "Private" badge at a private window's trailing edge: an eye.slash
+/// glyph and the word, in a rounded rectangle whose fill is the label color
+/// -- near-black in light mode, near-white in dark mode -- with the text in
+/// the window background color, so it reads as a solid chip in both.
+final class PrivateBadgeView: NSView {
+    private static let height: CGFloat = 22
+    private static let horizontalPadding: CGFloat = 8
+    private static let iconTextGap: CGFloat = 4
+
+    private let iconView = NSImageView()
+    private let label = NSTextField(labelWithString: "Private")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = ChromeMetrics.controlCornerRadius
+        layer?.cornerCurve = .continuous
+        iconView.image = NSImage(systemSymbolName: "eye.slash", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        iconView.imageScaling = .scaleNone
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        addSubview(iconView)
+        addSubview(label)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel("Private Browsing")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.85).cgColor
+        iconView.contentTintColor = .windowBackgroundColor
+        label.textColor = .windowBackgroundColor
+    }
+
+    override var fittingSize: NSSize {
+        let icon = iconView.image?.size ?? .zero
+        let text = label.intrinsicContentSize
+        return NSSize(
+            width: (Self.horizontalPadding * 2 + icon.width + Self.iconTextGap + text.width).rounded(.up),
+            height: Self.height)
+    }
+
+    /// Glyph and text are each centred on the badge's own centre line: a
+    /// label NSTextField draws its line at the top of its own frame, so the
+    /// label is sized to its one line and centred rather than stretched.
+    override func layout() {
+        super.layout()
+        let icon = iconView.image?.size ?? .zero
+        let text = label.intrinsicContentSize
+        iconView.frame = NSRect(
+            x: Self.horizontalPadding, y: ((bounds.height - icon.height) / 2).rounded(),
+            width: icon.width, height: icon.height)
+        label.frame = NSRect(
+            x: iconView.frame.maxX + Self.iconTextGap, y: ((bounds.height - text.height) / 2).rounded(),
+            width: text.width, height: text.height)
     }
 }

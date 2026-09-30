@@ -2,8 +2,8 @@ import AppKit
 
 /// The toolbar's extensions (puzzle) button and the pinned extensions beside
 /// it, one per window -- owned by BrowserWindow like the downloads button,
-/// and laid out on the same trailing grid
-/// (BrowserWindowController.trailingToolbarControlFrame). The puzzle button
+/// and laid out on the same trailing row
+/// (BrowserWindowController.placeTrailingToolbarControl). The puzzle button
 /// lists every running extension and pins or unpins them; a pinned one gets
 /// a button of its own, showing its icon and badge. Pressing either shows
 /// the extension's popup, hanging from the button pressed.
@@ -58,7 +58,7 @@ final class ExtensionsToolbarController: NSObject {
         let profileId = controller.profile.id
         let puzzle = puzzleButton ?? makePuzzleButton(in: contentView)
         puzzle.isHidden = false
-        puzzle.frame = controller.trailingToolbarControlFrame(slot: Self.firstSlot)
+        controller.placeTrailingToolbarControl(puzzle, slot: Self.firstSlot)
 
         let pinned = manager.extensions(profileId: profileId).filter { $0.isPinned && $0.isLoaded }
         let pinnedIds = Set(pinned.map(\.id))
@@ -69,7 +69,7 @@ final class ExtensionsToolbarController: NSObject {
         let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
         for (offset, summary) in pinned.enumerated() {
             let button = pinnedButtons[summary.id] ?? makePinnedButton(id: summary.id, in: contentView)
-            button.frame = controller.trailingToolbarControlFrame(slot: Self.firstSlot + 1 + offset)
+            controller.placeTrailingToolbarControl(button, slot: Self.firstSlot + 1 + offset)
             let action = manager.action(extensionId: summary.id, profileId: profileId, tab: activeTab)
             button.image = Self.iconImage(action?.icon ?? summary.icon, name: summary.name)
             button.toolTip = action?.label ?? summary.name
@@ -77,7 +77,6 @@ final class ExtensionsToolbarController: NSObject {
             (button as? ExtensionToolbarButton)?.badgeText = action?.badgeText ?? ""
             button.menu = contextMenu(for: summary)
         }
-        controller.extraTrailingToolbarSlots = 1 + pinned.count
     }
 
     private func makePuzzleButton(in contentView: NSView) -> NSButton {

@@ -77,7 +77,7 @@ final class TabButtonView: NSView {
         didSet {
             guard oldValue != isSelected else { return }
             needsDisplay = true
-            updateSelectionAppearance()
+            rebuildBackground()
         }
     }
 
@@ -181,12 +181,8 @@ final class TabButtonView: NSView {
         return imageView
     }()
 
-    private let closeButton: NSButton = {
-        let button = NSButton()
-        button.isBordered = false
-        button.title = ""
-        button.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
-        button.imageScaling = .scaleProportionallyDown
+    private let closeButton: TabCloseButton = {
+        let button = TabCloseButton()
         button.isHidden = true
         return button
     }()
@@ -222,24 +218,11 @@ final class TabButtonView: NSView {
 
     private var trackingArea: NSTrackingArea?
 
-    /// `NSGlassEffectView` on macOS 26+ -- see GlassBackgroundView's own doc
-    /// comment on why this is stored untyped. `nil` pre-26 *and* under
-    /// Reduce Transparency, in which case draw(_:) falls back to its
-    /// bezier-fill rendering.
+    /// `NSGlassEffectView` on macOS 26+, and only while this tab is the
+    /// selected one -- see GlassBackgroundView's own doc comment on why this
+    /// is stored untyped. `nil` for every unselected tab, pre-26 and under
+    /// Reduce Transparency, in which case draw(_:) is the whole rendering.
     private var glassBackground: NSView?
-
-    /// The selected pill's outline (browser-qpy.1). Selection used to be
-    /// expressed purely as a difference in *fill* between this pill and its
-    /// neighbours, which only reads when the two differ in luminance -- and
-    /// they stop differing precisely when the active page's theme color is
-    /// light, because that same color is also blended into the chrome behind
-    /// the whole strip (BrowserWindowController.updateChromeTint). An
-    /// outline doesn't share that failure mode: it draws the pill's boundary
-    /// in a color measured against the pill's own surface, so it stays
-    /// legible whatever the backdrop turns out to be -- see
-    /// selectionRingTargetContrast for why the pill, and not the backdrop,
-    /// is the side that has to be cleared.
-    private let selectionRing = CAShapeLayer()
 
     /// Real content (favicon/title/audio/close button) lives here, not
     /// directly on `self` (browser-0y1: titles/favicons rendered blurred,
@@ -275,10 +258,6 @@ final class TabButtonView: NSView {
         contentContainer.frame = bounds
         contentContainer.autoresizingMask = [.width, .height]
         contentContainer.wantsLayer = true
-        selectionRing.fillColor = nil
-        selectionRing.lineWidth = Self.selectionRingWidth
-        selectionRing.isHidden = true
-        contentContainer.layer?.addSublayer(selectionRing)
 
         rebuildBackground()
         // Reduce Transparency can be toggled while the app is running, and
@@ -313,24 +292,36 @@ final class TabButtonView: NSView {
     private static let forcesSolidChrome = ProcessInfo.processInfo.arguments.contains("--solid-tab-chrome")
 
     /// Chooses the pill's background material, and is re-run whenever the
-    /// choice could have changed.
+    /// choice could have changed: selection, and Reduce Transparency.
     ///
-    /// Real Liquid Glass (browser-qpy) hosts contentContainer as its
-    /// `contentView` so the favicon/title/buttons render on top of the glass
-    /// effect rather than composited underneath it (browser-0y1). Pre-26,
-    /// and under Reduce Transparency on any version, there is no glass and
-    /// draw(_:) below is the only rendering path -- Reduce Transparency is
-    /// new here (browser-qpy.1): this view used to build glass
-    /// unconditionally on macOS 26+, ignoring the setting that
-    /// GlassBackgroundView has always honored for the chrome behind it.
+    /// Only the selected tab is glass. Its neighbours have no background at
+    /// all -- a strip where every tab is a glass pill on a glass bar reads
+    /// as a stack of frosted panes, and the selected one stops standing out.
+    /// An unselected tab is drawn by draw(_:) instead (nothing, or the hover
+    /// wash).
+    ///
+    /// Real Liquid Glass hosts contentContainer as its `contentView` so the
+    /// favicon/title/buttons render on top of the glass effect rather than
+    /// composited underneath it (browser-0y1); switching material therefore
+    /// reparents contentContainer rather than layering a glass view beside
+    /// it. Pre-26, and under Reduce Transparency on any version, there is no
+    /// glass and draw(_:) below is the only rendering path.
     @objc private func rebuildBackground() {
+        var wantsGlass = false
+        if #available(macOS 26.0, *) {
+            wantsGlass = isSelected && !Self.forcesSolidChrome
+                && !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        }
+        guard wantsGlass != (glassBackground != nil) || contentContainer.superview == nil else {
+            updateSelectionAppearance()
+            return
+        }
         glassBackground?.removeFromSuperview()
         glassBackground = nil
         contentContainer.removeFromSuperview()
         contentContainer.frame = bounds
 
-        if !Self.forcesSolidChrome, !NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
-           #available(macOS 26.0, *) {
+        if wantsGlass, #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: bounds)
             glass.autoresizingMask = [.width, .height]
             glass.contentView = contentContainer
@@ -378,8 +369,7 @@ final class TabButtonView: NSView {
             layer?.cornerRadius = cornerRadius
             layer?.cornerCurve = .continuous
         }
-        layoutSelectionRing()
-        let closeSize: CGFloat = 14
+        let closeSize = TabCloseButton.size
         let faviconSize: CGFloat = 14
 
         guard !isPinned else {
@@ -401,7 +391,7 @@ final class TabButtonView: NSView {
 
         let faviconLeading: CGFloat = 8
         closeButton.frame = NSRect(
-            x: bounds.width - closeSize - 6,
+            x: bounds.width - closeSize - 5,
             y: (bounds.height - closeSize) / 2,
             width: closeSize,
             height: closeSize
@@ -466,18 +456,14 @@ final class TabButtonView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         isMouseInside = true
-        if isVerticalLayout {
-            updateSelectionAppearance()
-        }
+        updateSelectionAppearance()
         guard !isPinned else { return }
         closeButton.isHidden = false
     }
 
     override func mouseExited(with event: NSEvent) {
         isMouseInside = false
-        if isVerticalLayout {
-            updateSelectionAppearance()
-        }
+        updateSelectionAppearance()
         closeButton.isHidden = true
     }
 
@@ -707,23 +693,14 @@ final class TabButtonView: NSView {
 
     // MARK: - Selection appearance (browser-qpy.1)
 
-    /// Liquid-glass pill (browser-qpy): an inactive tab is translucent --
-    /// just a faint label-color wash, letting the vibrant chrome material
-    /// behind the strip show through -- while the active tab is a brighter,
-    /// more opaque pill so it reads clearly as "the current one" against
-    /// its translucent neighbors. Only the *selected* tab's button ever
-    /// shows the theme-color tint (browser-rhi.5's brief: "a subtle tint to
-    /// the active tab's button" -- singular): an unselected tab ignores its
-    /// own stored themeColorHex, matching how the toolbar tint also only
-    /// ever reflects whichever tab is currently active (see
-    /// BrowserWindowController.refreshToolbar(for:)).
-    private static let inactiveWashAlpha: CGFloat = 0.10
-
-    /// The sidebar's hover wash on the no-glass path (pre-26 / Reduce
-    /// Transparency). Between the inactive wash and the selected fill, for
-    /// the same reason the glass path stops short of a tint -- see
-    /// updateSelectionAppearance().
-    private static let hoverWashAlpha: CGFloat = 0.18
+    /// An unselected tab has no background of its own; under the pointer it
+    /// takes this faint label-color wash, in the strip and the sidebar
+    /// alike, which says "the pointer is here" without reading as a second
+    /// selected tab. Only the *selected* tab ever shows the theme-color tint
+    /// (browser-rhi.5's brief: "a subtle tint to the active tab's button" --
+    /// singular), matching how the toolbar tint also only ever reflects
+    /// whichever tab is currently active.
+    private static let hoverWashAlpha: CGFloat = 0.06
 
     /// An unselected tab's favicon is dimmed, and its title drops to
     /// `.secondaryLabelColor`. These two are the deliberately colorimetry-
@@ -752,34 +729,15 @@ final class TabButtonView: NSView {
     /// tint's; screenshots at both appearance extremes are what settled it.
     private static let regularGlassOpacity: CGFloat = 0.75
 
-    private static let selectionRingWidth: CGFloat = 1.5
-    /// The ring is stroked translucent so it reads as an edge of the
-    /// material rather than a drawn-on outline. Every contrast figure below
-    /// is measured on the ring *composited at this alpha*, not on the pure
-    /// candidate color, so the number describes what is actually visible.
-    private static let selectionRingAlpha: CGFloat = 0.8
-
-    /// What the selected pill's outline must clear against the pill's own
-    /// surface. 3:1 is WCAG 2.1's non-text contrast minimum (SC 1.4.11) --
-    /// the right bar for a graphical boundary that conveys state, which is
-    /// exactly what this is.
-    ///
-    /// Measured against the pill and *not* against the backdrop, which is
-    /// the property that makes the outline work at any backdrop luminance,
-    /// known or not. A ring that matched the backdrop would still outline
-    /// the pill perfectly -- the eye simply reads the boundary one pixel
-    /// further in, at the high-contrast ring/fill edge. A ring that matched
-    /// the *fill* would not: the only remaining edge would be ring against
-    /// backdrop, which is precisely the fill-against-backdrop comparison
-    /// that fails in this bug. So the fill is the side that must be cleared.
-    private static let selectionRingTargetContrast: CGFloat = 3.0
-
     /// What the selected pill's fill aims for against the strip backdrop.
     /// Deliberately modest: this is surface-against-surface, not text, and
     /// pushing two adjacent chrome materials to 3:1 looks like a rendering
     /// fault. For scale, Safari's own light-mode selected tab sits at about
-    /// 1.19:1 against its tab bar and Chrome's at about 1.28:1 -- both lean
-    /// on a border/shadow for the rest, as this does on the ring above.
+    /// 1.19:1 against its tab bar and Chrome's at about 1.28:1. There is no
+    /// outline on top of it -- a ring around the selected tab reads as
+    /// keyboard focus -- so the rest of the difference is carried by the
+    /// unselected tabs having no background at all, a secondary-label title
+    /// and a dimmed favicon.
     private static let selectedFillTargetContrast: CGFloat = 1.35
 
     /// What the selected tab's title must clear against the surface it sits
@@ -810,7 +768,7 @@ final class TabButtonView: NSView {
     }
 
     /// What the selected pill *renders* as, fill and backdrop combined --
-    /// the surface the ring and the title are actually measured against.
+    /// the surface the title is actually measured against.
     /// Glass is translucent, so its tint color alone would be a poor stand-in.
     private var selectedSurfaceColor: NSColor {
         let fill = selectedFillColor
@@ -818,26 +776,8 @@ final class TabButtonView: NSView {
         return fill.composited(alpha: Self.regularGlassOpacity, over: backdropColor)
     }
 
-    /// Picks the ring color by measurement rather than by assuming the pill
-    /// is dark: whichever of near-white/near-black, composited over the
-    /// pill's own surface at selectionRingAlpha, lands further from it.
-    /// Near- rather than pure, so a light-mode pill gets a legible outline
-    /// instead of a hard black line drawn around it.
-    private func selectionRingColor(surface: NSColor) -> (color: NSColor, ratio: CGFloat) {
-        let light = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
-        let dark = NSColor(srgbRed: 0.05, green: 0.05, blue: 0.05, alpha: 1)
-        var best: (NSColor, CGFloat) = (light, 0)
-        for candidate in [light, dark] {
-            let ratio = candidate
-                .composited(alpha: Self.selectionRingAlpha, over: surface)
-                .contrastRatio(against: surface)
-            if ratio > best.1 { best = (candidate, ratio) }
-        }
-        return (best.0.withAlphaComponent(Self.selectionRingAlpha), best.1)
-    }
-
-    /// The label/glyph color for `surface`, chosen by measurement for the
-    /// same reason the ring is -- point 3 of browser-qpy.1's brief: if the
+    /// The label/glyph color for `surface`, chosen by measurement rather
+    /// than by assuming the pill is dark -- point 3 of browser-qpy.1's brief: if the
     /// fill is allowed to flip light, the title has to follow or the bug has
     /// merely moved. Near-white/near-black rather than pure, which costs a
     /// little ratio (still far past titleTargetContrast at both extremes)
@@ -857,37 +797,31 @@ final class TabButtonView: NSView {
         let path = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
         if isSelected {
             selectedFillColor.setFill()
-        } else if isVerticalLayout, isMouseInside {
+        } else if isMouseInside {
             NSColor.labelColor.withAlphaComponent(Self.hoverWashAlpha).setFill()
         } else {
-            NSColor.labelColor.withAlphaComponent(Self.inactiveWashAlpha).setFill()
+            return
         }
         path.fill()
     }
 
     /// Applies the selected/unselected look across every surface that
-    /// carries it: the glass material (macOS 26+, non-Reduce-Transparency)
-    /// or draw(_:)'s fill, the selection ring, and the title/glyph colors.
+    /// carries it: the selected tab's glass (macOS 26+, non-Reduce-
+    /// Transparency) or draw(_:)'s fill, and the title/glyph colors.
     ///
     /// The unselected side is deliberately expressed with cues that don't
-    /// depend on any color measurement at all -- a `.clear`/washed pill, a
+    /// depend on any color measurement at all -- no background, a
     /// secondary-label title, a dimmed favicon. That gives the strip a
     /// selected/unselected difference that survives even the case where
     /// every luminance in play happens to coincide.
     private func updateSelectionAppearance() {
-        // An unselected sidebar row lifts to the same material on hover, one
-        // step short of the selected treatment: no tint, and no selection
-        // ring, so it reads as "the pointer is here" rather than as a second
-        // selected tab.
-        let isHoverHighlighted = isVerticalLayout && isMouseInside && !isSelected
         if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
-            glass.style = isSelected || isHoverHighlighted ? .regular : .clear
-            glass.tintColor = isSelected ? selectedFillColor : nil
+            glass.style = .regular
+            glass.tintColor = selectedFillColor
         }
         needsDisplay = true
 
         guard isSelected else {
-            selectionRing.isHidden = true
             titleLabel.textColor = isAsleep ? .tertiaryLabelColor : .secondaryLabelColor
             faviconView.alphaValue = isAsleep ? Self.asleepFaviconAlpha : Self.inactiveFaviconAlpha
             audioButton.contentTintColor = .secondaryLabelColor
@@ -895,15 +829,11 @@ final class TabButtonView: NSView {
             return
         }
 
-        let surface = selectedSurfaceColor
-        selectionRing.isHidden = false
-        selectionRing.strokeColor = selectionRingColor(surface: surface).color.cgColor
-        let foreground = foregroundColor(on: surface)
+        let foreground = foregroundColor(on: selectedSurfaceColor)
         titleLabel.textColor = foreground
         faviconView.alphaValue = 1
         audioButton.contentTintColor = foreground
         closeButton.contentTintColor = foreground
-        layoutSelectionRing()
     }
 
     /// Every measurement the selected treatment is derived from, so the
@@ -915,7 +845,6 @@ final class TabButtonView: NSView {
         let backdrop = backdropColor
         let fill = selectedFillColor
         let surface = selectedSurfaceColor
-        let ring = selectionRingColor(surface: surface)
         let foreground = foregroundColor(on: surface)
         func f(_ value: CGFloat) -> String { String(format: "%.2f", Double(value)) }
         let fields: [(String, String)] = [
@@ -929,41 +858,29 @@ final class TabButtonView: NSView {
             ("surface", surface.hexString),
             ("fillVsBackdrop", f(fill.contrastRatio(against: backdrop))),
             ("surfaceVsBackdrop", f(surface.contrastRatio(against: backdrop))),
-            ("ring", ring.color.hexString),
-            ("ringRatio", f(ring.ratio)),
-            ("ringPass", String(ring.ratio >= Self.selectionRingTargetContrast)),
             ("title", foreground.hexString),
             ("titleRatio", f(foreground.contrastRatio(against: surface))),
             ("titlePass", String(foreground.contrastRatio(against: surface) >= Self.titleTargetContrast))
         ]
         return fields.map { "\($0.0)=\($0.1)" }.joined(separator: " ")
     }
+}
 
-    /// Inset by half the stroke width plus a hair, so the whole stroke lands
-    /// inside the pill: `NSGlassEffectView` masks its `contentView` to its
-    /// own corner radius, and a ring drawn exactly on the boundary would
-    /// have its outer half clipped away on the 26+ path (and only there,
-    /// which is the kind of difference that reads as "the ring is thinner in
-    /// dark mode" rather than as a clipping bug).
-    private func layoutSelectionRing() {
-        let inset = Self.selectionRingWidth / 2 + 0.5
-        let rect = bounds.insetBy(dx: inset, dy: inset)
-        guard rect.width > 0, rect.height > 0 else {
-            selectionRing.path = nil
-            return
-        }
-        // No implicit animation: the ring must land in its new frame in the
-        // same pass as the pill it outlines, or a strip reflow (or a drag)
-        // leaves it visibly trailing behind.
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        selectionRing.frame = contentContainer.bounds
-        // Inset from the pill's own radius by the same amount as the ring
-        // itself, so its corners stay concentric with the shape it outlines.
-        let radius = min(ChromeMetrics.concentricRadius(insetBy: inset), rect.height / 2)
-        selectionRing.path = CGPath(
-            roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil
-        )
-        CATransaction.commit()
+/// A tab's close control: a 9pt semibold xmark centred in a 16pt circle that
+/// fills faintly under the pointer, so the hit target reads as a button
+/// rather than as a stray glyph on the pill.
+final class TabCloseButton: HoverFillButton {
+    static let size: CGFloat = 16
+
+    init() {
+        super.init(shape: .circle)
+        frame = NSRect(x: 0, y: 0, width: Self.size, height: Self.size)
+        image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        setAccessibilityLabel("Close Tab")
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
     }
 }

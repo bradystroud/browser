@@ -62,8 +62,15 @@ final class GlassBackgroundView: NSView {
     private let legacyMaterial: NSVisualEffectView.Material
     private let legacyBlendingMode: NSVisualEffectView.BlendingMode
     private let solidFallbackColor: NSColor
+    /// False for a surface that should never be Liquid Glass, whatever the
+    /// OS: the chrome band and the tab sidebar, which the glass controls sit
+    /// on. Glass on glass reads as a stack of frosted panes rather than as
+    /// controls on a bar, so those surfaces take the plain vibrancy material
+    /// (tier 3 below) on every version.
+    private let usesGlass: Bool
     private var glassCornerRadius: CGFloat
     private var glassTintColor: NSColor?
+    private var shadowEnabled = false
 
     /// `NSGlassEffectView` on macOS 26+, stored untyped -- a stored property
     /// of that literal type would force this whole class's declaration to be
@@ -100,11 +107,13 @@ final class GlassBackgroundView: NSView {
         material: NSVisualEffectView.Material,
         blendingMode: NSVisualEffectView.BlendingMode,
         solidFallbackColor: NSColor,
-        cornerRadius: CGFloat = 0
+        cornerRadius: CGFloat = 0,
+        usesGlass: Bool = true
     ) {
         self.legacyMaterial = material
         self.legacyBlendingMode = blendingMode
         self.solidFallbackColor = solidFallbackColor
+        self.usesGlass = usesGlass
         self.glassCornerRadius = cornerRadius
         super.init(frame: .zero)
         wantsLayer = true
@@ -141,6 +150,23 @@ final class GlassBackgroundView: NSView {
         }
     }
 
+    /// A soft drop shadow under the pre-26 vibrancy material, which has no
+    /// edge of its own. Never on Liquid Glass, which draws its own. The
+    /// shadow lives on this view's own layer, which is never clipped -- only
+    /// the material and content inside it are -- so it actually shows.
+    var castsShadow: Bool {
+        get { shadowEnabled }
+        set {
+            shadowEnabled = newValue
+            applyShadow()
+        }
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        applyShadow()
+    }
+
     @objc private func rebuild() {
         modernGlassView?.removeFromSuperview()
         legacyEffectView?.removeFromSuperview()
@@ -163,7 +189,7 @@ final class GlassBackgroundView: NSView {
             addSubview(view, positioned: .below, relativeTo: nil)
             solidView = view
             addSubview(contentContainer)
-        } else if #available(macOS 26.0, *) {
+        } else if usesGlass, #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: bounds)
             glass.autoresizingMask = [.width, .height]
             glass.style = .regular
@@ -184,20 +210,39 @@ final class GlassBackgroundView: NSView {
         applyTint()
     }
 
+    /// The rounded shape is applied to what is *inside* this view -- the
+    /// material and the content container -- and never masks this view's own
+    /// layer, which is what lets castsShadow's shadow draw outside it. The
+    /// content container is clipped on every path, so something drawn along
+    /// its edge (the omnibox's loading bar) follows the rounded corners.
     private func applyCornerRadius() {
-        // Always kept in sync on this container's own layer too (not just
-        // the internal material view) -- callers set a border/shadow
-        // directly on `self.layer` (see BrowserWindowController's
-        // omniboxContainerView setup), and a CALayer border/mask always
-        // follows its own layer's cornerRadius, not a separate subview's.
-        // Redundant with the real glass view masking its own corners on
-        // macOS 26+, but harmless (same shape, same rect).
-        layer?.cornerRadius = glassCornerRadius
-        layer?.cornerCurve = .continuous
-        layer?.masksToBounds = glassCornerRadius > 0
+        layer?.masksToBounds = false
+        let clipped: [NSView?] = [legacyEffectView, solidView, legacyTintOverlay, contentContainer]
+        for view in clipped.compactMap({ $0 }) {
+            view.wantsLayer = true
+            view.layer?.cornerRadius = glassCornerRadius
+            view.layer?.cornerCurve = .continuous
+            view.layer?.masksToBounds = glassCornerRadius > 0
+        }
         if #available(macOS 26.0, *), let glass = modernGlassView as? NSGlassEffectView {
             glass.cornerRadius = glassCornerRadius
         }
+        applyShadow()
+    }
+
+    private func applyShadow() {
+        guard let layer else { return }
+        guard shadowEnabled, modernGlassView == nil, solidView == nil else {
+            layer.shadowOpacity = 0
+            layer.shadowPath = nil
+            return
+        }
+        layer.shadowColor = NSColor.black.cgColor
+        layer.shadowOpacity = 0.15
+        layer.shadowRadius = 4
+        layer.shadowOffset = NSSize(width: 0, height: -1)
+        layer.shadowPath = CGPath(
+            roundedRect: bounds, cornerWidth: glassCornerRadius, cornerHeight: glassCornerRadius, transform: nil)
     }
 
     private func applyTint() {
@@ -217,10 +262,97 @@ final class GlassBackgroundView: NSView {
             let view = NSView(frame: bounds)
             view.autoresizingMask = [.width, .height]
             view.wantsLayer = true
-            addSubview(view)
+            // Under the content, never over it: an overlay above
+            // contentContainer would tint the text sitting in it.
+            addSubview(view, positioned: .below, relativeTo: contentContainer)
             legacyTintOverlay = view
             overlay = view
         }
         overlay.layer?.backgroundColor = tint.cgColor
+    }
+}
+
+/// A borderless image button that fills faintly under the pointer and a
+/// little more while pressed -- for controls that sit *on* a surface (a tab
+/// pill, the back/forward group) and so must not bring a bezel of their own.
+/// The fill follows `contentTintColor`, so it stays legible on whatever
+/// surface the glyph itself was tinted for.
+class HoverFillButton: NSButton {
+    enum Shape {
+        /// A circle inscribed in the bounds.
+        case circle
+        /// The bounds themselves -- for a segment whose outer corners are
+        /// clipped by the rounded surface it sits in.
+        case rectangle
+    }
+
+    private static let hoverFillAlpha: CGFloat = 0.1
+    private static let pressedFillAlpha: CGFloat = 0.18
+
+    private let shape: Shape
+    private var hoverTrackingArea: NSTrackingArea?
+    private var isHovered = false {
+        didSet { if oldValue != isHovered { needsDisplay = true } }
+    }
+
+    init(shape: Shape) {
+        self.shape = shape
+        super.init(frame: .zero)
+        isBordered = false
+        title = ""
+        imagePosition = .imageOnly
+        imageScaling = .scaleNone
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var isHidden: Bool {
+        didSet { if isHidden { isHovered = false } }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea { removeTrackingArea(hoverTrackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if isEnabled, isHovered || isHighlighted {
+            let alpha = isHighlighted ? Self.pressedFillAlpha : Self.hoverFillAlpha
+            (contentTintColor ?? .labelColor).withAlphaComponent(alpha).setFill()
+            switch shape {
+            case .circle: NSBezierPath(ovalIn: bounds).fill()
+            case .rectangle: bounds.fill(using: .sourceOver)
+            }
+        }
+        super.draw(dirtyRect)
+    }
+}
+
+/// A hairline in `separatorColor`, re-resolved on every appearance change
+/// (a CGColor copied once would stay light-mode grey in dark mode).
+final class HairlineView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.separatorColor.cgColor
     }
 }

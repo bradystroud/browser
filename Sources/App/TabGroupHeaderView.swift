@@ -37,17 +37,13 @@ final class TabGroupHeaderView: NSView {
         }
     }
 
-    /// `NSGlassEffectView` on macOS 26+ -- see GlassBackgroundView's own doc
-    /// comment on why this is stored untyped. `nil` pre-26, in which case
-    /// setColorHex(_:) falls back to its original layer.backgroundColor
-    /// tint, unchanged from before this rework.
-    private var glassBackground: NSView?
-
-    /// Real content lives here, not directly on `self` -- see
-    /// TabButtonView.contentContainer's own doc comment (browser-0y1) for
-    /// why a plain sibling subview of the glass view isn't guaranteed
-    /// correct z-ordering.
+    /// The header's content. A plain fill in the group's color rather than a
+    /// glass pill: only the selected tab and the omnibox are glass, so the
+    /// strip doesn't turn into a row of frosted panes on a frosted bar.
     private let contentContainer = NSView()
+
+    /// How strongly the group's color fills the header.
+    private static let fillAlpha: CGFloat = 0.18
 
     private let colorDotView = NSView()
     private let nameLabel: NSTextField = {
@@ -84,24 +80,9 @@ final class TabGroupHeaderView: NSView {
 
         contentContainer.addSubview(countBadgeLabel)
 
-        // Real Liquid Glass material for the header pill (browser-qpy
-        // rework), hosting contentContainer as its contentView so the
-        // dot/name/chevron above are guaranteed to render on top of the
-        // glass effect rather than composited underneath it (browser-0y1);
-        // setColorHex(_:) below rides its tintColor property instead of the
-        // plain layer.backgroundColor tint pre-26 uses.
         contentContainer.frame = bounds
         contentContainer.autoresizingMask = [.width, .height]
-        if #available(macOS 26.0, *) {
-            let glass = NSGlassEffectView(frame: bounds)
-            glass.autoresizingMask = [.width, .height]
-            glass.style = .regular
-            glass.contentView = contentContainer
-            addSubview(glass)
-            glassBackground = glass
-        } else {
-            addSubview(contentContainer)
-        }
+        addSubview(contentContainer)
 
         setColorHex(colorHex)
         updateChevronAndBadge()
@@ -117,11 +98,7 @@ final class TabGroupHeaderView: NSView {
 
     func setColorHex(_ colorHex: String) {
         let color = NSColor(hex: colorHex) ?? .controlAccentColor
-        if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
-            glass.tintColor = color
-        } else {
-            layer?.backgroundColor = color.withAlphaComponent(0.18).cgColor
-        }
+        layer?.backgroundColor = color.withAlphaComponent(Self.fillAlpha).cgColor
         colorDotView.layer?.backgroundColor = color.cgColor
     }
 
@@ -136,16 +113,9 @@ final class TabGroupHeaderView: NSView {
 
     override func layout() {
         super.layout()
-        // The same shape as TabButtonView -- see that view's own layout()
-        // for why the real glass view masks its own corners on macOS 26+
-        // instead of this view's layer.
-        let cornerRadius = min(ChromeMetrics.controlCornerRadius, bounds.height / 2)
-        if #available(macOS 26.0, *), let glass = glassBackground as? NSGlassEffectView {
-            glass.cornerRadius = cornerRadius
-        } else {
-            layer?.cornerRadius = cornerRadius
-            layer?.cornerCurve = .continuous
-        }
+        // The same shape as TabButtonView.
+        layer?.cornerRadius = min(ChromeMetrics.controlCornerRadius, bounds.height / 2)
+        layer?.cornerCurve = .continuous
         let dotSize: CGFloat = 8
         let margin: CGFloat = 8
         let chevronSize: CGFloat = 10

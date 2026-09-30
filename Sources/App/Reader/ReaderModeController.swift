@@ -152,9 +152,9 @@ final class ReaderModeController: NSObject, TabLifecycleObserver {
             )
             button.applyChromeAppearance(.glass)
             button.toolTip = "Show Reader"
-            button.frame = controller.trailingToolbarControlFrame(slot: 0)
             button.autoresizingMask = [.minXMargin, .minYMargin]
             contentView.addSubview(button)
+            controller.placeTrailingToolbarControl(button, slot: 0)
             buttonView = button
         }
         buttonView?.isHidden = !visible
