@@ -308,7 +308,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private static func title(for engine: EngineChoice) -> String {
         switch engine {
         case .cef: return "Chromium"
-        case .webkit: return "WebKit (experimental)"
+        case .webkit: return "WebKit"
         }
     }
 
@@ -320,9 +320,9 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let restartNote = "Takes effect the next time you open Browser. Your windows and tabs are reopened on restart."
         switch engine {
         case .cef:
-            engineHelpLabel.stringValue = "Chromium, via CEF \u{2014} the full-featured engine, and the one this browser is built around. \(restartNote)"
+            engineHelpLabel.stringValue = "Chromium, via CEF. Passkeys work through your phone or a security key, not Touch ID. \(restartNote)"
         case .webkit:
-            engineHelpLabel.stringValue = "WebKit is experimental. \(Self.missingFeaturesSentence(for: engine.engine.capabilities))Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
+            engineHelpLabel.stringValue = "WebKit, the engine Safari uses. Passkeys work with Touch ID and iCloud Keychain. \(Self.missingFeaturesSentence(for: engine.engine.capabilities))Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
         }
         helpTextDidChange()
     }
