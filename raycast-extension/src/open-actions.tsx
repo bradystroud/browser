@@ -83,7 +83,7 @@ export function OpenURLActions({
 /**
  * The "which profile's data am I looking at" dropdown both search commands
  * put in their search bar. An empty value means "no `--profile` flag", which
- * the CLI resolves to the default profile's own `browser.db` -- note that's
+ * the CLI resolves to the fallback profile's own `browser.db` -- note that's
  * a per-profile database on disk, so unlike the open commands there's no
  * "all profiles" option to offer here.
  */
@@ -96,7 +96,7 @@ export function ProfileSourceDropdown({
 }) {
   return (
     <List.Dropdown tooltip="Profile to search" storeValue onChange={onChange}>
-      <List.Dropdown.Item value="" title="Default profile" />
+      <List.Dropdown.Item value="" title="Fallback profile" />
       {profiles.map((profile) => (
         <List.Dropdown.Item
           key={profile.id}

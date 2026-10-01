@@ -1,20 +1,30 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { getPreferenceValues } from "@raycast/api";
 
 const execFileAsync = promisify(execFile);
 
+const BUNDLED_CLI = "Contents/Resources/bin/browser";
+const DOWNLOAD_URL = "https://bradystroud.github.io/browser/";
+
 /**
- * Where the `browser` CLI lives when it hasn't been symlinked onto PATH.
- * Raycast commands do not inherit a login shell's PATH, so resolving the
- * binary by name is not an option here even when `browser` works fine in a
- * terminal -- these are always absolute paths.
+ * Where the `browser` CLI can live. Raycast commands do not inherit a login
+ * shell's PATH, so resolving the binary by name is not an option here even
+ * when `browser` works fine in a terminal -- these are always absolute paths.
+ * The optional /usr/local/bin symlink comes first so whoever pointed it at a
+ * particular build gets that build; the copies inside the app bundle are what
+ * a plain drag-to-Applications install has.
  */
-const DEFAULT_CLI_PATHS = [
-  "/usr/local/bin/browser",
-  "/Applications/Browser.app/Contents/Resources/bin/browser",
-];
+function defaultCLIPaths(): string[] {
+  return [
+    "/usr/local/bin/browser",
+    join("/Applications/Browser.app", BUNDLED_CLI),
+    join(homedir(), "Applications/Browser.app", BUNDLED_CLI),
+  ];
+}
 
 export interface Preferences {
   cliPath?: string;
@@ -70,11 +80,11 @@ export function resolveCLIPath(): string {
     return configured;
   }
 
-  const found = DEFAULT_CLI_PATHS.find((path) => existsSync(path));
+  const found = defaultCLIPaths().find((path) => existsSync(path));
   if (!found) {
     throw new BrowserCLIError(
-      "Browser CLI not found",
-      "Looked in /usr/local/bin/browser and /Applications/Browser.app/Contents/Resources/bin/browser. Build and install Browser.app, or set the extension's “Browser CLI Path” preference.",
+      "Browser isn’t installed",
+      `Couldn’t find Browser.app in /Applications or ~/Applications. Install it from ${DOWNLOAD_URL}, or set the extension’s “Browser CLI Path” preference.`,
     );
   }
   return found;
@@ -118,9 +128,13 @@ async function runCLI<T>(args: string[]): Promise<T> {
     if (reported) {
       throw toFriendlyError(reported);
     }
+    const stderr = failure.stderr?.trim();
+    if (stderr && /unknown command/i.test(stderr)) {
+      throw needsNewerBrowser();
+    }
     throw new BrowserCLIError(
       "Browser CLI failed",
-      failure.stderr?.trim() || failure.message || "Unknown error.",
+      stderr || failure.message || "Unknown error.",
     );
   }
 
@@ -161,7 +175,23 @@ function toFriendlyError(message: string): BrowserCLIError {
       "Launch Browser.app, then try again.",
     );
   }
+  if (/unknown command/i.test(message)) {
+    return needsNewerBrowser();
+  }
   return new BrowserCLIError("Browser CLI error", message);
+}
+
+/**
+ * The extension can be newer than the installed app: Browser 0.1.0, for one,
+ * predates `browser focus`. Both halves of the CLI (the binary, and the
+ * running app's socket server) answer a command they don't know with
+ * "unknown command", which on its own reads like a bug in the extension.
+ */
+function needsNewerBrowser(): BrowserCLIError {
+  return new BrowserCLIError(
+    "Browser needs an update",
+    `This command needs a newer Browser than the one installed. Get the latest from ${DOWNLOAD_URL}`,
+  );
 }
 
 export async function getProfiles(): Promise<Profile[]> {

@@ -85,7 +85,7 @@ export default function SwitchProfileCommand() {
               <Action
                 title="Open New Window"
                 icon={Icon.Window}
-                shortcut={{ modifiers: ["cmd"], key: "n" }}
+                shortcut={Keyboard.Shortcut.Common.New}
                 onAction={() => openNew(profile.name)}
               />
               <Action
