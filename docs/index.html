@@ -86,7 +86,13 @@
   .cta-meta{margin-top:1rem;font-family:var(--mono);font-size:.76rem;line-height:1.9;color:var(--paper-dim)}
   .cta-meta i{font-style:normal;color:var(--teal)}
 
-  /* ---------- shots ---------- */
+  /* ---------- film ---------- */
+ .film{
+ margin-top:clamp(2.5rem,6vw,4.5rem);border-radius:10px;overflow:hidden;border:1px solid var(--rule);
+ box-shadow:0 40px 90px -30px rgba(0,0,0,.9);background:#000;
+ }
+ .film video{display:block;width:100%;height:auto;aspect-ratio:16/9}
+ /* ---------- shots ---------- */
   .shots{position:relative;margin-top:clamp(2rem,6vw,4rem)}
   .shot{
     border-radius:10px;overflow:hidden;border:1px solid var(--rule);
@@ -160,7 +166,7 @@
       <div>
         <div class="eyebrow">macOS · version 0.1.0</div>
         <h1>Browser<em>.</em></h1>
-        <p class="lede">Chromium rendering inside a <b>native Swift/AppKit shell</b> — with real profiles, and rules that decide where each link opens.</p>
+        <p class="lede">Chromium or WebKit rendering inside a <b>native Swift/AppKit shell</b> — with real profiles, and rules that decide where each link opens.</p>
       </div>
       <div class="hero-side">
         <a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser-0.1.0.dmg">
@@ -173,6 +179,13 @@
         </div>
       </div>
     </div>
+
+    <div class="film">
+      <video controls playsinline preload="metadata" poster="assets/promo-poster.jpg" width="1920" height="1080">
+        <source src="assets/promo.mp4" type="video/mp4">
+      </video>
+    </div>
+    <p class="caption">The tour, in 70 seconds. Music: Elektronomia – Sky High [NCS Release].</p>
 
     <div class="shots">
       <div class="shot"><img src="assets/shot-browsing.jpg" alt="Browser showing a Wikipedia article, with the profile pill and tab strip in the window chrome" width="1800" height="1244" loading="lazy"></div>
@@ -210,6 +223,18 @@
         <h3>A start page you can set</h3>
         <p>Favourites and frequently visited, per profile, over your own background picture or a colour.</p>
       </div>
+      <div class="cell" style="--dot:var(--teal)">
+        <h3>Chromium or WebKit</h3>
+        <p>Pick the rendering engine in Settings. WebKit, the engine Safari uses, brings Touch&nbsp;ID passkeys and Chrome extensions. Your windows and tabs reopen after the switch.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Move in from Safari, Chrome or Arc</h3>
+        <p>Import profiles, favourites, bookmarks, history and passwords from Safari or any Chromium browser. Safari history can keep syncing in, with the pages from your iPhone.</p>
+      </div>
+      <div class="cell" style="--dot:var(--violet)">
+        <h3>Little windows &amp; link peek</h3>
+        <p>Links from other apps can open in a small window; ⌘O moves it into your browser without a reload. ⌥⇧-click any link to peek at it first.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -219,14 +244,14 @@
     <div class="sec-head"><span class="sec-num">02</span><h2>Under the hood</h2></div>
     <div class="two">
       <div class="prose">
-        <p><strong>Chromium, via CEF.</strong> Pages render with the same engine Chrome uses, so sites behave the way they do everywhere else — including WebAuthn security keys and cross-device passkeys.</p>
+        <p><strong>Two engines, one shell.</strong> Pages render with Chromium, via CEF — the engine Chrome uses — or with WebKit, the engine Safari uses. Choose in Settings → General. Profiles, rules and the whole interface stay the same; only the rendering changes.</p>
         <p><strong>The shell is native.</strong> Tab strip, omnibox, menus, settings and panels are Swift and AppKit, talking to the engine through a thin Objective-C++ bridge. The chrome is Mac chrome, not a web page pretending to be one.</p>
         <p><strong>Signed, notarized, never sandboxed.</strong> Distributed with a Developer ID signature and an Apple notarization ticket. App Sandbox is deliberately off: a sandboxed app cannot register as the system default browser, which is the entire point of the routing rules.</p>
         <p><strong>It is version 0.1.0.</strong> A personal project, built in the open about its rough edges rather than pretending it has none.</p>
       </div>
       <div>
         <dl class="spec">
-          <div><dt>Engine</dt><dd>Chromium / CEF 150</dd></div>
+          <div><dt>Engine</dt><dd>Chromium (CEF 150) or WebKit</dd></div>
           <div><dt>Shell</dt><dd>Swift · AppKit</dd></div>
           <div><dt>Requires</dt><dd>macOS 12+</dd></div>
           <div><dt>Architecture</dt><dd>Apple silicon</dd></div>
@@ -250,7 +275,7 @@
         <p><strong>Passwords use the system Keychain.</strong> Saved credentials are stored as Keychain internet-password items scoped to this app, never in a file the app rolls itself, and never transmitted anywhere. The companion command-line tool has no command that can print a password — a deliberate, permanent boundary.</p>
       </div>
       <div class="prose">
-        <p><strong>Passkeys.</strong> Security keys and cross-device (QR / hybrid) passkeys work today through Chromium's WebAuthn stack. Passkeys stored in Apple Passwords — iCloud Keychain and Touch&nbsp;ID — require a restricted Apple entitlement that every non-Safari browser needs; that application is pending, and support will be integrated when it is granted.</p>
+        <p><strong>Passkeys.</strong> Apple granted Browser the restricted entitlement that passkeys in Apple Passwords need, so on the WebKit engine you sign in with Touch&nbsp;ID and iCloud Keychain. On the Chromium engine, security keys and cross-device (QR / hybrid) passkeys work through Chromium's WebAuthn stack.</p>
         <p><strong>Network requests are the page's own.</strong> Beyond what a site itself loads, the app makes no background requests of its own.</p>
       </div>
     </div>
