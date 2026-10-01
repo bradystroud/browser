@@ -159,6 +159,7 @@
         <a href="#under-the-hood">Under the hood</a>
         <a href="#privacy">Privacy</a>
         <a href="#install">Install</a>
+        <a href="#raycast">Raycast</a>
       </nav>
     </div>
 
@@ -299,6 +300,26 @@ Resources/bin/browser" /usr/local/bin/browser
 browser profiles
 browser open https://example.com --profile Work
 browser route-test https://github.com</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="raycast">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Raycast</h2></div>
+    <div class="two">
+      <div class="prose">
+        <p><strong>The commands from the film.</strong> A <a href="https://www.raycast.com/" style="color:var(--teal)">Raycast</a> extension switches to a profile, opens a link or the clipboard's link in the profile you pick, opens a new window in one, and searches history and bookmarks. It drives the CLI already inside Browser.app, so there is nothing else to set up.</p>
+        <p><strong>Install it from the source.</strong> It is not in the Raycast Store yet. You need Raycast, Browser in Applications, and Node.js 22.22 or later. <span style="font-family:var(--mono);font-size:.85em">npm run dev</span> adds the extension to Raycast; stop it once the commands appear and they stay installed.</p>
+        <p><a href="https://github.com/bradystroud/browser/tree/main/raycast-extension#install-from-source" style="color:var(--teal)">Full instructions and troubleshooting</a></p>
+      </div>
+      <div>
+        <pre>git clone --depth 1 \
+  https://github.com/bradystroud/browser.git
+cd browser/raycast-extension
+npm install
+npm run dev   <span class="c"># Ctrl-C once the commands appear</span></pre>
       </div>
     </div>
   </div>
