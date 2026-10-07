@@ -72,6 +72,17 @@
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- A browser must load plain-http pages. Without this, App Transport
+	     Security blocks every http:// load in the WebKit engine (and any
+	     https -> http redirect, e.g. a site's login hop) with
+	     NSURLErrorDomain -1022, which Safari is exempt from. The Chromium
+	     engine has its own network stack and never sees ATS. This key covers
+	     web views only; the app's own URLSession requests keep full ATS. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Bluetooth is used to sign in with passkeys from your phone and security keys.</string>
 	<key>NSCameraUsageDescription</key>
