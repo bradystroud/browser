@@ -342,25 +342,62 @@ extension WebKitTab: WKNavigationDelegate {
                 NSLog("Browser: ignored a background tab's link to %@", url.scheme ?? "")
                 return
             }
-            guard !navigationState.externalAppPromptsSuppressed,
-                  !navigationState.externalAppPromptShowing,
-                  window.attachedSheet == nil
-            else { return }
+            guard !navigationState.externalAppPromptsSuppressed else {
+                NSLog("Browser: not asking again about %@ after a Cancel", url.scheme ?? "")
+                return
+            }
+            guard !navigationState.externalAppPromptShowing else {
+                NSLog("Browser: already asking about another app; dropped a link to %@", url.scheme ?? "")
+                return
+            }
             navigationState.externalAppPromptShowing = true
-            let appName = FileManager.default.displayName(atPath: appURL.path)
-            let alert = NSAlert()
-            alert.messageText = "Open \u{201C}\(appName)\u{201D}?"
             let site = Self.requestingHost(of: navigationAction) ?? webView.url?.host ?? "This page"
-            alert.informativeText = "\(site) wants to open a link in \(appName)."
-            alert.addButton(withTitle: "Open")
-            alert.addButton(withTitle: "Cancel")
-            alert.beginSheetModal(for: window) { [weak self] response in
+            askToOpen(url, in: appURL, site: site, window: window)
+        }
+    }
+
+    /// Puts up the "Open in another app?" sheet, once the window has no other
+    /// sheet on it. Another sheet is often why the request is here at all: a
+    /// sign-in page hands its code to the app the instant the passkey panel
+    /// returns, while that panel is still attached. Dropping the request then
+    /// leaves the page waiting for an app that was never told, so this waits
+    /// for the sheet to end instead. `externalAppPromptShowing` stays set the
+    /// whole time, so one request is in flight for the tab, waiting or shown.
+    private func askToOpen(_ url: URL, in appURL: URL, site: String, window: NSWindow) {
+        if window.attachedSheet != nil {
+            NSLog("Browser: waiting for a sheet to close before asking to open %@", url.scheme ?? "")
+            var tokens: [NSObjectProtocol] = []
+            let stopObserving = {
+                tokens.forEach(NotificationCenter.default.removeObserver)
+                tokens.removeAll()
+            }
+            tokens.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didEndSheetNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                stopObserving()
+                guard let self else { return }
+                self.askToOpen(url, in: appURL, site: site, window: window)
+            })
+            tokens.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                stopObserving()
                 self?.navigationState.externalAppPromptShowing = false
-                if response == .alertFirstButtonReturn {
-                    NSWorkspace.shared.open(url)
-                } else {
-                    self?.navigationState.externalAppPromptsSuppressed = true
-                }
+            })
+            return
+        }
+        let appName = FileManager.default.displayName(atPath: appURL.path)
+        let alert = NSAlert()
+        alert.messageText = "Open \u{201C}\(appName)\u{201D}?"
+        alert.informativeText = "\(site) wants to open a link in \(appName)."
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            self?.navigationState.externalAppPromptShowing = false
+            if response == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(url)
+            } else {
+                self?.navigationState.externalAppPromptsSuppressed = true
             }
         }
     }
