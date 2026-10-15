@@ -165,12 +165,12 @@
 
     <div class="hero">
       <div>
-        <div class="eyebrow">macOS · version 0.1.0</div>
+        <div class="eyebrow">macOS · Apple silicon</div>
         <h1>Browser<em>.</em></h1>
         <p class="lede">Chromium or WebKit rendering inside a <b>native Swift/AppKit shell</b> — with real profiles, and rules that decide where each link opens.</p>
       </div>
       <div class="hero-side">
-        <a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser-0.1.0.dmg">
+        <a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser.dmg">
           Download for macOS <span>DMG · 146 MB</span>
         </a>
         <div class="cta-meta">
@@ -248,7 +248,7 @@
         <p><strong>Two engines, one shell.</strong> Pages render with Chromium, via CEF — the engine Chrome uses — or with WebKit, the engine Safari uses. Choose in Settings → General. Profiles, rules and the whole interface stay the same; only the rendering changes.</p>
         <p><strong>The shell is native.</strong> Tab strip, omnibox, menus, settings and panels are Swift and AppKit, talking to the engine through a thin Objective-C++ bridge. The chrome is Mac chrome, not a web page pretending to be one.</p>
         <p><strong>Signed, notarized, never sandboxed.</strong> Distributed with a Developer ID signature and an Apple notarization ticket. App Sandbox is deliberately off: a sandboxed app cannot register as the system default browser, which is the entire point of the routing rules.</p>
-        <p><strong>It is version 0.1.0.</strong> A personal project, built in the open about its rough edges rather than pretending it has none.</p>
+        <p><strong>It is an early version.</strong> A personal project, built in the open about its rough edges rather than pretending it has none.</p>
       </div>
       <div>
         <dl class="spec">
@@ -288,13 +288,15 @@
     <div class="sec-head"><span class="sec-num">04</span><h2>Install</h2></div>
     <div class="two">
       <div class="prose">
-        <p>Open the DMG and drag <strong>Browser</strong> to Applications. Because it is notarized, macOS opens it without a Gatekeeper warning — no right-click-Open dance, no <span style="font-family:var(--mono);font-size:.85em">xattr</span> command.</p>
+        <p>With Homebrew: <span style="font-family:var(--mono);font-size:.85em">brew install --cask bradystroud/tap/browser</span></p>
+        <p>Or open the DMG and drag <strong>Browser</strong> to Applications. Because it is notarized, macOS opens it without a Gatekeeper warning — no right-click-Open dance, no <span style="font-family:var(--mono);font-size:.85em">xattr</span> command.</p>
         <p>To make it your default browser and start routing links, open <strong>Settings → Links</strong>, click <strong>Make Default Browser…</strong>, then add rules there.</p>
-        <p style="margin-top:1.6rem"><a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser-0.1.0.dmg">Download 0.1.0 <span>DMG · 146 MB</span></a></p>
+        <p style="margin-top:1.6rem"><a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser.dmg">Download for macOS <span>DMG · 146 MB</span></a></p>
       </div>
       <div>
         <pre><span class="c"># optional: the companion CLI, bundled inside the app</span>
-ln -sf "/Applications/Browser.app/Contents/\
+<span class="c"># (Homebrew installs it for you)</span>
+sudo ln -sf "/Applications/Browser.app/Contents/\
 Resources/bin/browser" /usr/local/bin/browser
 
 browser profiles
@@ -328,7 +330,7 @@ npm run dev   <span class="c"># Ctrl-C once the commands appear</span></pre>
 <footer>
   <div class="wrap two">
     <div>
-      Browser 0.1.0 — a macOS browser by Brady Stroud.<br>
+      Browser — a macOS browser by Brady Stroud.<br>
       Built with the <a href="https://bitbucket.org/chromiumembedded/cef">Chromium Embedded Framework</a>.
     </div>
     <div style="text-align:right">

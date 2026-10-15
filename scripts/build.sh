@@ -104,28 +104,11 @@ fi
 # key above, since Info.plist is inside the seal.
 "${ROOT_DIR}/scripts/stamp-build-info.sh" "${APP_PATH}"
 
-# browser-82d: the `browser` CLI (browser-cli/, a standalone SwiftPM
-# executable) -- built and dropped
-# into the app bundle's Resources so it travels with it, but deliberately
-# kept off the app build's critical path: a failure here is a warning, never
-# a reason to fail the whole ./scripts/build.sh (nothing about Browser.app
-# itself depends on this binary existing). Must happen *before*
-# scripts/sign.sh below, not after -- adding a file into an already-signed
-# bundle invalidates its resource seal, so this binary needs to already be
-# sitting in place before that script's final codesign of the main app
-# bundle runs, not layered on top of it afterward.
+# browser-82d: the `browser` CLI. Kept off the app build's critical path --
+# nothing about Browser.app itself depends on it, so a failure here is a
+# warning, never a failed build. scripts/release.sh makes it mandatory.
 echo "== Building browser CLI (browser-cli/) =="
-if swift build --package-path "${ROOT_DIR}/browser-cli" -c release; then
-  CLI_BIN_DIR="${APP_PATH}/Contents/Resources/bin"
-  mkdir -p "${CLI_BIN_DIR}"
-  cp "${ROOT_DIR}/browser-cli/.build/release/browser" "${CLI_BIN_DIR}/browser"
-  # Signed on its own, independent of the app bundle's own inside-out pass
-  # below -- this is what lets Brady run it directly (symlinked onto his
-  # PATH, outside the app bundle entirely) as a normal signed executable,
-  # not just as an inert resource file along for the ride inside the seal.
-  codesign --force --options runtime --timestamp --sign "${CODESIGN_IDENTITY:--}" "${CLI_BIN_DIR}/browser"
-  echo "== browser CLI built: ${CLI_BIN_DIR}/browser =="
-else
+if ! "${ROOT_DIR}/scripts/bundle-cli.sh" "${APP_PATH}" "${CODESIGN_IDENTITY:--}"; then
   echo "warning: browser CLI build failed -- continuing without it (Browser.app itself is unaffected)" >&2
 fi
 

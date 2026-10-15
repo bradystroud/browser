@@ -1,0 +1,193 @@
+# Every push to main that touches the app becomes a signed, notarized release:
+# a GitHub release with the DMG, the Sparkle appcast entry, and the Homebrew
+# cask bump. docs/release-automation.md lists the secrets it needs.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".beads/**"
+      - ".claude/**"
+      - ".agents/**"
+      - "raycast-extension/**"
+      - "assets/**"
+  workflow_dispatch:
+
+# One release at a time. A push that lands mid-release waits, and only the
+# newest waiting push is released, so tags are always cut in order.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # The code uses macOS 27 SDK API, which only the Xcode 27 image has.
+    runs-on: xcode-27
+    timeout-minutes: 120
+    env:
+      SIGNING_IDENTITY: "Developer ID Application: BRADY MATTHEW STROUD (AQ6HPWB3D9)"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check secrets
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          NOTARY_API_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+        run: |
+          missing=()
+          for name in DEVELOPER_ID_P12_BASE64 DEVELOPER_ID_P12_PASSWORD PROVISIONING_PROFILE_BASE64 \
+                      NOTARY_API_KEY_BASE64 NOTARY_API_KEY_ID NOTARY_API_ISSUER; do
+            [[ -n "${!name}" ]] || missing+=("${name}")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secrets: ${missing[*]}. See docs/release-automation.md."
+            exit 1
+          fi
+
+      - name: Pick the version
+        id: version
+        run: |
+          # Major.minor comes from Info.plist.in, so bumping it there starts a
+          # new x.y.0 line. The patch number counts up from the newest tag.
+          base="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Sources/App/mac/Info.plist.in | cut -d. -f1-2)"
+          last="$(git tag --list "v${base}.*" | sed "s/^v${base}\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)"
+          if [[ -z "${last}" ]]; then version="${base}.0"; else version="${base}.$((last + 1))"; fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${version}"
+
+      - name: Select the newest Xcode
+        run: |
+          xcode="$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)"
+          sudo xcode-select -s "${xcode}"
+          xcodebuild -version
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/cef
+            third_party/sparkle
+          key: third-party-${{ hashFiles('scripts/fetch-cef.sh', 'scripts/fetch-sparkle.sh') }}
+
+      - name: Install signing material
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          NOTARY_API_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_BASE64 }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          secrets_dir="${RUNNER_TEMP}/signing"
+          mkdir -p "${secrets_dir}" ~/.config/browser
+          keychain="${secrets_dir}/release.keychain-db"
+          keychain_password="$(uuidgen)"
+
+          echo "${DEVELOPER_ID_P12_BASE64}" | base64 --decode > "${secrets_dir}/cert.p12"
+          security create-keychain -p "${keychain_password}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${keychain_password}" "${keychain}"
+          security import "${secrets_dir}/cert.p12" -k "${keychain}" -P "${DEVELOPER_ID_P12_PASSWORD}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "${keychain_password}" "${keychain}" >/dev/null
+          security list-keychains -d user -s "${keychain}" $(security list-keychains -d user | tr -d '"')
+          rm "${secrets_dir}/cert.p12"
+
+          echo "${PROVISIONING_PROFILE_BASE64}" | base64 --decode > ~/.config/browser/Browser.provisionprofile
+
+          echo "${NOTARY_API_KEY_BASE64}" | base64 --decode > "${secrets_dir}/notary.p8"
+          echo "NOTARY_API_KEY_PATH=${secrets_dir}/notary.p8" >> "$GITHUB_ENV"
+
+          if [[ -n "${SPARKLE_ED_PRIVATE_KEY}" ]]; then
+            printf '%s' "${SPARKLE_ED_PRIVATE_KEY}" > "${secrets_dir}/sparkle.key"
+            echo "SPARKLE_ED_KEY_FILE=${secrets_dir}/sparkle.key" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build, sign, notarize and package
+        env:
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The appcast entry is only useful once Info.plist carries the real
+          # public key, and signing it needs the private key.
+          appcast_args=()
+          if [[ -z "${SPARKLE_ED_KEY_FILE:-}" ]] || grep -q REPLACE_WITH_SUPublicEDKey Sources/App/mac/Info.plist.in; then
+            echo "::warning::Sparkle key not configured -- releasing without an appcast entry, so installed copies will not auto-update."
+            appcast_args=(--skip-appcast)
+          fi
+          scripts/release.sh \
+            --identity "${SIGNING_IDENTITY}" \
+            --format dmg \
+            --version "${VERSION}" \
+            ${appcast_args[@]+"${appcast_args[@]}"}
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dmg="dist/Browser-${VERSION}.dmg"
+          # A stable name too, so releases/latest/download/Browser.dmg always
+          # serves the newest build. Same bytes, so the Sparkle signature of
+          # the versioned file still holds.
+          cp "${dmg}" dist/Browser.dmg
+          gh release create "v${VERSION}" "${dmg}" dist/Browser.dmg \
+            --target "${GITHUB_SHA}" \
+            --title "Browser ${VERSION}" \
+            --generate-notes
+
+      - name: Publish the appcast
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Runs after the release exists, so the feed never points at a
+          # download that is not there yet.
+          git diff --quiet docs/appcast.xml && { echo "Appcast unchanged."; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/appcast.xml
+          git commit -m "Publish Browser ${VERSION} to the appcast"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: Bump the Homebrew cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN}" ]]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set -- bradystroud/homebrew-tap was not updated."
+            exit 0
+          fi
+          sha="$(shasum -a 256 "dist/Browser-${VERSION}.dmg" | awk '{print $1}')"
+          tap="${RUNNER_TEMP}/homebrew-tap"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/bradystroud/homebrew-tap.git" "${tap}"
+          cd "${tap}"
+          sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/; s/^  sha256 \".*\"/  sha256 \"${sha}\"/" Casks/browser.rb
+          # 0.1.0 predates the bundled CLI, so the cask links it only from the
+          # first release that carries it.
+          grep -q '^  binary ' Casks/browser.rb ||
+            sed -i '' '/^  app "Browser.app"$/a\
+  binary "#{appdir}/Browser.app/Contents/Resources/bin/browser"
+' Casks/browser.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update browser to ${VERSION}"
+          git push origin HEAD:main
+
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "${RUNNER_TEMP}/signing/release.keychain-db" 2>/dev/null || true
+          rm -rf "${RUNNER_TEMP}/signing" ~/.config/browser/Browser.provisionprofile

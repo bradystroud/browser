@@ -55,38 +55,26 @@ somewhere safe and offline. Never in this repo; it is public.
 
 ## Cutting a release
 
-1. Bump `CFBundleVersion` **and** `CFBundleShortVersionString` in
-   `Sources/App/mac/Info.plist.in`. Sparkle compares `CFBundleVersion`
-   against the appcast's `<sparkle:version>`; a release that forgets this
-   ships a build no installed copy considers newer than what it has.
+Releases are automatic: every push to `main` that changes the app runs
+`.github/workflows/release.yml`. See `docs/release-automation.md`.
 
-2. Run the pipeline as before, in dmg format:
+The workflow creates the GitHub release first and pushes the appcast entry
+after it, so the feed never points at a download that does not exist yet.
+It writes an appcast entry only when the `SPARKLE_ED_PRIVATE_KEY` secret is
+set and `Info.plist.in` carries the real public key. Without both, it
+releases without one, and installed copies do not auto-update.
 
-   ```
-   scripts/release.sh --identity "Developer ID Application: Brady Stroud (AQ6HPWB3D9)" --format dmg
-   ```
+To give CI the private key, export it and store the file's contents as the
+`SPARKLE_ED_PRIVATE_KEY` repository secret:
 
-   After stapling it now also signs the finished DMG with `sign_update` and
-   writes the entry into `docs/appcast.xml`. It prints the download URL it
-   assumed.
-
-3. Create the GitHub release with tag `v<version>` and upload the DMG under
-   exactly the filename in that URL. **The signature covers those exact
-   bytes** — re-generating or re-compressing the DMG after this step
-   invalidates it.
-
-4. Commit and push `docs/appcast.xml`. Pages redeploys, and installed copies
-   pick the update up on their next check (within 24h) or immediately from
-   "Check for Updates…".
+```
+./third_party/sparkle/bin/generate_keys -x sparkle-private-key.txt
+gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle-private-key.txt
+rm sparkle-private-key.txt
+```
 
 Re-cutting a release that already has an appcast entry is fine: the entry is
 replaced, not duplicated.
-
-## What is deliberately not automated
-
-`scripts/release.sh` does not create the GitHub release, upload the asset, or
-push the appcast. Publishing is Brady's call, and an update feed that goes
-live before its download exists points every installed copy at a 404.
 
 ## Updates are off for some launches, on purpose
 

@@ -34,6 +34,7 @@ DO_STAPLE=1
 DO_APPCAST=1
 APPCAST_PATH="${ROOT_DIR}/docs/appcast.xml"
 DOWNLOAD_URL=""
+RELEASE_VERSION=""
 
 usage() {
   cat <<'EOF'
@@ -47,7 +48,13 @@ Options:
   --format <zip|dmg>       Distributable format (default: zip).
   --notary-profile <name>  xcrun notarytool keychain profile name
                             (default: browser-notary). See the runbook for
-                            `notarytool store-credentials` setup.
+                            `notarytool store-credentials` setup. Ignored
+                            when $NOTARY_API_KEY_PATH, $NOTARY_API_KEY_ID and
+                            $NOTARY_API_ISSUER are set (App Store Connect API
+                            key auth, which is what CI uses).
+  --version <x.y.z>        Stamp this version into CFBundleVersion and
+                            CFBundleShortVersionString before signing,
+                            instead of the one in Info.plist.in.
   --output-dir <dir>       Where to write the distributable (default: dist/).
   --skip-build             Reuse the existing build-release/ output; don't
                             rebuild. (This is a dedicated build dir, separate
@@ -85,6 +92,7 @@ while [[ $# -gt 0 ]]; do
     --config) CONFIG="$2"; shift 2 ;;
     --format) FORMAT="$2"; shift 2 ;;
     --notary-profile) NOTARY_PROFILE="$2"; shift 2 ;;
+    --version) RELEASE_VERSION="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --skip-build) DO_BUILD=0; shift ;;
     --skip-sign) DO_SIGN=0; shift ;;
@@ -203,6 +211,15 @@ if [[ "${DO_SIGN}" -eq 1 ]]; then
   # Same pre-signing stamp scripts/build.sh applies (Info.plist is sealed).
   "${ROOT_DIR}/scripts/stamp-build-info.sh" "${APP_PATH}"
 
+  if [[ -n "${RELEASE_VERSION}" ]]; then
+    INFO_PLIST="${APP_PATH}/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${RELEASE_VERSION}" "${INFO_PLIST}"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${RELEASE_VERSION}" "${INFO_PLIST}"
+  fi
+
+  # A release must carry the CLI, unlike a dev build where it is optional.
+  "${ROOT_DIR}/scripts/bundle-cli.sh" "${APP_PATH}" "${IDENTITY}"
+
   # A real-identity release must carry the passkey provisioning profile (see
   # sign.sh step 2c): a local build may fall back to signing without it, a
   # shipped one may not.
@@ -275,8 +292,14 @@ if [[ "${DO_NOTARIZE}" -eq 1 ]]; then
   # (beads browser-rkn). Parse the actual status and fail hard on anything
   # but Accepted, dumping the notary log so the rejection reason is visible
   # without a second manual `notarytool log` round-trip.
+  if [[ -n "${NOTARY_API_KEY_PATH:-}" && -n "${NOTARY_API_KEY_ID:-}" && -n "${NOTARY_API_ISSUER:-}" ]]; then
+    NOTARY_AUTH=(--key "${NOTARY_API_KEY_PATH}" --key-id "${NOTARY_API_KEY_ID}" --issuer "${NOTARY_API_ISSUER}")
+  else
+    NOTARY_AUTH=(--keychain-profile "${NOTARY_PROFILE}")
+  fi
+
   NOTARIZE_LOG="$(mktemp)"
-  xcrun notarytool submit "${SUBMIT_PATH}" --keychain-profile "${NOTARY_PROFILE}" --wait | tee "${NOTARIZE_LOG}"
+  xcrun notarytool submit "${SUBMIT_PATH}" "${NOTARY_AUTH[@]}" --wait | tee "${NOTARIZE_LOG}"
   SUBMISSION_ID="$(grep -m1 '^\s*id:' "${NOTARIZE_LOG}" | awk '{print $2}')"
   NOTARIZE_STATUS="$(grep '^\s*status:' "${NOTARIZE_LOG}" | tail -1 | awk '{print $2}')"
   rm -f "${NOTARIZE_LOG}"
@@ -287,7 +310,7 @@ if [[ "${DO_NOTARIZE}" -eq 1 ]]; then
   if [[ "${NOTARIZE_STATUS}" != "Accepted" ]]; then
     echo "error: notarization did not succeed (status: ${NOTARIZE_STATUS:-<unknown>}). Full log:" >&2
     if [[ -n "${SUBMISSION_ID:-}" ]]; then
-      xcrun notarytool log "${SUBMISSION_ID}" --keychain-profile "${NOTARY_PROFILE}" >&2 || true
+      xcrun notarytool log "${SUBMISSION_ID}" "${NOTARY_AUTH[@]}" >&2 || true
     fi
     exit 1
   fi
@@ -385,7 +408,10 @@ if [[ "${DO_APPCAST}" -eq 1 ]]; then
   # signing release notes, so parsing it would be a guess. The enclosure
   # length comes from stat(1) against the very same file instead, which is
   # authoritative rather than inferred.
-  if ! SIGN_OUTPUT="$("${SIGN_UPDATE}" -p "${DIST_PATH}" 2>&1)"; then
+  # CI has no login Keychain, so it hands the private key over as a file.
+  SIGN_KEY_ARGS=()
+  [[ -n "${SPARKLE_ED_KEY_FILE:-}" ]] && SIGN_KEY_ARGS=(--ed-key-file "${SPARKLE_ED_KEY_FILE}")
+  if ! SIGN_OUTPUT="$("${SIGN_UPDATE}" ${SIGN_KEY_ARGS[@]+"${SIGN_KEY_ARGS[@]}"} -p "${DIST_PATH}" 2>&1)"; then
     echo "error: sign_update failed:" >&2
     echo "${SIGN_OUTPUT}" >&2
     echo "" >&2
