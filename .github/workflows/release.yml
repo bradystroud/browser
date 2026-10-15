@@ -178,9 +178,7 @@ jobs:
           # 0.1.0 predates the bundled CLI, so the cask links it only from the
           # first release that carries it.
           grep -q '^  binary ' Casks/browser.rb ||
-            sed -i '' '/^  app "Browser.app"$/a\
-  binary "#{appdir}/Browser.app/Contents/Resources/bin/browser"
-' Casks/browser.rb
+            perl -0pi -e 's|^  app "Browser.app"\n|  app "Browser.app"\n  binary "#{appdir}/Browser.app/Contents/Resources/bin/browser"\n|m' Casks/browser.rb
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Update browser to ${VERSION}"
