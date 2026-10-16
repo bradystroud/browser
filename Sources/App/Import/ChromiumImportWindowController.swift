@@ -13,8 +13,8 @@ import AppKit
 ///
 /// SECURITY: never log a password or key. Decrypted entries live only for
 /// the duration of `importPasswords`, the derived key is wiped as soon as
-/// the last row is decrypted, and the copied `Login Data` is deleted before
-/// that function returns.
+/// the import that read it finishes, and the copied `Login Data` is deleted
+/// before that function returns.
 final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate {
     static let shared = ChromiumImportWindowController()
 
@@ -170,7 +170,7 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
             return
         }
 
-        if wantsPasswords, !confirmKeychainPrompt(for: browser) { return }
+        if wantsPasswords, !Self.confirmKeychainPrompt(for: browser) { return }
 
         importButton.isEnabled = false
         statusLabel.stringValue = "Importing…"
@@ -181,13 +181,13 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         var lines: [String] = []
 
         if wantsPasswords {
-            lines.append(importPasswords(from: profile, into: destination))
+            lines.append(Self.importPasswords(from: profile, into: destination, overwriteExisting: overwriteCheckbox.state == .on))
         }
         if wantsBookmarks {
-            lines.append(importBookmarks(from: profile, into: destination))
+            lines.append(Self.importBookmarks(from: profile, into: destination))
         }
         if wantsHistory {
-            lines.append(importHistory(from: profile, into: destination))
+            lines.append(Self.importHistory(from: profile, into: destination))
         }
 
         progressIndicator.stopAnimation(nil)
@@ -201,7 +201,12 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         alert.runModal()
     }
 
-    private func confirmKeychainPrompt(for browser: ChromiumBrowser) -> Bool {
+    // MARK: - Import steps
+
+    // Static so the onboarding window (OnboardingWindowController) runs the
+    // exact same steps. Each returns one line for the final summary.
+
+    static func confirmKeychainPrompt(for browser: ChromiumBrowser) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Allow Access to \(browser.name)\u{2019}s Passwords?"
         alert.informativeText = "\(browser.name) encrypts its saved passwords with a key kept in your keychain. "
@@ -212,20 +217,39 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func importPasswords(from source: ChromiumProfile, into destination: Profile) -> String {
-        let key: ChromiumSafeStorageKey
-        switch ChromiumSafeStorageKeychain.key(for: source.browser) {
-        case .key(let found):
-            key = found
-        case .denied:
-            return "Passwords: not imported \u{2014} keychain access was denied."
-        case .notFound:
-            return "Passwords: not imported \u{2014} \(source.browser.name)\u{2019}s keychain key wasn\u{2019}t found."
-        case .failed(let status):
-            return "Passwords: not imported \u{2014} the keychain returned error \(status)."
-        }
-        defer { key.wipe() }
+    enum PasswordKeyRead {
+        case key(ChromiumSafeStorageKey)
+        case unavailable(summaryLine: String)
+    }
 
+    /// Shows macOS's keychain prompt for `browser`'s key. One key decrypts
+    /// every profile of that browser, so a caller importing several reads
+    /// it once and wipes it when the last one is done.
+    static func readPasswordKey(for browser: ChromiumBrowser) -> PasswordKeyRead {
+        switch ChromiumSafeStorageKeychain.key(for: browser) {
+        case .key(let found):
+            return .key(found)
+        case .denied:
+            return .unavailable(summaryLine: "Passwords: not imported \u{2014} keychain access was denied.")
+        case .notFound:
+            return .unavailable(summaryLine: "Passwords: not imported \u{2014} \(browser.name)\u{2019}s keychain key wasn\u{2019}t found.")
+        case .failed(let status):
+            return .unavailable(summaryLine: "Passwords: not imported \u{2014} the keychain returned error \(status).")
+        }
+    }
+
+    static func importPasswords(from source: ChromiumProfile, into destination: Profile, overwriteExisting: Bool) -> String {
+        switch readPasswordKey(for: source.browser) {
+        case .unavailable(let line):
+            return line
+        case .key(let key):
+            defer { key.wipe() }
+            return importPasswords(from: source, into: destination, overwriteExisting: overwriteExisting, key: key)
+        }
+    }
+
+    /// The caller owns `key` and wipes it.
+    static func importPasswords(from source: ChromiumProfile, into destination: Profile, overwriteExisting: Bool, key: ChromiumSafeStorageKey) -> String {
         let rows: [ChromiumLoginRow]
         do {
             rows = try ChromiumProfileReader.withCopiedDatabase(at: source.loginDataURL) {
@@ -236,11 +260,10 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         }
 
         let extraction = ChromiumPasswordExtractor.extract(rows: rows, key: key)
-        key.wipe()
         let result = PasswordImportCoordinator.importEntries(
             extraction.entries,
             into: destination,
-            overwriteExisting: overwriteCheckbox.state == .on
+            overwriteExisting: overwriteExisting
         )
 
         var parts = ["\(result.importedCount) imported"]
@@ -258,7 +281,7 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         return "Passwords: " + parts.joined(separator: ", ") + "."
     }
 
-    private func importBookmarks(from source: ChromiumProfile, into destination: Profile) -> String {
+    static func importBookmarks(from source: ChromiumProfile, into destination: Profile) -> String {
         guard let data = try? Data(contentsOf: source.bookmarksURL),
               let nodes = try? ChromiumProfileReader.parseBookmarks(data: data)
         else {
@@ -277,7 +300,7 @@ final class ChromiumImportWindowController: NSWindowController, NSWindowDelegate
         return "Bookmarks: \(inserted.count) imported."
     }
 
-    private func importHistory(from source: ChromiumProfile, into destination: Profile) -> String {
+    static func importHistory(from source: ChromiumProfile, into destination: Profile) -> String {
         let visits: [ChromiumHistoryVisit]
         do {
             visits = try ChromiumProfileReader.withCopiedDatabase(at: source.historyURL) {

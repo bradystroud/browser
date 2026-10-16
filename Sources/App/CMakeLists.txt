@@ -211,6 +211,8 @@ set(BROWSER_SWIFT_SRCS
   Import/SafariSyncPaneController.swift
   Import/ChromiumSafeStorageKeychain.swift
   Import/ChromiumImportWindowController.swift
+  Onboarding/OnboardingImportSource.swift
+  Onboarding/OnboardingWindowController.swift
   TabOverview/TabThumbnailCache.swift
   TabOverview/TabOverviewCellView.swift
   TabOverview/TabOverviewView.swift
