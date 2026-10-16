@@ -62,7 +62,8 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     private var passwordDestinationIndex = 0
 
     private let tableView = NSTableView()
-    private let summaryLabel = NSTextField(labelWithString: "")
+    private let summaryLabel = NSTextField(wrappingLabelWithString: "")
+    private let profileScrollView = NSScrollView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let progressIndicator = NSProgressIndicator()
     private let importButton = NSButton(title: "Import", target: nil, action: nil)
@@ -82,6 +83,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             defer: false
         )
         window.title = "Import from Safari"
+        window.contentMinSize = NSSize(width: 620, height: 560)
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -113,6 +115,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         importButton.isEnabled = false
         statusLabel.stringValue = "Scanning Safari…"
         summaryLabel.stringValue = ""
+        layoutSummaryAndProfiles()
         progressIndicator.startAnimation(nil)
         // Force the "Scanning…" state to actually paint before the
         // synchronous scan below blocks this same thread.
@@ -155,6 +158,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             BookmarkImportCoordinator.shared.presentSafariReadFailureAlert()
         }
         statusLabel.stringValue = ""
+        layoutSummaryAndProfiles()
         updateImportButtonEnabled()
         progressIndicator.stopAnimation(nil)
     }
@@ -399,7 +403,8 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
 
         let scrollY = passwordsSectionY + passwordsSectionHeight + 8
         let scrollHeight = contentView.bounds.height - scrollY - margin - 24
-        let scrollView = NSScrollView(frame: NSRect(x: margin, y: scrollY, width: contentWidth, height: scrollHeight))
+        let scrollView = profileScrollView
+        scrollView.frame = NSRect(x: margin, y: scrollY, width: contentWidth, height: scrollHeight)
         scrollView.autoresizingMask = [.width, .height]
         scrollView.hasVerticalScroller = true
 
@@ -421,6 +426,28 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         ListAppearance.apply(to: tableView, in: scrollView, rowHeight: 40)
         scrollView.documentView = tableView
         contentView.addSubview(scrollView)
+        layoutSummaryAndProfiles()
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        layoutSummaryAndProfiles()
+    }
+
+    private func layoutSummaryAndProfiles() {
+        guard let contentView = window?.contentView, profileScrollView.superview != nil else { return }
+        let margin: CGFloat = 12
+        let width = max(0, contentView.bounds.width - margin * 2)
+        let textBounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        let height = max(16, summaryLabel.cell?.cellSize(forBounds: textBounds).height ?? 16).rounded(.up)
+        summaryLabel.frame = NSRect(
+            x: margin, y: contentView.bounds.height - margin - height,
+            width: width, height: height
+        )
+        let bottom = profileScrollView.frame.minY
+        profileScrollView.frame = NSRect(
+            x: margin, y: bottom, width: width,
+            height: max(0, summaryLabel.frame.minY - 8 - bottom)
+        )
     }
 
     private func rebuildPasswordDestinationPopup() {
