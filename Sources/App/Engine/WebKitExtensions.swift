@@ -724,6 +724,14 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
 
 @available(macOS 15.4, *)
 extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
+    func webExtensionController(_ controller: WKWebExtensionController, sendMessage message: Any, toApplicationWithIdentifier applicationIdentifier: String?, for extensionContext: WKWebExtensionContext) async throws -> Any? {
+        try await WebKitNativeMessaging.sendMessage(message, toHost: applicationIdentifier, from: extensionContext)
+    }
+
+    func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for extensionContext: WKWebExtensionContext) async throws {
+        try WebKitNativeMessaging.connect(port, from: extensionContext)
+    }
+
     func webExtensionController(_ controller: WKWebExtensionController, openWindowsFor extensionContext: WKWebExtensionContext) -> [any WKWebExtensionWindow] {
         guard let profile = profile(for: controller), let host else { return [] }
         return host.extensionWindows(profileId: profile.profileId).map { profile.windowAdapter(for: $0) }
