@@ -157,8 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // hasExplicitProfileOrURLOverride's doc comment) -- only a plain
         // launch (no override, no route) skips the usual default window
         // when restore already provided one.
+        // On a fresh install the welcome window comes first, and opens the
+        // first browser window when it closes.
+        let showsOnboarding = OnboardingWindowController.shouldShowAtLaunch(coldLaunchWasRouted: coldLaunchWasRouted)
         if coldLaunchWasRouted || !restoredAnyWindow || CommandLineArgs.hasExplicitProfileOrURLOverride() {
-            if !coldLaunchWasRouted {
+            if !coldLaunchWasRouted && !showsOnboarding {
                 let profile = CommandLineArgs.profileName().map { ProfileManager.shared.profileOrCreate(named: $0) }
                     ?? ProfileManager.shared.fallbackProfile
                 WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())
@@ -167,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The routed link that launched the app belongs in front of the
         // windows restore just put back.
         LittleWindowController.orderAllFront()
+        if showsOnboarding {
+            OnboardingWindowController.shared.showWelcome(
+                opensBrowserWindowOnClose: WindowManager.shared.windowControllers.isEmpty,
+                startingAt: CommandLineArgs.onboardingStartPage()
+            )
+        }
 
         if let tabIdentifier = CommandLineArgs.showSettingsTabIdentifier() {
             SettingsWindowController.shared.showTab(identifier: tabIdentifier)

@@ -38,6 +38,21 @@ enum CommandLineArgs {
         CommandLine.arguments.contains("--test-no-activate")
     }
 
+    /// `--show-onboarding [import|done]`: opens the welcome window at launch
+    /// even though this is not a fresh install, or is a scratch
+    /// `--profiles-root`, where it never opens by itself (see
+    /// OnboardingWindowController). A page name starts it there, so an agent
+    /// can screenshot that page without a click.
+    static func showOnboarding() -> Bool {
+        CommandLine.arguments.contains("--show-onboarding")
+    }
+
+    static func onboardingStartPage() -> OnboardingWindowController.StartPage {
+        let args = CommandLine.arguments
+        guard let index = args.firstIndex(of: "--show-onboarding"), index + 1 < args.count else { return .welcome }
+        return OnboardingWindowController.StartPage(rawValue: args[index + 1]) ?? .welcome
+    }
+
     /// CefSettings.root_cache_path -- all profile cache_paths must live under
     /// this shared parent (see AGENTS.md / docs/research). `--profiles-root
     /// <path>` overrides the default `~/Library/Application Support/Browser/

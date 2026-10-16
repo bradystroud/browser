@@ -188,6 +188,14 @@ final class MainMenuBuilder {
         // is a standalone singleton coordinator, like RoutingCoordinator/
         // ContentBlockerCoordinator, precisely so this doesn't need to add
         // any surface area to AppDelegate (browser-ymx).
+        let importAllItem = NSMenuItem(
+            title: "Import Browser Data\u{2026}",
+            action: #selector(OnboardingWindowController.showImport(_:)),
+            keyEquivalent: ""
+        )
+        importAllItem.target = OnboardingWindowController.shared
+        menu.addItem(importAllItem)
+
         let importFileItem = NSMenuItem(
             title: "Import Bookmarks…",
             action: #selector(BookmarkImportCoordinator.importFromFile(_:)),

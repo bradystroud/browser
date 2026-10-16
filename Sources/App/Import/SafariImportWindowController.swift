@@ -188,37 +188,10 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         var importedProfileCount = 0
 
         for row in selectedRows {
-            let favoriteURLs = SafariImportScanner.favoriteURLs(in: row.profile.bookmarks)
-            let profile = resolveDestinationProfile(for: row)
-            let stores = ProfileDataStoreManager.shared.stores(for: profile)
-            let favoritesFolderId = FavoritesFolder.id(in: stores.bookmarks)
-
-            let insertedURLs = BookmarkImporter.importNodes(
-                row.profile.bookmarks,
-                into: stores.bookmarks,
-                destinationParentId: nil,
-                favoritesFolderId: favoritesFolderId
-            )
-            for url in insertedURLs {
-                if favoriteURLs.contains(url) {
-                    totalFavorites += 1
-                } else {
-                    totalBookmarks += 1
-                }
-            }
-
-            if let historyPath = row.profile.historyDatabasePath,
-               let visits = try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: historyPath) {
-                // One transaction: it either writes every visit or none.
-                if let added = try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) }) {
-                    totalHistory += added
-                }
-            }
-
-            for url in insertedURLs {
-                guard let host = URL(string: url)?.host else { continue }
-                FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileId: profile.id) { _ in }
-            }
+            let counts = Self.importProfile(row.profile, into: resolveDestinationProfile(for: row))
+            totalBookmarks += counts.bookmarks
+            totalFavorites += counts.favorites
+            totalHistory += counts.history
             importedProfileCount += 1
         }
 
@@ -272,8 +245,39 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         alert.runModal()
 
         if offerToDeletePasswordFile, let passwordFile {
-            offerToDeletePasswordCSV(at: passwordFile)
+            Self.offerToDeletePasswordCSV(at: passwordFile)
         }
+    }
+
+    /// One scanned Safari profile's bookmarks, favourites and history into
+    /// `profile`. Shared with the onboarding window (OnboardingWindowController).
+    static func importProfile(_ source: SafariImportProfile, into profile: Profile) -> (bookmarks: Int, favorites: Int, history: Int) {
+        let favoriteURLs = SafariImportScanner.favoriteURLs(in: source.bookmarks)
+        let stores = ProfileDataStoreManager.shared.stores(for: profile)
+        let favoritesFolderId = FavoritesFolder.id(in: stores.bookmarks)
+
+        let insertedURLs = BookmarkImporter.importNodes(
+            source.bookmarks,
+            into: stores.bookmarks,
+            destinationParentId: nil,
+            favoritesFolderId: favoritesFolderId
+        )
+        let favorites = insertedURLs.filter { favoriteURLs.contains($0) }.count
+
+        var history = 0
+        if let historyPath = source.historyDatabasePath,
+           let visits = try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: historyPath) {
+            // One transaction: it either writes every visit or none.
+            if let added = try? stores.history.importVisits(visits.map { (url: $0.url, title: $0.title, visitTime: $0.visitTime) }) {
+                history = added
+            }
+        }
+
+        for url in insertedURLs {
+            guard let host = URL(string: url)?.host else { continue }
+            FaviconLoader.shared.loadFavicon(host: host, hintURL: nil, profileId: profile.id) { _ in }
+        }
+        return (insertedURLs.count - favorites, favorites, history)
     }
 
     /// Brady's own explicit requirement: after a successful password
@@ -281,7 +285,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
     /// regardless of the answer, the file has already been shown as
     /// plaintext in this window's own caption before the user ever chose
     /// it (see passwordsCaptionLabel's text in setUpViews()).
-    private func offerToDeletePasswordCSV(at url: URL) {
+    static func offerToDeletePasswordCSV(at url: URL) {
         let alert = NSAlert()
         alert.messageText = "Delete the Password File?"
         alert.informativeText = "\(url.lastPathComponent) contains your passwords in plain text. "

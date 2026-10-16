@@ -33,6 +33,9 @@ final class ProfileManager {
 
     private let fileURL: URL
     private(set) var profiles: [Profile] = []
+    /// True when this launch found no profiles.json and created the first
+    /// profile itself: a brand-new install, or a brand-new --profiles-root.
+    private(set) var isFreshInstall = false
 
     /// True only while `init` itself is still running (browser-2bj). A
     /// brand-new profiles directory makes `init` call createProfile() ->
@@ -58,6 +61,7 @@ final class ProfileManager {
         fileURL = dir.appendingPathComponent("profiles.json")
         load()
         if profiles.isEmpty {
+            isFreshInstall = true
             _ = createProfile(name: Self.bootstrapProfileName, colorHex: ProfileColorPalette.hexValues[7])
         }
         // Every profile is now known (existing or freshly bootstrapped) --
