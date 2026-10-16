@@ -105,12 +105,14 @@ enum SafariImportScanner {
     static func locateSources(tempDirectory: URL, safariDirectories: [URL]? = nil) -> Sources? {
         let fm = FileManager.default
         let roots = safariDirectories ?? roots()
-        func first(_ relativePath: String) -> URL? {
-            roots.map { $0.appendingPathComponent(relativePath) }.first { fm.isReadableFile(atPath: $0.path) }
+        func first(_ relativePath: String, includingUnreadable: Bool = false) -> URL? {
+            let candidates = roots.map { $0.appendingPathComponent(relativePath) }
+            return candidates.first { fm.isReadableFile(atPath: $0.path) }
+                ?? (includingUnreadable ? candidates.first { fm.fileExists(atPath: $0.path) } : nil)
         }
 
         let bookmarks = first("Bookmarks.plist")
-        let rootHistory = first("History.db")
+        let rootHistory = first("History.db", includingUnreadable: true)
         let folderIds = Array(Set(roots.flatMap {
             SafariProfileDiscovery.discoverProfileIds(safariDirectory: $0)
         })).sorted()
@@ -140,7 +142,7 @@ enum SafariImportScanner {
             historyPath: rootHistory
         )]
         for resolved in SafariProfileDiscovery.resolveProfiles(records: records, folderIds: folderIds) {
-            let history = resolved.dataFolderId.flatMap { first("Profiles/\($0)/History.db") }
+            let history = resolved.dataFolderId.flatMap { first("Profiles/\($0)/History.db", includingUnreadable: true) }
             profiles.append(ProfileSource(
                 id: resolved.id,
                 displayName: resolved.name,

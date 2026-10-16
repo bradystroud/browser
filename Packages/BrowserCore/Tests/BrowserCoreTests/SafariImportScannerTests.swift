@@ -95,6 +95,26 @@ final class SafariImportScannerTests: XCTestCase {
         XCTAssertNil(profile.historyDatabasePath)
     }
 
+    func testUnreadableNamedProfileHistoryIsReportedInsteadOfLookingEmpty() throws {
+        let writer = try SQLiteConnection(path: root.appendingPathComponent("SafariTabs.db").path)
+        try writer.execute("""
+            CREATE TABLE bookmarks (type INTEGER, subtype INTEGER, external_uuid TEXT, title TEXT, server_id TEXT);
+            INSERT INTO bookmarks VALUES (1, 2, 'work-id', 'Work', 'work-data');
+            """)
+        let history = root.appendingPathComponent("Profiles/work-data/History.db")
+        try FileManager.default.createDirectory(at: history.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: history)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: history.path)
+
+        let result = try SafariImportScanner.scan(safariDirectories: [root])
+        defer { TestSupport.removeQuietly(result.tempDirectory) }
+        let profile = try XCTUnwrap(result.profiles.last)
+        XCTAssertEqual(profile.displayName, "Work")
+        XCTAssertTrue(profile.historyReadFailed)
+        XCTAssertFalse(result.profileMetadataUnavailable)
+        withExtendedLifetime(writer) {}
+    }
+
     func testMissingHistoryIsAnEmptyProfileWithoutAReadFailure() throws {
         try PropertyListSerialization.data(fromPropertyList: ["Children": []], format: .xml, options: 0)
             .write(to: root.appendingPathComponent("Bookmarks.plist"))
