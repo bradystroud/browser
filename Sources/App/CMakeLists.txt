@@ -120,6 +120,7 @@ set(BROWSER_SWIFT_SRCS
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
+  Engine/WebKitNativeMessaging.swift
   Routing/SettingsPaneScrollView.swift
   Routing/SettingsForm.swift
   Routing/SettingsWindowController.swift
@@ -277,6 +278,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NativeMessaging.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ReadingListStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/TrackerReportStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift
