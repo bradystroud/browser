@@ -131,9 +131,16 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
         do {
             let result = try SafariImportScanner.scan()
             scanResult = result
-            rows = result.profiles.map { Row(profile: $0) }
+            rows = result.profiles.map { Row(profile: $0, isSelected: !$0.hasUnavailableOnlyData) }
             tableView.reloadData()
-            summaryLabel.stringValue = "Each profile brings its own Safari Favorites folder. Safari Default also brings every bookmark that is in no profile\u{2019}s Favorites."
+            if result.profileMetadataUnavailable {
+                summaryLabel.stringValue = "Safari's profile names couldn't be read. Only the main profile's readable data is available. Close Safari and try again, or check Browser's Full Disk Access in System Settings."
+            } else {
+                summaryLabel.stringValue = "Each profile brings its own Safari Favorites folder. The main Safari profile also brings every bookmark that is in no profile\u{2019}s Favorites."
+            }
+            if result.profiles.contains(where: { $0.historyReadFailed }) {
+                summaryLabel.stringValue += " History couldn't be read for one or more profiles. Close Safari and try again."
+            }
         } catch {
             // Deliberately does NOT close the window (unlike the plain
             // bookmarks-only Safari import, which has nothing else to
@@ -479,6 +486,7 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
             let checkbox = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleSelected(_:)))
             checkbox.tag = row
             checkbox.state = rows[row].isSelected ? .on : .off
+            checkbox.isEnabled = !rows[row].profile.hasUnavailableOnlyData
             return checkbox
         case "profile":
             let label = NSTextField(labelWithString: "")
@@ -504,7 +512,8 @@ final class SafariImportWindowController: NSWindowController, NSWindowDelegate, 
 
     private func profileLabelText(for profile: SafariImportProfile) -> NSAttributedString {
         let title = NSMutableAttributedString(string: profile.displayName + "\n", attributes: [.font: NSFont.systemFont(ofSize: 13)])
-        let counts = "\(profile.bookmarkCount) bookmarks, \(profile.favoriteCount) favourites, \(profile.historyCount) history entries"
+        let history = profile.historyReadFailed ? "history unavailable" : "\(profile.historyCount) history entries"
+        let counts = "\(profile.bookmarkCount) bookmarks, \(profile.favoriteCount) favourites, \(history)"
         title.append(NSAttributedString(string: counts, attributes: [
             .font: NSFont.systemFont(ofSize: 11),
             .foregroundColor: NSColor.secondaryLabelColor,

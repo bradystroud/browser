@@ -115,10 +115,10 @@ final class SafariProfileDiscoveryTests: XCTestCase {
         )
     }
 
-    func testUnclaimedFolderStillAppearsUnderItsUuid() {
+    func testUnclaimedFoldersAreNotSafariProfiles() {
         let resolved = SafariProfileDiscovery.resolveProfiles(records: [], folderIds: ["ORPHAN"])
 
-        XCTAssertEqual(resolved, [.init(id: "ORPHAN", name: "ORPHAN", dataFolderId: "ORPHAN")])
+        XCTAssertTrue(resolved.isEmpty, "Cache and deleted-profile directories must not become GUID-named profiles")
     }
 
     func testProfileWithNoFolderOnThisMacHasNoDataFolder() {

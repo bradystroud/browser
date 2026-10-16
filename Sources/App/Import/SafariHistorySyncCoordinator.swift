@@ -37,6 +37,7 @@ final class SafariHistorySyncCoordinator {
         /// Safari's data is not readable -- normally a missing Full Disk
         /// Access grant, which macOS reports the same way as "no Safari".
         case safariNotReadable
+        case partiallyReadable
         case synced(at: Date, importedVisits: Int)
     }
 
@@ -163,6 +164,7 @@ final class SafariHistorySyncCoordinator {
 
     private struct Outcome {
         var safariNotReadable = false
+        var profileMetadataUnavailable = false
         var importedVisits = 0
         var cursors: [String: SafariHistorySyncCursor] = [:]
     }
@@ -184,6 +186,7 @@ final class SafariHistorySyncCoordinator {
             return outcome
         }
 
+        outcome.profileMetadataUnavailable = sources.profileMetadataUnavailable
         let eligibleIds = Set(eligibleProfiles.map(\.id))
         for safariProfile in sources.profiles {
             let safariProfileId = safariProfile.id
@@ -256,9 +259,11 @@ final class SafariHistorySyncCoordinator {
         if outcome.safariNotReadable {
             // Logged once per change, not on every periodic tick.
             if previousStatus != .safariNotReadable {
-                NSLog("SafariHistorySync: Safari's data is not readable; Full Disk Access is probably not granted")
+                NSLog("SafariHistorySync: some Safari data could not be read; retry or check Browser's Full Disk Access")
             }
             status = .safariNotReadable
+        } else if outcome.profileMetadataUnavailable {
+            status = .partiallyReadable
         } else {
             status = .synced(at: Date(), importedVisits: outcome.importedVisits)
         }
@@ -275,17 +280,17 @@ final class SafariHistorySyncCoordinator {
     /// Lists Safari's profiles for the Settings pane, or nil when Safari's
     /// data is not readable. Runs on `queue`, so it never copies Safari's
     /// files at the same time as a sync run.
-    func discoverSafariProfiles(completion: @escaping ([SafariImportScanner.ProfileSource]?) -> Void) {
+    func discoverSafariProfiles(completion: @escaping (SafariImportScanner.Sources?) -> Void) {
         queue.async {
             let fm = FileManager.default
             let tempDir = fm.temporaryDirectory.appendingPathComponent("SafariHistorySync-\(UUID().uuidString)")
-            var profiles: [SafariImportScanner.ProfileSource]?
+            var sources: SafariImportScanner.Sources?
             if (try? fm.createDirectory(at: tempDir, withIntermediateDirectories: true)) != nil {
-                profiles = SafariImportScanner.locateSources(tempDirectory: tempDir)?.profiles
+                sources = SafariImportScanner.locateSources(tempDirectory: tempDir)
                 try? fm.removeItem(at: tempDir)
             }
             DispatchQueue.main.async {
-                completion(profiles)
+                completion(sources)
             }
         }
     }
