@@ -6,7 +6,7 @@ A native macOS browser: Chromium (via [CEF](https://bitbucket.org/chromiumembedd
 
 ## Install
 
-Browser needs macOS 12 Monterey or later on Apple silicon. Each release is signed with a Developer ID and notarized by Apple, so macOS opens it without a Gatekeeper warning.
+Browser needs macOS 12 Monterey or later on Apple silicon. Each release is signed with a Developer ID and notarized by Apple. The first time you open it, macOS asks "Are you sure you want to open it?" and says Apple checked it for malicious software. Click **Open**. macOS asks this once for every app downloaded from the internet, including through Homebrew.
 
 ### Homebrew
 
