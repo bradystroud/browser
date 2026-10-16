@@ -203,20 +203,23 @@ enum SafariImportScanner {
     /// Copies the WAL before the database so a checkpoint between copies
     /// cannot leave a database that needs an uncopied WAL. The private copy
     /// rebuilds its own shared-memory index; Safari's live -shm isn't portable.
-    static func copySQLiteDatabase(from source: String, to destination: String) -> Bool {
-        let fm = FileManager.default
-        do {
-            if fm.fileExists(atPath: source + "-wal") {
-                try fm.copyItem(atPath: source + "-wal", toPath: destination + "-wal")
+    static func copySQLiteDatabase(from source: String, to destination: String, fileManager fm: FileManager = .default) -> Bool {
+        for _ in 0..<2 {
+            do {
+                if fm.fileExists(atPath: source + "-wal") {
+                    try fm.copyItem(atPath: source + "-wal", toPath: destination + "-wal")
+                }
+                try fm.copyItem(atPath: source, toPath: destination)
+                return true
+            } catch {
+                for suffix in ["", "-wal", "-shm"] {
+                    try? fm.removeItem(atPath: destination + suffix)
+                }
+                // Safari can remove the WAL after the existence check when
+                // it closes/checkpoints. Retry from a fresh set of files.
             }
-            try fm.copyItem(atPath: source, toPath: destination)
-            return true
-        } catch {
-            for suffix in ["", "-wal", "-shm"] {
-                try? fm.removeItem(atPath: destination + suffix)
-            }
-            return false
         }
+        return false
     }
 
     private static func makeProfile(source: ProfileSource, bookmarks: [ImportedBookmarkNode], copiedHistoryName: String, tempDir: URL) -> SafariImportProfile {

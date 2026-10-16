@@ -78,7 +78,9 @@ public enum SafariProfileDiscovery {
     /// metadata as unavailable rather than invent profiles from directories.
     /// A schema without `server_id` still yields rows, with no data folder.
     public static func profileRecords(fromCopiedSafariTabsDatabaseAt path: String) -> [ProfileRecord] {
-        guard let connection = try? SQLiteConnection(path: path, readOnly: true) else { return [] }
+        // SQLite may need to rebuild WAL bookkeeping in this private copy.
+        guard FileManager.default.fileExists(atPath: path),
+              let connection = try? SQLiteConnection(path: path) else { return [] }
         var columnNames: Set<String> = []
         if let columns = try? connection.prepare("SELECT name FROM pragma_table_info('bookmarks');") {
             while (try? columns.step()) == true { columnNames.insert(columns.text(0)) }

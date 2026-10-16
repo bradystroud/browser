@@ -115,6 +115,60 @@ final class SafariImportScannerTests: XCTestCase {
         withExtendedLifetime(writer) {}
     }
 
+    func testDatabaseCopyRetriesWhenWALDisappears() throws {
+        let source = root.appendingPathComponent("SafariTabs.db")
+        do {
+            let writer = try SQLiteConnection(path: source.path)
+            try writer.execute("""
+                CREATE TABLE bookmarks (type INTEGER, subtype INTEGER, external_uuid TEXT, title TEXT, server_id TEXT);
+                INSERT INTO bookmarks VALUES (1, 2, 'work-id', 'Work', 'work-data');
+                PRAGMA wal_checkpoint(TRUNCATE);
+                """)
+        }
+        // Model Safari closing/checkpointing between the existence check and copy.
+        try Data().write(to: URL(fileURLWithPath: source.path + "-wal"))
+        let fileManager = DisappearingWALFileManager()
+        let destination = copies.appendingPathComponent("SafariTabs.db")
+
+        XCTAssertTrue(SafariImportScanner.copySQLiteDatabase(from: source.path, to: destination.path, fileManager: fileManager))
+        XCTAssertTrue(fileManager.removedWAL)
+        XCTAssertEqual(SafariProfileDiscovery.profileRecords(fromCopiedSafariTabsDatabaseAt: destination.path).map(\.name), ["Work"])
+    }
+
+    func testCheckpointedHistoryCopiesRemainReadableWithoutWAL() throws {
+        let source = root.appendingPathComponent("History.db")
+        do {
+            let writer = try SQLiteConnection(path: source.path)
+            try writer.execute("""
+                CREATE TABLE history_items (id INTEGER PRIMARY KEY, url TEXT);
+                CREATE TABLE history_visits (id INTEGER PRIMARY KEY, history_item INTEGER, title TEXT, visit_time REAL);
+                INSERT INTO history_items VALUES (1, 'https://example.com');
+                INSERT INTO history_visits VALUES (1, 1, 'Example', 700000000);
+                PRAGMA wal_checkpoint(TRUNCATE);
+                """)
+        }
+        let importCopy = copies.appendingPathComponent("Import.db")
+        let syncCopy = copies.appendingPathComponent("Sync.db")
+        XCTAssertTrue(SafariImportScanner.copySQLiteDatabase(from: source.path, to: importCopy.path))
+        XCTAssertTrue(SafariImportScanner.copySQLiteDatabase(from: source.path, to: syncCopy.path))
+
+        XCTAssertEqual(try SafariHistoryReader.readVisits(fromCopiedDatabaseAt: importCopy.path).map(\.url), ["https://example.com"])
+        XCTAssertEqual(try SafariHistoryReader.readVisits(fromCopiedDatabaseAt: syncCopy.path, after: .start).visits.map(\.url), ["https://example.com"])
+    }
+
+    private final class DisappearingWALFileManager: FileManager, @unchecked Sendable {
+        private(set) var removedWAL = false
+
+        override func copyItem(atPath source: String, toPath destination: String) throws {
+            if source.hasSuffix("-wal"), !removedWAL {
+                removedWAL = true
+                try FileManager.default.removeItem(atPath: source)
+                throw CocoaError(.fileNoSuchFile)
+            }
+            try super.copyItem(atPath: source, toPath: destination)
+        }
+    }
+
     func testMissingHistoryIsAnEmptyProfileWithoutAReadFailure() throws {
         try PropertyListSerialization.data(fromPropertyList: ["Children": []], format: .xml, options: 0)
             .write(to: root.appendingPathComponent("Bookmarks.plist"))

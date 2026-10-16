@@ -62,7 +62,15 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
         enabledCheckbox.state = coordinator.settings.isEnabled ? .on : .off
         syncNowButton.isEnabled = coordinator.settings.isEnabled && coordinator.status != .running
 
-        let notReadable = discoverySucceeded == false || coordinator.status == .safariNotReadable
+        let partialDiscovery = discoverySucceeded != false && (discoveryPartial || coordinator.status == .partiallyReadable)
+        let notReadable = discoverySucceeded == false || coordinator.status == .safariNotReadable || partialDiscovery
+        let accessNotice = partialDiscovery
+            ? "Safari's profile list couldn't be read. Close Safari and retry. If it stays unavailable, check Browser in System Settings > Privacy & Security > Full Disk Access. The main profile remains available."
+            : "macOS protects Safari's history. Check Browser in System Settings > Privacy & Security > Full Disk Access, then retry."
+        if accessNoticeLabel.stringValue != accessNotice {
+            accessNoticeLabel.stringValue = accessNotice
+            invalidateContentHeight()
+        }
         if accessRows.contains(where: { $0.isHidden == notReadable }) {
             accessRows.forEach { $0.isHidden = !notReadable }
             invalidateContentHeight()
