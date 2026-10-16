@@ -8,9 +8,8 @@ final class SQLiteConnection {
 
     private let handle: OpaquePointer
 
-    /// `readOnly` is for opening a file this app doesn't own the schema/
-    /// writes for (browser-ymx's Safari-history import reads a copy of
-    /// Safari's own History.db this way) -- SQLITE_OPEN_READONLY instead of
+    /// `readOnly` is for consumers that never write, such as the CLI's
+    /// database queries -- SQLITE_OPEN_READONLY instead of
     /// the default READWRITE|CREATE, and skips the write-side PRAGMAs below
     /// entirely: `journal_mode = WAL` fails outright on a read-only-opened
     /// connection (it requires write access to change), and

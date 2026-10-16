@@ -37,6 +37,7 @@ set(BROWSER_SWIFT_SRCS
   AppDelegate.swift
   AppActivation.swift
   BrowserWindow.swift
+  WindowDragView.swift
   FindBarController.swift
   BrowserWindowController.swift
   ColorSwatchPicker.swift
@@ -204,7 +205,6 @@ set(BROWSER_SWIFT_SRCS
   StartPage/StartPageSettingsPaneController.swift
   StartPage/StartPageSettingsCoordinator.swift
   Import/BookmarkImportCoordinator.swift
-  Import/SafariImportScanner.swift
   Import/SafariImportWindowController.swift
   Import/PasswordImportCoordinator.swift
   Import/SafariHistorySyncCoordinator.swift
@@ -281,6 +281,7 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariBookmarksPlistParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistoryReader.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariProfileDiscovery.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariImportScanner.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SafariHistorySync.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/PasswordCSVParser.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkImporter.swift

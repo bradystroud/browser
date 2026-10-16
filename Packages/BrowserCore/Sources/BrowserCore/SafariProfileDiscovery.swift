@@ -48,8 +48,7 @@ public enum SafariProfileDiscovery {
     }
 
     /// A Safari profile resolved against the `Profiles/` folders on disk.
-    /// `id` is the stable key to store (external_uuid, or the folder name for
-    /// a folder no profile row claims); `dataFolderId` is where its
+    /// `id` is the stable key to store (external_uuid); `dataFolderId` is where its
     /// History.db lives, nil when it has no data folder on this Mac.
     public struct ResolvedProfile: Equatable {
         public let id: String
@@ -75,11 +74,13 @@ public enum SafariProfileDiscovery {
     /// (like Bookmarks.plist) covering every profile at once.
     ///
     /// Best-effort: returns an empty array (never throws) if the file can't
-    /// be read or the schema doesn't match, so a caller can fall back to raw
-    /// folder names instead of failing the whole import over a name lookup.
+    /// be read or the schema doesn't match. Callers must treat missing
+    /// metadata as unavailable rather than invent profiles from directories.
     /// A schema without `server_id` still yields rows, with no data folder.
     public static func profileRecords(fromCopiedSafariTabsDatabaseAt path: String) -> [ProfileRecord] {
-        guard let connection = try? SQLiteConnection(path: path, readOnly: true) else { return [] }
+        // SQLite may need to rebuild WAL bookkeeping in this private copy.
+        guard FileManager.default.fileExists(atPath: path),
+              let connection = try? SQLiteConnection(path: path) else { return [] }
         var columnNames: Set<String> = []
         if let columns = try? connection.prepare("SELECT name FROM pragma_table_info('bookmarks');") {
             while (try? columns.step()) == true { columnNames.insert(columns.text(0)) }
@@ -117,19 +118,15 @@ public enum SafariProfileDiscovery {
     /// Joins profile rows to the `Profiles/` folder names on disk. Every row
     /// except the root profile's becomes one profile, named by its title and
     /// pointing at its data folder (server_id, or external_uuid when no
-    /// server_id folder exists). A folder that no row claims -- a deleted
-    /// profile's leftovers, or a Safari too old to have `SafariTabs.db` --
-    /// still appears, named by its UUID, so its history is never hidden.
+    /// server_id folder exists). Unclaimed directories may be caches or
+    /// deleted profiles, so only Safari's metadata establishes a profile.
     /// UUIDs compare case-insensitively: nothing guarantees one case.
     public static func resolveProfiles(records: [ProfileRecord], folderIds: [String]) -> [ResolvedProfile] {
         var foldersByKey: [String: String] = [:]
         for folder in folderIds { foldersByKey[folder.uppercased()] = folder }
-        var claimed: Set<String> = [defaultProfileRecordId.uppercased()]
         var resolved: [ResolvedProfile] = []
 
         for record in records where record.id.uppercased() != defaultProfileRecordId.uppercased() {
-            claimed.insert(record.id.uppercased())
-            if let dataFolderId = record.dataFolderId { claimed.insert(dataFolderId.uppercased()) }
             let dataFolder = record.dataFolderId.flatMap { foldersByKey[$0.uppercased()] }
                 ?? foldersByKey[record.id.uppercased()]
             resolved.append(ResolvedProfile(
@@ -138,9 +135,6 @@ public enum SafariProfileDiscovery {
                 dataFolderId: dataFolder,
                 favoritesFolderServerId: record.favoritesFolderServerId
             ))
-        }
-        for folder in folderIds.sorted() where !claimed.contains(folder.uppercased()) {
-            resolved.append(ResolvedProfile(id: folder, name: folder, dataFolderId: folder))
         }
         return resolved
     }

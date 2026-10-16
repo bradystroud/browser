@@ -29,10 +29,9 @@ public struct SafariHistoryVisit: Equatable {
 /// Never opens Safari's live database directly -- always operates on a
 /// caller-supplied path, which the caller must have already copied out of
 /// Safari's own directory first (Safari holds locks on its live files,
-/// and may have pending writes sitting in a `-wal` sidecar file a plain
-/// file copy of just the main `.db` won't include -- meaning the very
-/// latest, not-yet-checkpointed visits can be missed; an accepted, minor
-/// limitation of this approach, not a correctness bug for anything older).
+/// and may have pending writes sitting in a `-wal` sidecar). Callers copy
+/// the WAL before the main database, and this reader permits SQLite to
+/// rebuild bookkeeping in that private snapshot.
 public enum SafariHistoryReader {
     public enum ReadError: Error {
         case fileNotReadable
@@ -51,7 +50,8 @@ public enum SafariHistoryReader {
         let connection: SQLiteConnection
         let statement: Statement
         do {
-            connection = try SQLiteConnection(path: path, readOnly: true)
+            // The private copy needs writable WAL bookkeeping after a checkpoint.
+            connection = try SQLiteConnection(path: path)
             statement = try connection.prepare("""
                 SELECT history_items.url, history_visits.title, history_visits.visit_time
                 FROM history_visits

@@ -27,6 +27,7 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
     /// Nil until the first discovery finishes; false when Safari's data
     /// could not be read.
     private var discoverySucceeded: Bool?
+    private var discoveryPartial = false
     private var observers: [NSObjectProtocol] = []
 
     override init() {
@@ -46,10 +47,11 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
     /// have been added in Safari, or Full Disk Access granted since.
     func reload() {
         updateState()
-        SafariHistorySyncCoordinator.shared.discoverSafariProfiles { [weak self] profiles in
+        SafariHistorySyncCoordinator.shared.discoverSafariProfiles { [weak self] sources in
             guard let self else { return }
-            self.discoverySucceeded = profiles != nil
-            self.safariProfiles = profiles ?? []
+            self.discoverySucceeded = sources != nil
+            self.discoveryPartial = sources?.profileMetadataUnavailable ?? false
+            self.safariProfiles = sources?.profiles ?? []
             self.tableView.reloadData()
             self.updateState()
         }
@@ -60,7 +62,15 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
         enabledCheckbox.state = coordinator.settings.isEnabled ? .on : .off
         syncNowButton.isEnabled = coordinator.settings.isEnabled && coordinator.status != .running
 
-        let notReadable = discoverySucceeded == false || coordinator.status == .safariNotReadable
+        let partialDiscovery = discoverySucceeded != false && (discoveryPartial || coordinator.status == .partiallyReadable)
+        let notReadable = discoverySucceeded == false || coordinator.status == .safariNotReadable || partialDiscovery
+        let accessNotice = partialDiscovery
+            ? "Safari's profile list couldn't be read. Close Safari and retry. If it stays unavailable, check Browser in System Settings > Privacy & Security > Full Disk Access. The main profile remains available."
+            : "macOS protects Safari's history. Check Browser in System Settings > Privacy & Security > Full Disk Access, then retry."
+        if accessNoticeLabel.stringValue != accessNotice {
+            accessNoticeLabel.stringValue = accessNotice
+            invalidateContentHeight()
+        }
         if accessRows.contains(where: { $0.isHidden == notReadable }) {
             accessRows.forEach { $0.isHidden = !notReadable }
             invalidateContentHeight()
@@ -70,11 +80,17 @@ final class SafariSyncPaneController: NSObject, NSTableViewDataSource, NSTableVi
         case _ where !coordinator.settings.isEnabled:
             statusLabel.stringValue = "Sync is off."
         case .notRunYet:
-            statusLabel.stringValue = "Not synced yet."
+            statusLabel.stringValue = discoveryPartial
+                ? "Safari's profile list couldn't be read. Reopen Settings to retry."
+                : "Not synced yet."
         case .running:
             statusLabel.stringValue = "Syncing…"
         case .safariNotReadable:
-            statusLabel.stringValue = "Waiting for Full Disk Access."
+            statusLabel.stringValue = "Safari data couldn't be read. Retrying."
+        case .partiallyReadable:
+            statusLabel.stringValue = "Safari's profile list couldn't be read. Syncing the main profile only; retrying."
+        case .synced where discoveryPartial:
+            statusLabel.stringValue = "Safari's profile list couldn't be read. Reopen Settings to retry."
         case .synced(let date, let importedVisits):
             let time = DateFormatter.localizedString(from: date, dateStyle: .none, timeStyle: .short)
             statusLabel.stringValue = "Last synced at \(time): \(importedVisits) new visit\(importedVisits == 1 ? "" : "s")."

@@ -11,11 +11,14 @@ struct SafariImportProfile {
     /// brand-new named profile that's never been browsed in yet).
     let historyDatabasePath: String?
     let historyCount: Int
+    let historyReadFailed: Bool
     /// This profile's share of Safari's one bookmark tree -- see
     /// SafariImportScanner.bookmarks(for:in:).
     let bookmarks: [ImportedBookmarkNode]
     let bookmarkCount: Int
     let favoriteCount: Int
+
+    var hasUnavailableOnlyData: Bool { historyReadFailed && bookmarkCount == 0 }
 }
 
 /// Locates Safari's on-disk data, copies the relevant files to a temp
@@ -50,6 +53,7 @@ enum SafariImportScanner {
         /// step reads from.
         let tempDirectory: URL
         let profiles: [SafariImportProfile]
+        let profileMetadataUnavailable: Bool
     }
 
     private static let candidateRoots: [URL] = [
@@ -81,6 +85,7 @@ enum SafariImportScanner {
     struct Sources {
         let bookmarksPlist: URL?
         let profiles: [ProfileSource]
+        let profileMetadataUnavailable: Bool
     }
 
     /// Candidate Safari directories. `--safari-data-root <dir>` replaces both,
@@ -97,56 +102,63 @@ enum SafariImportScanner {
     /// Nil when nothing is readable -- which is also what a missing Full
     /// Disk Access grant looks like. `SafariTabs.db` is copied into
     /// `tempDirectory` to read profile names, and removed again.
-    static func locateSources(tempDirectory: URL) -> Sources? {
+    static func locateSources(tempDirectory: URL, safariDirectories: [URL]? = nil) -> Sources? {
         let fm = FileManager.default
-        let roots = roots()
-        func first(_ relativePath: String) -> URL? {
-            roots.map { $0.appendingPathComponent(relativePath) }.first { fm.fileExists(atPath: $0.path) }
+        let roots = safariDirectories ?? roots()
+        func first(_ relativePath: String, includingUnreadable: Bool = false) -> URL? {
+            let candidates = roots.map { $0.appendingPathComponent(relativePath) }
+            return candidates.first { fm.isReadableFile(atPath: $0.path) }
+                ?? (includingUnreadable ? candidates.first { fm.fileExists(atPath: $0.path) } : nil)
         }
 
         let bookmarks = first("Bookmarks.plist")
-        let rootHistory = first("History.db")
-        let profilesDir = first("Profiles")
-        guard bookmarks != nil || rootHistory != nil || profilesDir != nil else { return nil }
+        let rootHistory = first("History.db", includingUnreadable: true)
+        let folderIds = Array(Set(roots.flatMap {
+            SafariProfileDiscovery.discoverProfileIds(safariDirectory: $0)
+        })).sorted()
+        guard bookmarks != nil || rootHistory != nil || !folderIds.isEmpty else { return nil }
 
         var records: [SafariProfileDiscovery.ProfileRecord] = []
-        if let tabsDb = first("SafariTabs.db") {
+        for tabsDb in roots.map({ $0.appendingPathComponent("SafariTabs.db") }) where fm.isReadableFile(atPath: tabsDb.path) {
             let copiedTabsPath = tempDirectory.appendingPathComponent("SafariTabs-\(UUID().uuidString).db").path
             if copySQLiteDatabase(from: tabsDb.path, to: copiedTabsPath) {
                 records = SafariProfileDiscovery.profileRecords(fromCopiedSafariTabsDatabaseAt: copiedTabsPath)
             }
             for suffix in ["", "-wal", "-shm"] { try? fm.removeItem(atPath: copiedTabsPath + suffix) }
+            if !records.isEmpty { break }
         }
+        // Folder names do not identify Safari profiles. If metadata cannot
+        // be read, keep the main profile's readable data and tell the caller
+        // that named profiles are unavailable.
+        let profileMetadataUnavailable = !folderIds.isEmpty && records.isEmpty
+        let rootName = records.first {
+            $0.id.caseInsensitiveCompare(SafariProfileDiscovery.defaultProfileRecordId) == .orderedSame
+        }?.name
 
         var profiles = [ProfileSource(
             id: defaultProfileId,
-            displayName: "Safari Default",
+            displayName: rootName.flatMap { $0.isEmpty ? nil : $0 } ?? "Safari Default",
             favoritesFolderServerId: SafariBookmarksPlistParser.favoritesBarServerId,
             historyPath: rootHistory
         )]
-        if let profilesDir {
-            let folderIds = SafariProfileDiscovery.discoverProfileIds(safariDirectory: profilesDir.deletingLastPathComponent())
-            for resolved in SafariProfileDiscovery.resolveProfiles(records: records, folderIds: folderIds) {
-                let history = resolved.dataFolderId
-                    .map { profilesDir.appendingPathComponent($0).appendingPathComponent("History.db") }
-                    .flatMap { fm.fileExists(atPath: $0.path) ? $0 : nil }
-                profiles.append(ProfileSource(
-                    id: resolved.id,
-                    displayName: resolved.name,
-                    favoritesFolderServerId: resolved.favoritesFolderServerId,
-                    historyPath: history
-                ))
-            }
+        for resolved in SafariProfileDiscovery.resolveProfiles(records: records, folderIds: folderIds) {
+            let history = resolved.dataFolderId.flatMap { first("Profiles/\($0)/History.db", includingUnreadable: true) }
+            profiles.append(ProfileSource(
+                id: resolved.id,
+                displayName: resolved.name,
+                favoritesFolderServerId: resolved.favoritesFolderServerId,
+                historyPath: history
+            ))
         }
-        return Sources(bookmarksPlist: bookmarks, profiles: profiles)
+        return Sources(bookmarksPlist: bookmarks, profiles: profiles, profileMetadataUnavailable: profileMetadataUnavailable)
     }
 
-    static func scan() throws -> Result {
+    static func scan(safariDirectories: [URL]? = nil) throws -> Result {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent("SafariImport-\(UUID().uuidString)")
         try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        guard let sources = locateSources(tempDirectory: tempDir) else {
+        guard let sources = locateSources(tempDirectory: tempDir, safariDirectories: safariDirectories) else {
             try? fm.removeItem(at: tempDir)
             throw ScanError.safariDataNotReadable
         }
@@ -168,7 +180,7 @@ enum SafariImportScanner {
             )
         }
 
-        return Result(tempDirectory: tempDir, profiles: profiles)
+        return Result(tempDirectory: tempDir, profiles: profiles, profileMetadataUnavailable: sources.profileMetadataUnavailable)
     }
 
     /// A profile's bookmarks: its Favorites folder, imported as this app's
@@ -188,28 +200,37 @@ enum SafariImportScanner {
         return nodes
     }
 
-    /// Copies a SQLite database together with its -wal and -shm files.
-    /// Safari keeps its databases open in WAL mode, so recent rows -- a
-    /// newly created or renamed profile's name, the latest visits -- often
-    /// exist only in the -wal file until Safari checkpoints it. Copying the
-    /// main file alone silently drops them.
-    static func copySQLiteDatabase(from source: String, to destination: String) -> Bool {
-        let fm = FileManager.default
-        guard (try? fm.copyItem(atPath: source, toPath: destination)) != nil else { return false }
-        for suffix in ["-wal", "-shm"] where fm.fileExists(atPath: source + suffix) {
-            try? fm.copyItem(atPath: source + suffix, toPath: destination + suffix)
+    /// Copies the WAL before the database so a checkpoint between copies
+    /// cannot leave a database that needs an uncopied WAL. The private copy
+    /// rebuilds its own shared-memory index; Safari's live -shm isn't portable.
+    static func copySQLiteDatabase(from source: String, to destination: String, fileManager fm: FileManager = .default) -> Bool {
+        for _ in 0..<2 {
+            do {
+                if fm.fileExists(atPath: source + "-wal") {
+                    try fm.copyItem(atPath: source + "-wal", toPath: destination + "-wal")
+                }
+                try fm.copyItem(atPath: source, toPath: destination)
+                return true
+            } catch {
+                for suffix in ["", "-wal", "-shm"] {
+                    try? fm.removeItem(atPath: destination + suffix)
+                }
+                // Safari can remove the WAL after the existence check when
+                // it closes/checkpoints. Retry from a fresh set of files.
+            }
         }
-        return true
+        return false
     }
 
     private static func makeProfile(source: ProfileSource, bookmarks: [ImportedBookmarkNode], copiedHistoryName: String, tempDir: URL) -> SafariImportProfile {
         let counts = countBookmarksAndFavorites(in: bookmarks)
-        func profile(historyPath: String?, historyCount: Int) -> SafariImportProfile {
+        func profile(historyPath: String?, historyCount: Int, historyReadFailed: Bool = false) -> SafariImportProfile {
             SafariImportProfile(
                 id: source.id,
                 displayName: source.displayName,
                 historyDatabasePath: historyPath,
                 historyCount: historyCount,
+                historyReadFailed: historyReadFailed,
                 bookmarks: bookmarks,
                 bookmarkCount: counts.bookmarks,
                 favoriteCount: counts.favorites
@@ -221,10 +242,14 @@ enum SafariImportScanner {
         }
         let copiedPath = tempDir.appendingPathComponent(copiedHistoryName).path
         guard copySQLiteDatabase(from: sourceHistoryPath.path, to: copiedPath) else {
-            return profile(historyPath: nil, historyCount: 0)
+            return profile(historyPath: nil, historyCount: 0, historyReadFailed: true)
         }
-        let visitCount = (try? SafariHistoryReader.readVisits(fromCopiedDatabaseAt: copiedPath))?.count ?? 0
-        return profile(historyPath: copiedPath, historyCount: visitCount)
+        do {
+            let visitCount = try SafariHistoryReader.readVisits(fromCopiedDatabaseAt: copiedPath).count
+            return profile(historyPath: copiedPath, historyCount: visitCount)
+        } catch {
+            return profile(historyPath: nil, historyCount: 0, historyReadFailed: true)
+        }
     }
 
     /// `favorites` counts only bookmark leaves nested (at any depth) inside

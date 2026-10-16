@@ -33,7 +33,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let initialURL: String
 
     private let tabStripView = TabStripView(frame: .zero)
-    private let toolbarView = NSView()
+    private let toolbarView = WindowDragView()
     /// The one material behind the tab strip + toolbar -- Safari's own
     /// "unified toolbar" look, rather than each view tinting itself
     /// separately. Sits behind both (added to contentView first). A plain

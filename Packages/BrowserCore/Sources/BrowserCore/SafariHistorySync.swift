@@ -106,7 +106,8 @@ extension SafariHistoryReader {
         let maxIdStatement: Statement
         let statement: Statement
         do {
-            connection = try SQLiteConnection(path: path, readOnly: true)
+            // The private copy needs writable WAL bookkeeping after a checkpoint.
+            connection = try SQLiteConnection(path: path)
             maxIdStatement = try connection.prepare("SELECT COALESCE(MAX(id), 0) FROM history_visits;")
             statement = try connection.prepare("""
                 SELECT history_items.url, history_visits.title, history_visits.visit_time
