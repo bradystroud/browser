@@ -91,6 +91,29 @@ final class RoutingCoordinator {
             LittleWindowController.open(url: url, profile: profile)
         case .browser:
             openURL(url, in: profile)
+        case .otherApp:
+            openInOtherApp(url, bundleId: opening.appBundleId, fallbackProfile: profile)
+        }
+    }
+
+    /// Hands `url` to the app a rule names. A missing app, or this app
+    /// itself (which would route the link straight back here), opens it in
+    /// `fallbackProfile` instead, so a rule can never lose a link.
+    func openInOtherApp(_ url: String, bundleId: String?, fallbackProfile: Profile) {
+        guard let bundleId,
+              bundleId != Bundle.main.bundleIdentifier,
+              let link = URL(string: url),
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+            NSLog("RoutingCoordinator: app \(bundleId ?? "(none)") is not available, opening \(url) in \(fallbackProfile.name)")
+            openURL(url, in: fallbackProfile)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = !CommandLineArgs.testNoActivate()
+        NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: configuration) { [weak self] _, error in
+            guard let error else { return }
+            NSLog("RoutingCoordinator: \(bundleId) could not open \(url): \(error.localizedDescription)")
+            DispatchQueue.main.async { self?.openURL(url, in: fallbackProfile) }
         }
     }
 

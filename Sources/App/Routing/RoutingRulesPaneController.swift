@@ -351,8 +351,14 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
             evaluation: evaluation,
             preferLittleWindowForExternalLinks: LinkHandlingPreferences.littleWindowForExternalLinks
         )
-        if opening.openIn == .littleWindow {
+        switch opening.openIn {
+        case .littleWindow:
             lines.append("From another app, this opens in a little window.")
+        case .otherApp:
+            let appName = opening.appBundleId.map(RoutingRuleEditor.appDisplayName(bundleId:)) ?? ""
+            lines.append("This opens in \(appName), or in the profile above if that app is not installed.")
+        case .browser:
+            break
         }
 
         testResultLabel.stringValue = lines.joined(separator: "\n")
@@ -378,6 +384,8 @@ final class RoutingRulesPaneController: NSObject, NSTableViewDataSource, NSTable
             switch rule.action.openIn {
             case .littleWindow: text = "\(name) · little window"
             case .browser: text = "\(name) · browser"
+            case .otherApp:
+                text = rule.action.otherAppBundleId.map { "Open in \(RoutingRuleEditor.appDisplayName(bundleId: $0))" } ?? name
             case nil: text = name
             }
         default:

@@ -35,6 +35,25 @@ struct OpenInCodingTests {
         #expect(String(decoding: data, as: UTF8.self).contains("\"littleWindow\""))
     }
 
+    @Test("an otherApp action round-trips its app, and a file without one decodes it as nil")
+    func otherAppRoundTrip() throws {
+        let action = RoutingRule.Action(profileId: "p", openIn: .otherApp, appBundleId: "com.microsoft.edgemac")
+        let decoded = try JSONDecoder().decode(RoutingRule.Action.self, from: JSONEncoder().encode(action))
+        #expect(decoded == action)
+        #expect(decoded.otherAppBundleId == "com.microsoft.edgemac")
+
+        let legacy = try JSONDecoder().decode(RoutingRule.Action.self, from: Data(#"{"profileId":"p"}"#.utf8))
+        #expect(legacy.appBundleId == nil)
+        #expect(legacy.otherAppBundleId == nil)
+    }
+
+    @Test("an app named on a non-otherApp action is not a hand-off")
+    func appIgnoredWithoutOtherApp() {
+        let action = RoutingRule.Action(profileId: "p", openIn: .browser, appBundleId: "com.microsoft.edgemac")
+        #expect(action.otherAppBundleId == nil)
+        #expect(RoutingRule.Action(profileId: "p", openIn: .otherApp, appBundleId: "").otherAppBundleId == nil)
+    }
+
     @Test("an openIn value from a newer build decodes as nil instead of failing the file")
     func unknownValueTolerated() throws {
         let json = #"{"profileId":"p","openIn":"somethingNew"}"#
@@ -87,5 +106,18 @@ struct LinkOpeningResolveTests {
         let evaluation = evaluate([rule(.littleWindow)], url: "https://other.org/")
         #expect(evaluation.openIn == nil)
         #expect(LinkOpening.resolve(evaluation: evaluation, preferLittleWindowForExternalLinks: false).openIn == .browser)
+    }
+
+    @Test("a rule handing off to another app wins over the little-window preference")
+    func otherAppWins() {
+        let rules = [RoutingRule(match: .init(domainGlob: "example.com"), action: .init(profileId: "p", openIn: .otherApp, appBundleId: "com.microsoft.edgemac"))]
+        let opening = LinkOpening.resolve(evaluation: evaluate(rules), preferLittleWindowForExternalLinks: true)
+        #expect(opening == LinkOpening(openIn: .otherApp, reason: .rule, appBundleId: "com.microsoft.edgemac"))
+    }
+
+    @Test("an otherApp rule with no app follows the preference")
+    func otherAppWithoutAppIsSilent() {
+        let opening = LinkOpening.resolve(evaluation: evaluate([rule(.otherApp)]), preferLittleWindowForExternalLinks: true)
+        #expect(opening == LinkOpening(openIn: .littleWindow, reason: .preference))
     }
 }

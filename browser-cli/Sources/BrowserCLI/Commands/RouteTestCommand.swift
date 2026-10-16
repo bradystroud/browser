@@ -39,6 +39,9 @@ public enum RouteTestCommand {
             return Output.emit(result, json: args.jsonOutput) { output in
                 let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- the frontmost window, or this profile if no window is open"
                 let strippedNote = output.effectiveURL == output.url ? "" : " [tracking params stripped -> \(output.effectiveURL)]"
+                if let appBundleId = output.appBundleId {
+                    return "\(output.url) -> app \(appBundleId), else profile '\(output.profileName)' (\(output.openInReason)) [\(ruleNote)]\(strippedNote)"
+                }
                 let placement = output.openIn == RoutingRule.OpenIn.littleWindow.rawValue ? "little window" : "tab"
                 return "\(output.url) -> profile '\(output.profileName)', \(placement) (\(output.openInReason)) [\(ruleNote)]\(strippedNote)"
             }

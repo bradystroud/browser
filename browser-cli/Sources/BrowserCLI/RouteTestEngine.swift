@@ -23,13 +23,17 @@ public struct RouteTestOutput: Codable, Equatable {
     public let matchedRuleSummary: String?
     public let profileId: String
     public let profileName: String
-    /// `RoutingRule.OpenIn`'s raw value -- `browser` or `littleWindow` --
-    /// for a link clicked in another app, which is what route-test models.
+    /// `RoutingRule.OpenIn`'s raw value -- `browser`, `littleWindow` or
+    /// `otherApp` -- for a link clicked in another app, which is what
+    /// route-test models.
     public let openIn: String
     /// `LinkOpening.Reason`'s raw value: `rule`, `preference` or `default`.
     public let openInReason: String
+    /// The app an `otherApp` rule hands the link to. Whether it is installed
+    /// is decided by the app at open time, and `profileName` is its fallback.
+    public let appBundleId: String?
 
-    public init(url: String, effectiveURL: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String, openIn: String = RoutingRule.OpenIn.browser.rawValue, openInReason: String = LinkOpening.Reason.default.rawValue) {
+    public init(url: String, effectiveURL: String, fromApp: String?, matchedRuleIndex: Int?, matchedRuleSummary: String?, profileId: String, profileName: String, openIn: String = RoutingRule.OpenIn.browser.rawValue, openInReason: String = LinkOpening.Reason.default.rawValue, appBundleId: String? = nil) {
         self.url = url
         self.effectiveURL = effectiveURL
         self.fromApp = fromApp
@@ -39,6 +43,7 @@ public struct RouteTestOutput: Codable, Equatable {
         self.profileName = profileName
         self.openIn = openIn
         self.openInReason = openInReason
+        self.appBundleId = appBundleId
     }
 }
 
@@ -101,7 +106,8 @@ public enum RouteTestEngine {
                 profileId: profileId,
                 profileName: profileName,
                 openIn: opening.openIn.rawValue,
-                openInReason: opening.reason.rawValue
+                openInReason: opening.reason.rawValue,
+                appBundleId: opening.appBundleId
             )
         case .noMatch:
             return RouteTestOutput(
@@ -113,7 +119,8 @@ public enum RouteTestEngine {
                 profileId: profileId,
                 profileName: profileName,
                 openIn: opening.openIn.rawValue,
-                openInReason: opening.reason.rawValue
+                openInReason: opening.reason.rawValue,
+                appBundleId: opening.appBundleId
             )
         }
     }
