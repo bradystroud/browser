@@ -210,11 +210,16 @@ final class CLIServer {
         }
 
         let (profile, resolution) = RoutingCoordinator.shared.resolveProfile(url: url, sourceBundleId: nil)
-        let ruleOpenIn: RoutingRule.OpenIn?
+        let ruleAction: RoutingRule.Action?
         if case .matchedRule(let index) = resolution, RoutingRulesStore.shared.rules.indices.contains(index) {
-            ruleOpenIn = RoutingRulesStore.shared.rules[index].action.openIn
+            ruleAction = RoutingRulesStore.shared.rules[index].action
         } else {
-            ruleOpenIn = nil
+            ruleAction = nil
+        }
+        let ruleOpenIn = ruleAction?.openIn
+        if forced == nil, case .matchedRule(let index) = resolution, let appBundleId = ruleAction?.otherAppBundleId {
+            RoutingCoordinator.shared.openInOtherApp(url, bundleId: appBundleId, fallbackProfile: profile)
+            return CLIResponse(ok: true, message: "Handed \(url) to \(appBundleId) (matched rule #\(index + 1); profile '\(profile.name)' if that app is not installed).")
         }
         let routed: Placement = ruleOpenIn == .littleWindow ? .littleWindow : .tab
         let placement = open(url, in: profile, placement: forced ?? routed)

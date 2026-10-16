@@ -49,6 +49,10 @@ public struct RoutingRule: Codable, Equatable, Identifiable {
         /// A small single-page window in front of the app the link came
         /// from, which can then be moved into the profile's normal window.
         case littleWindow
+        /// Hand the link to another app (`Action.appBundleId`), typically a
+        /// browser that a site's policy accepts and this one cannot satisfy,
+        /// such as Edge for Microsoft 365 pages gated by device compliance.
+        case otherApp
     }
 
     public struct Action: Codable, Equatable {
@@ -58,14 +62,19 @@ public struct RoutingRule: Codable, Equatable, Identifiable {
         /// Omitted from routing.json when nil, so a file without it and a
         /// build without it both read each other unchanged.
         public var openIn: OpenIn?
+        /// The app that `.otherApp` hands the link to. `profileId` stays
+        /// required as the fallback for when that app is not installed, and
+        /// for a build that does not know `.otherApp`.
+        public var appBundleId: String?
 
-        public init(profileId: String, openIn: OpenIn? = nil) {
+        public init(profileId: String, openIn: OpenIn? = nil, appBundleId: String? = nil) {
             self.profileId = profileId
             self.openIn = openIn
+            self.appBundleId = appBundleId
         }
 
         private enum CodingKeys: String, CodingKey {
-            case profileId, openIn
+            case profileId, openIn, appBundleId
         }
 
         /// An `openIn` value this build does not know (written by a newer
@@ -76,6 +85,14 @@ public struct RoutingRule: Codable, Equatable, Identifiable {
             profileId = try container.decode(String.self, forKey: .profileId)
             let rawOpenIn = (try? container.decodeIfPresent(String.self, forKey: .openIn)) ?? nil
             openIn = rawOpenIn.flatMap(OpenIn.init(rawValue:))
+            appBundleId = (try? container.decodeIfPresent(String.self, forKey: .appBundleId)) ?? nil
+        }
+
+        /// The app to hand the link to, or nil when this action opens it in
+        /// this browser -- `.otherApp` with no app named means the browser.
+        public var otherAppBundleId: String? {
+            guard openIn == .otherApp, let appBundleId, !appBundleId.isEmpty else { return nil }
+            return appBundleId
         }
     }
 

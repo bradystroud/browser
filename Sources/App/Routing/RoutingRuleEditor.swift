@@ -3,7 +3,8 @@ import AppKit
 /// Presents an add/edit dialog for a single RoutingRule -- URL contains
 /// (the simplest field, listed first), domain glob, URL regex, source app
 /// (picker of currently-running apps' bundle IDs, plus free-text entry for
-/// any other bundle ID), and target profile. Mirrors NewProfilePrompt's
+/// any other bundle ID), target profile, and where it opens -- including
+/// handing the link to another installed browser. Mirrors NewProfilePrompt's
 /// NSAlert-accessory-view pattern.
 enum RoutingRuleEditor {
     /// `existingRule` nil means "add"; non-nil means "edit" (its `id` is
@@ -36,6 +37,18 @@ enum RoutingRuleEditor {
 
         // Built bottom-up (y = 0 at the bottom), then the whole stack is
         // flipped into top-down reading order by the accessory's final height.
+        let appPopup = NSPopUpButton(frame: NSRect(x: 0, y: y, width: fieldWidth, height: rowHeight))
+        let apps = browserApps(including: existingRule?.action.appBundleId)
+        for app in apps {
+            let item = NSMenuItem(title: app.name, action: nil, keyEquivalent: "")
+            item.representedObject = app.bundleId
+            item.image = app.icon
+            appPopup.menu?.addItem(item)
+        }
+        accessory.addSubview(appPopup)
+        addLabel("App (for “Another app”)", y: y + rowHeight)
+        y += rowHeight + labelHeight + groupGap
+
         let openInPopup = NSPopUpButton(frame: NSRect(x: 0, y: y, width: fieldWidth, height: rowHeight))
         for (title, openIn) in openInChoices {
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -53,7 +66,7 @@ enum RoutingRuleEditor {
             profilePopup.menu?.addItem(item)
         }
         accessory.addSubview(profilePopup)
-        addLabel("Target profile", y: y + rowHeight)
+        addLabel("Target profile (also used if the app is not installed)", y: y + rowHeight)
         y += rowHeight + labelHeight + groupGap
 
         let sourceAppCombo = NSComboBox(frame: NSRect(x: 0, y: y, width: fieldWidth, height: rowHeight))
@@ -126,13 +139,26 @@ enum RoutingRuleEditor {
             if let index = openInChoices.firstIndex(where: { $0.openIn == rule.action.openIn }) {
                 openInPopup.selectItem(at: index)
             }
+            if let bundleId = rule.action.appBundleId,
+               let index = apps.firstIndex(where: { $0.bundleId == bundleId }) {
+                appPopup.selectItem(at: index)
+            }
+        } else if let index = apps.firstIndex(where: { $0.bundleId == edgeBundleId }) {
+            appPopup.selectItem(at: index)
         }
         validator.revalidate()
+
+        // The app row only applies to "Another app". The toggle is kept alive
+        // for the alert's lifetime through this local reference, like `validator`.
+        let appToggle = AppPopupToggle(openInPopup: openInPopup, appPopup: appPopup)
+        openInPopup.target = appToggle
+        openInPopup.action = #selector(AppPopupToggle.update)
+        appToggle.update()
 
         alert.accessoryView = accessory
         alert.window.initialFirstResponder = containsField
 
-        let response = alert.runModal()
+        let response = withExtendedLifetime(appToggle) { alert.runModal() }
         guard response == .alertFirstButtonReturn else { return nil }
 
         // Belt and braces: the Save button is disabled while invalid, but
@@ -154,7 +180,9 @@ enum RoutingRuleEditor {
             sourceBundleIds: sourceBundleId.map { [$0] }
         )
         let openIn = (openInPopup.selectedItem?.representedObject as? String).flatMap(RoutingRule.OpenIn.init(rawValue:))
-        let action = RoutingRule.Action(profileId: selectedProfile.id, openIn: openIn)
+        let appBundleId = openIn == .otherApp ? appPopup.selectedItem?.representedObject as? String : nil
+        if openIn == .otherApp && appBundleId == nil { return nil }
+        let action = RoutingRule.Action(profileId: selectedProfile.id, openIn: openIn, appBundleId: appBundleId)
 
         if let existingRule {
             return RoutingRule(id: existingRule.id, match: match, action: action)
@@ -167,7 +195,45 @@ enum RoutingRuleEditor {
         ("Follow the global setting", nil),
         ("A browser tab", .browser),
         ("A little window", .littleWindow),
+        ("Another app", .otherApp),
     ]
+
+    private static let edgeBundleId = "com.microsoft.edgemac"
+
+    struct AppChoice {
+        let bundleId: String
+        let name: String
+        let icon: NSImage?
+    }
+
+    /// Every installed app that can open https links, except this one (a
+    /// hand-off to itself would route the link straight back here), sorted
+    /// by name. `savedBundleId` stays in the list even when it is no longer
+    /// installed, so editing an old rule does not silently change its app.
+    static func browserApps(including savedBundleId: String?) -> [AppChoice] {
+        guard let probe = URL(string: "https://example.com") else { return [] }
+        var seen = Set<String>()
+        var choices: [AppChoice] = []
+        for appURL in NSWorkspace.shared.urlsForApplications(toOpen: probe) {
+            guard let bundleId = Bundle(url: appURL)?.bundleIdentifier,
+                  bundleId != Bundle.main.bundleIdentifier,
+                  seen.insert(bundleId).inserted else { continue }
+            let icon = NSWorkspace.shared.icon(forFile: appURL.path)
+            icon.size = NSSize(width: 16, height: 16)
+            choices.append(AppChoice(bundleId: bundleId, name: FileManager.default.displayName(atPath: appURL.path).replacingOccurrences(of: ".app", with: ""), icon: icon))
+        }
+        choices.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if let savedBundleId, !savedBundleId.isEmpty, !seen.contains(savedBundleId) {
+            choices.append(AppChoice(bundleId: savedBundleId, name: "\(savedBundleId) (not installed)", icon: nil))
+        }
+        return choices
+    }
+
+    /// The installed app's name for `bundleId`, or the bundle id itself.
+    static func appDisplayName(bundleId: String) -> String {
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else { return bundleId }
+        return FileManager.default.displayName(atPath: appURL.path).replacingOccurrences(of: ".app", with: "")
+    }
 
     private static func comboDisplayString(for entry: RunningApplicationPicker.Entry) -> String {
         "\(entry.displayName) — \(entry.bundleIdentifier)"
@@ -188,6 +254,22 @@ enum RoutingRuleEditor {
     private static func nonEmpty(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+/// Enables the app popup only while "Another app" is the chosen action.
+private final class AppPopupToggle: NSObject {
+    private let openInPopup: NSPopUpButton
+    private let appPopup: NSPopUpButton
+
+    init(openInPopup: NSPopUpButton, appPopup: NSPopUpButton) {
+        self.openInPopup = openInPopup
+        self.appPopup = appPopup
+    }
+
+    @objc func update() {
+        let openIn = (openInPopup.selectedItem?.representedObject as? String).flatMap(RoutingRule.OpenIn.init(rawValue:))
+        appPopup.isEnabled = openIn == .otherApp && appPopup.numberOfItems > 0
     }
 }
 

@@ -136,6 +136,17 @@ final class RouteTestEngineTests: XCTestCase {
         XCTAssertEqual(result.profileName, "work")
     }
 
+    func testRuleCanHandOffToAnotherApp() throws {
+        let rule = RoutingRule(match: .init(domainGlob: "forms.office.com"), action: .init(profileId: "work-id", openIn: .otherApp, appBundleId: "com.microsoft.edgemac"))
+        let configuration = RoutingConfiguration(rules: [rule], defaultProfileId: "default-id")
+        let url = "https://forms.office.com/r/abc"
+        let result = try RouteTestEngine.run(url: url, effectiveURL: url, fromApp: nil, configuration: configuration, profiles: profiles, littleWindowForExternalLinks: true)
+        XCTAssertEqual(result.openIn, "otherApp")
+        XCTAssertEqual(result.openInReason, "rule")
+        XCTAssertEqual(result.appBundleId, "com.microsoft.edgemac")
+        XCTAssertEqual(result.profileName, "work")
+    }
+
     func testRoutingConfigurationStoreFallsBackWhenFileMissing() {
         let configuration = RoutingConfigurationStore.load(directory: "/tmp/browser-cli-tests-nonexistent-\(UUID().uuidString)", profiles: profiles)
         XCTAssertTrue(configuration.rules.isEmpty)
