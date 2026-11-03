@@ -255,6 +255,7 @@ set(BROWSER_ROUTING_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RoutingRule.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RuleMatcher.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/LinkOpening.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/EngineRules.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamList.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamStripper.swift
   )
