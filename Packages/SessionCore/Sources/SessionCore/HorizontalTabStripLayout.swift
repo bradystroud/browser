@@ -15,7 +15,10 @@ public struct HorizontalTabStripLayout: Equatable {
         case groupHeader(isCollapsed: Bool)
     }
 
-    public static let minTabWidth: CGFloat = 80
+    /// A tab's title is inset by the favicon's width on both sides (see
+    /// TabButtonView.layout), so at 80pt only an ellipsis fits; this leaves
+    /// room for the first word or two.
+    public static let minTabWidth: CGFloat = 120
     /// Just enough for a centered favicon, with no title or close button.
     public static let pinnedTabWidth: CGFloat = 36
     /// Expanded shows the group's name; collapsed only a color dot and count.

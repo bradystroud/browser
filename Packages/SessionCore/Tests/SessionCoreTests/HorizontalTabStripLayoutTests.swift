@@ -30,8 +30,8 @@ private func lastMaxX(_ layout: Layout) -> CGFloat {
 @Test func anOverflowingRowIsWideEnoughToReachTheLastTab() {
     let result = layout(Array(repeating: .tab, count: 50), width: 1000)
     #expect(result.overflows)
-    // 8 + 50*80 + 49*6 + 8
-    #expect(result.contentWidth == 4310)
+    // 8 + 50*120 + 49*6 + 8
+    #expect(result.contentWidth == 6310)
     #expect(lastMaxX(result) + 8 == result.contentWidth)
 }
 
