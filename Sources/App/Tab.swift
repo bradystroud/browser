@@ -127,6 +127,39 @@ final class Tab: NSObject, EngineTabDelegate {
     private(set) var browser: EngineTab?
     private(set) var title: String
 
+    /// The engine this tab's page is in -- or, while it has no engine tab
+    /// (asleep, not yet shown), the one it will be created in. Chosen per
+    /// navigation by EngineRulesStore; see `switchEngine(to:url:)`.
+    private(set) var engine: EngineChoice
+
+    /// What this tab's engine can do. UI that differs by engine reads this,
+    /// never a process-wide value: two tabs side by side can disagree.
+    var capabilities: EngineCapabilities { Engines.capabilities(for: engine) }
+
+    /// The host of the web page this tab shows, without a leading `www.` --
+    /// what an "Always Open <site> in ..." rule is written for. nil for the
+    /// start page or anything that isn't http(s).
+    var siteHost: String? {
+        guard let components = URLComponents(string: urlString),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              var host = components.host?.lowercased(), !host.isEmpty
+        else { return nil }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        return host
+    }
+
+    /// "Reopen in ..." -- the user's own engine choice for this tab, which
+    /// rules do not override while it lasts. See EngineSwitchPolicy.
+    private(set) var engineOverride: EngineOverride?
+
+    /// True for a tab the engine opened for a page's window.open(). Its
+    /// opener talks to it through window.opener, which only exists inside
+    /// one engine tab, so a popup never moves engines on its own.
+    private let isPopup: Bool
+
+    /// See EngineSwapThrottle.
+    private var engineSwapThrottle = EngineSwapThrottle()
+
     /// The engine's real, current URL -- the internal start page's own
     /// (giant, base64-encoded) data: URL while showing it. `urlString`
     /// below is the public-facing value everything else in the app should
@@ -380,7 +413,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// what the engine actually has (no separate "read it back to confirm"
     /// step needed).
     func toggleMuted() {
-        guard ActiveEngine.capabilities.perTabAudioMute else { return }
+        guard capabilities.perTabAudioMute else { return }
         isMuted.toggle()
         browser?.setAudioMuted(isMuted)
         delegate?.tabDidChangeDisplayState(self)
@@ -420,6 +453,8 @@ final class Tab: NSObject, EngineTabDelegate {
         self.isShowingStartPage = resolved.isStartPage
         self.engineURLString = resolved.url
         self.title = resolved.isStartPage ? StartPageRenderer.tabTitle : initialURL
+        self.engine = EngineRulesStore.shared.decide(url: resolved.url, trigger: .newTab, currentEngine: nil, override: nil).engine
+        self.isPopup = false
         super.init()
         hostView.wantsLayer = true
         if resolved.isStartPage { rememberStartPage(resolved.url) }
@@ -435,10 +470,12 @@ final class Tab: NSObject, EngineTabDelegate {
         self.isShowingStartPage = false
         self.engineURLString = ""
         self.title = ""
+        self.engine = opener.engine
+        self.isPopup = true
         super.init()
         hostView.wantsLayer = true
         popup.attach(to: devTools.pageView)
-        devTools.attach(to: popup)
+        devTools.attach(to: popup, capabilities: Engines.capabilities(for: opener.engine))
         popup.delegate = self
         browser = popup
     }
@@ -455,21 +492,93 @@ final class Tab: NSObject, EngineTabDelegate {
     /// real frame (CEF's SetAsChild needs real bounds at creation time).
     func createBrowserIfNeeded() {
         guard browser == nil else { return }
-        // A private tab never goes through ActiveEngine.createTab(profileName:...)
+        // A private tab never goes through Engines.createTab(engine:profileName:...)
         // -- that path always resolves to a persisted-cache_path context (see
         // BRWGetOrCreateProfileContext), even for a made-up profile name.
         // createPrivateTab is the only path that gets CEF's actual empty-
         // cache_path incognito context (browser-12m.1).
         let browser = isPrivate
-            ? ActiveEngine.createPrivateTab(hostView: devTools.pageView, initialURL: engineURLString)
-            : ActiveEngine.createTab(profileName: profileName, profileId: profileId, hostView: devTools.pageView, initialURL: engineURLString)
+            ? Engines.createPrivateTab(engine: engine, hostView: devTools.pageView, initialURL: engineURLString)
+            : Engines.createTab(engine: engine, profileName: profileName, profileId: profileId, hostView: devTools.pageView, initialURL: engineURLString)
         browser.delegate = self
-        devTools.attach(to: browser)
+        devTools.attach(to: browser, capabilities: capabilities)
         if !siteStyleSheets.isEmpty {
             browser.setSiteStyleSheets(siteStyleSheets)
         }
         self.browser = browser
         if isMuted { browser.setAudioMuted(true) }
+    }
+
+    // MARK: - Engine
+
+    /// "Reopen in WebKit/Chromium": shows this tab's current address in
+    /// `newEngine`, and keeps the tab there for this site even where a rule
+    /// says otherwise (see EngineSwitchPolicy).
+    func reopen(in newEngine: EngineChoice) {
+        engineOverride = EngineOverride(engine: newEngine.siteEngine, url: engineURLString)
+        switchEngine(to: newEngine, url: isShowingStartPage ? Self.blankPageSentinel : engineURLString)
+    }
+
+    /// Replaces this tab's engine tab with a fresh one in `newEngine`,
+    /// loading `url`. The two engines share nothing, so what lived only in
+    /// the old engine tab is gone: back/forward history, the page's own
+    /// state (form input, scroll position), a POST body being submitted
+    /// (the new engine loads the URL with a plain GET), open developer
+    /// tools and Responsive Design Mode, and -- for a private tab -- its
+    /// ephemeral cookie jar. Cookies and storage are each engine's own, so
+    /// a site may ask the user to sign in again.
+    ///
+    /// A tab that is not on screen is left without an engine tab, the way a
+    /// sleeping one is: CEF can only create a browser into a view with real
+    /// bounds, and the tab is created in `newEngine` when it is next shown.
+    func switchEngine(to newEngine: EngineChoice, url: String) {
+        let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
+        NSLog("Browser: tab %@ moving from %@ to %@", id.uuidString, engine.rawValue, newEngine.rawValue)
+        if let browser {
+            deviceToolbar.turnOff()
+            devTools.tabWillClose()
+            browser.delegate = nil
+            browser.close()
+            self.browser = nil
+        }
+        engine = newEngine
+        isShowingStartPage = resolved.isStartPage
+        engineURLString = resolved.url
+        if resolved.isStartPage {
+            rememberStartPage(resolved.url)
+            title = StartPageRenderer.tabTitle
+        }
+        isCurrentURLCommitted = false
+        wakeRestore = nil
+        isLoading = false
+        loadingProgress = 0
+        pendingNavigationURL = nil
+        hasFreshTitle = resolved.isStartPage
+        canGoBack = false
+        canGoForward = false
+        isAudible = false
+        if hostView.window != nil {
+            createBrowserIfNeeded()
+        }
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    /// A page's own navigation is heading somewhere a rule puts in the other
+    /// engine. The old engine has already started it; the switch happens on
+    /// the next run-loop turn, never inside the engine's own callback.
+    private func switchEngineIfNeeded(forPageNavigationTo url: String) {
+        guard !isPopup, !hasLiveOpenedPopup, !isOwnStartPage(url) else { return }
+        let decision = EngineRulesStore.shared.decide(url: url, trigger: .pageNavigation, currentEngine: engine, override: engineOverride)
+        guard decision.engine != engine else { return }
+        guard engineSwapThrottle.allow(at: ProcessInfo.processInfo.systemUptime) else {
+            NSLog("Browser: tab %@ not moving to %@ again so soon; rules may conflict for %@", id.uuidString, decision.engine.rawValue, url)
+            return
+        }
+        let current = browser
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let current, self.browser === current else { return }
+            self.switchEngine(to: decision.engine, url: url)
+        }
     }
 
     // MARK: - Sleep
@@ -563,6 +672,12 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func load(url: String) {
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
+        let decision = EngineRulesStore.shared.decide(url: resolved.url, trigger: .explicitLoad, currentEngine: engine, override: engineOverride)
+        if decision.clearsOverride { engineOverride = nil }
+        if decision.engine != engine {
+            switchEngine(to: decision.engine, url: url)
+            return
+        }
         isShowingStartPage = resolved.isStartPage
         engineURLString = resolved.url
         if resolved.isStartPage { rememberStartPage(resolved.url) }
@@ -888,6 +1003,7 @@ final class Tab: NSObject, EngineTabDelegate {
         loadingProgress = 0
         hasFreshTitle = false
         delegate?.tabDidChangeDisplayState(self)
+        switchEngineIfNeeded(forPageNavigationTo: url)
     }
 
     func engineTabDidUpdateLoadingProgress(_ progress: Double) {
@@ -942,7 +1058,7 @@ final class Tab: NSObject, EngineTabDelegate {
         // arbitrates registrations by message type, unlike earlier this
         // session).
         executeJavaScript(NotificationOverrideScript.source)
-        if SwipeScrollProbeScript.isNeeded {
+        if SwipeScrollProbeScript.isNeeded(for: capabilities) {
             SwipeNavigationController.shared.documentDidStart(in: self)
             executeJavaScript(SwipeScrollProbeScript.source)
         }

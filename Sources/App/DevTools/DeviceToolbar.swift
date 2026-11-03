@@ -25,7 +25,7 @@ final class DeviceToolbarController {
         self.tab = tab
     }
 
-    private var isSupported: Bool { ActiveEngine.capabilities.responsiveDesignMode }
+    private var isSupported: Bool { tab?.capabilities.responsiveDesignMode ?? false }
 
     /// ⇧⌘M: on with this tab's last choice (Responsive the first time), or off.
     func toggle() {

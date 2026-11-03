@@ -501,7 +501,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 title: $0.displayTitle, favicon: $0.faviconImage, isPinned: $0.isPinned,
                 groupId: $0.groupId, themeColorHex: $0.themeColorHex,
                 isMuted: $0.isMuted, isAudible: $0.isAudible, isLoading: $0.isLoading,
-                isAsleep: $0.isAsleep)
+                isAsleep: $0.isAsleep, engine: $0.engine, siteHost: $0.siteHost)
         }
     }
 
@@ -1965,6 +1965,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabStripView.updateAudioState(at: index, isMuted: tab.isMuted, isAudible: tab.isAudible)
         tabStripView.updateLoadingState(at: index, isLoading: tab.isLoading)
         tabStripView.updateSleepState(at: index, isAsleep: tab.isAsleep)
+        tabStripView.updateEngine(at: index, engine: tab.engine, siteHost: tab.siteHost)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
@@ -2224,6 +2225,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
+        case #selector(reopenInOtherEngine(_:)), #selector(alwaysOpenSiteInOtherEngine(_:)):
+            return validateEngineMenuItem(menuItem)
         case #selector(goBackAction(_:)):
             return activeTab?.canGoBack ?? false
         case #selector(goForwardAction(_:)):
@@ -2238,7 +2241,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             menuItem.state = AlwaysShowTabBarPreference.isEnabled ? .on : .off
             return tabStripOrientation == .horizontal
         case #selector(toggleDevTools(_:)):
-            if ActiveEngine.capabilities.inAppDevTools {
+            if activeTab?.capabilities.inAppDevTools ?? true {
                 menuItem.title = activeTab?.devTools.isOpen == true ? "Close Developer Tools" : "Open Developer Tools"
             }
             return activeTab != nil

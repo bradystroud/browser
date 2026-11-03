@@ -36,8 +36,13 @@ enum SwipeScrollProbeScript {
         "window.\(resetFunction) && window.\(resetFunction)(\(id));"
     }
 
-    /// Whether this engine needs the page's help at all.
-    static var isNeeded: Bool { !ActiveEngine.capabilities.nativeSwipeNavigation }
+    /// Whether a tab with these capabilities needs the page's help at all.
+    static func isNeeded(for capabilities: EngineCapabilities) -> Bool {
+        !capabilities.nativeSwipeNavigation
+    }
+
+    /// Whether any engine does, so the controller is worth starting.
+    static var isNeededByAnyEngine: Bool { Engines.anyEngine { !$0.nativeSwipeNavigation } }
 
     static let source = """
     (function () {

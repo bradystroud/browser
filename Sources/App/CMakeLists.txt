@@ -91,6 +91,7 @@ set(BROWSER_SWIFT_SRCS
   PageMessageDispatcher.swift
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
+  Engine/Engines.swift
   Engine/WebKitEngineAdapter.swift
   Engine/WebKitBackgroundTabPolicy.swift
   Engine/WebKitContentBlocking.swift
@@ -117,6 +118,9 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitExtensionAdapters.swift
   Engine/WebKitExtensionInstaller.swift
   Routing/RoutingRulesStore.swift
+  EngineRules/EngineRulesStore.swift
+  EngineRules/EngineRulesPaneController.swift
+  EngineRules/BrowserWindowController+Engine.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift

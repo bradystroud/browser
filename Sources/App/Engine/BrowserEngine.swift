@@ -405,9 +405,10 @@ struct EngineSecurityStatus {
     var serverTrust: SecTrust?
 }
 
-/// What the running engine can actually do, for UI that would otherwise
-/// offer a command the engine cannot carry out. UI reads
-/// `ActiveEngine.capabilities` rather than asking which engine is running.
+/// What an engine can actually do, for UI that would otherwise offer a
+/// command the engine cannot carry out. UI reads a tab's own
+/// `Tab.capabilities` (or `Engines.capabilities(for:)`) rather than asking
+/// which engine is running.
 struct EngineCapabilities {
     /// A developer-tools window opened from inside the app, including
     /// right-click Inspect Element. When false, showDevTools(panel:dockSide:in:)
@@ -453,13 +454,26 @@ enum BackgroundTabPolicy: String, CaseIterable {
     case keepReady
 }
 
-/// Which BrowserEngine conformer `--engine` (see CommandLineArgs.engineChoice())
-/// selects at launch. Exhaustive by design -- adding a third engine means
-/// updating this enum, its one switch in WebKitEngineAdapter.swift's
-/// `ActiveEngine`, and nothing else in Sources/App.
-enum EngineChoice {
+/// One of the app's rendering engines. Both run in the same process (see
+/// `Engines`), and each tab picks one. The raw values are the
+/// `--engine cef|webkit` spellings and RoutingCore's `SiteEngine` raw values,
+/// so the three convert by raw value. Exhaustive by design -- adding a third
+/// engine means updating this enum and `Engines`, and nothing else in
+/// Sources/App.
+enum EngineChoice: String, CaseIterable {
     case cef
     case webkit
+
+    /// The user-facing name.
+    var displayName: String {
+        switch self {
+        case .cef: return "Chromium"
+        case .webkit: return "WebKit"
+        }
+    }
+
+    /// The other engine, for "Reopen in ...".
+    var other: EngineChoice { self == .cef ? .webkit : .cef }
 }
 
 /// One profile's content-blocking configuration -- the engine-agnostic
@@ -479,17 +493,13 @@ struct EngineProfileThreatSettings {
 }
 
 /// Process-wide engine lifecycle + tab creation. A protocol with static
-/// requirements (conformed to by exactly one concrete adapter at a time,
-/// referenced everywhere else as `ActiveEngine`) rather than an instance
-/// type, since the underlying engine API this wraps is itself entirely
-/// static/class-level -- one engine process per app, not a per-window or
-/// per-tab instance.
+/// requirements rather than an instance type, since the underlying engine
+/// API this wraps is itself entirely static/class-level.
 ///
 /// Conformers: CEFEngine (Sources/App/Engine/CEFEngineAdapter.swift), a thin
 /// wrapper around the bridge's BRWEngine/BRWApplication, and WebKitEngine
-/// (Sources/App/Engine/WebKitEngineAdapter.swift). `ActiveEngine` picks one
-/// at launch from `--engine cef|webkit` -- nothing in Sources/App outside
-/// Engine/ should need to know which.
+/// (Sources/App/Engine/WebKitEngineAdapter.swift). Both run side by side;
+/// nothing outside Engine/ names either -- it goes through `Engines`.
 protocol BrowserEngine {
     /// Must run before anything touches NSApplication.shared -- see
     /// main.swift and the CEF adapter's own doc comment for why.

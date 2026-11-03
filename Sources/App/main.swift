@@ -1,10 +1,10 @@
 import AppKit
 
-// The active engine's application-integration must become NSApp before
+// CEF's application integration must become NSApp before
 // anything else touches NSApplication.shared -- see
 // BrowserEngine.bootstrapApplication and, for the CEF specifics,
 // Sources/Bridge/BRWApplication.h.
-ActiveEngine.bootstrapApplication()
+Engines.bootstrapApplication()
 
 // AppKit's own window restoration is off: the app restores its session
 // itself (SessionStore / session.json). Left on, AppKit keeps a crash

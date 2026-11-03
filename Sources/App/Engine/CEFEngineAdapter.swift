@@ -338,10 +338,3 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         delegate?.engineTabDidBlockRequest(trackerDomain: trackerDomain, pageHost: pageHost)
     }
 }
-
-// `ActiveEngine` -- what the rest of Sources/App actually calls
-// (`ActiveEngine.initialize(...)`, `ActiveEngine.createTab(...)`, etc.) --
-// lives in WebKitEngineAdapter.swift as a runtime-selected
-// `BrowserEngine.Type`, so `--engine cef|webkit` can pick between this
-// file's CEFEngine and that file's WebKitEngine at launch. See that
-// declaration's own doc comment.

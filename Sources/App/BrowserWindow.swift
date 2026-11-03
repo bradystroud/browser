@@ -170,8 +170,8 @@ final class BrowserWindow: NSWindow {
         // -- the tools' own front-end included -- can claim it.
         if event.modifierFlags.intersection(Self.consideredModifiers) == [.command, .shift],
            event.charactersIgnoringModifiers?.lowercased() == "m",
-           ActiveEngine.capabilities.responsiveDesignMode,
-           let tab = (windowController as? BrowserWindowController)?.activeTab {
+           let tab = (windowController as? BrowserWindowController)?.activeTab,
+           tab.capabilities.responsiveDesignMode {
             tab.deviceToolbar.toggle()
             return true
         }

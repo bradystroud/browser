@@ -1,11 +1,10 @@
 import AppKit
 
-// Stand-ins for app types WebKitEngineAdapter.swift names only in its
-// top-level `ActiveEngine` selector. The tests never reach either; they exist
-// so the adapter compiles outside Browser.app.
+// Stand-ins for app types the Engine/ files name but the tests never reach
+// (CEFEngine is only named by Engines.swift's switch); they exist so the
+// adapter compiles outside Browser.app.
 
 enum CommandLineArgs {
-    static func engineChoice() -> EngineChoice { .webkit }
     static func testNoActivate() -> Bool { true }
 }
 

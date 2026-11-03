@@ -2,7 +2,7 @@ import Foundation
 
 /// How aggressively hidden tabs give up memory -- the slider in Settings >
 /// General. Global, not per-profile, and pushed to the engine with
-/// ActiveEngine.setBackgroundTabPolicy at launch and on every change.
+/// Engines.setBackgroundTabPolicy at launch and on every change.
 enum BackgroundTabPolicyPreference {
     private static let key = "BrowserBackgroundTabPolicy"
 
@@ -16,7 +16,7 @@ enum BackgroundTabPolicyPreference {
         }
         set {
             AppPreferencesStore.current.set(newValue.rawValue, forKey: key)
-            ActiveEngine.setBackgroundTabPolicy(newValue)
+            Engines.setBackgroundTabPolicy(newValue)
             TabMemoryDiagnostics.shared.policyChanged(to: newValue)
         }
     }

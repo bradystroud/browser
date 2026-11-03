@@ -288,6 +288,11 @@ final class MainMenuBuilder {
         fontSizeItem.submenu = readerFontSizeMenu()
         menu.addItem(fontSizeItem)
         menu.addItem(.separator())
+        // Titles name the active tab's other engine; see
+        // BrowserWindowController.validateEngineMenuItem.
+        menu.addItem(withTitle: "Reopen in WebKit", action: #selector(BrowserWindowController.reopenInOtherEngine(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Always Open This Site in WebKit", action: #selector(BrowserWindowController.alwaysOpenSiteInOtherEngine(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Tab Overview", action: #selector(BrowserWindowController.showTabOverview(_:)), keyEquivalent: "\\")
             .keyEquivalentModifierMask = [.command, .shift]
         // Vertical tab sidebar (browser-vts). The title is a STARTING value,
@@ -629,7 +634,10 @@ final class MainMenuBuilder {
     /// page from Safari, and a separate JavaScript Console entry would only
     /// repeat it.
     private func refreshEngineDependentItems() {
-        let capabilities = ActiveEngine.capabilities
+        // The front window's active tab: tabs of both engines can be open,
+        // and the menu offers what that tab's engine can do.
+        let frontTab = (NSApp.mainWindow?.windowController as? BrowserWindowController)?.activeTab
+        let capabilities = frontTab?.capabilities ?? Engines.capabilities(for: CommandLineArgs.defaultEngine())
         responsiveDesignModeItem.isHidden = !capabilities.responsiveDesignMode
         deviceToolbarItem.isHidden = !capabilities.responsiveDesignMode
         // With in-app tools, BrowserWindowController.validateMenuItem toggles
@@ -654,7 +662,7 @@ final class MainMenuBuilder {
         windowMenu.addItem(withTitle: "Put Other Tabs to Sleep", action: #selector(BrowserWindowController.sleepOtherTabs(_:)), keyEquivalent: "")
         windowMenu.addItem(.separator())
         // Only on an engine that runs extensions.
-        if ActiveEngine.capabilities.webExtensions {
+        if Engines.anyEngine(\.webExtensions) {
             let extensions = windowMenu.addItem(withTitle: "Extensions…", action: #selector(ExtensionsCoordinator.showExtensions(_:)), keyEquivalent: "")
             extensions.target = ExtensionsCoordinator.shared
             windowMenu.addItem(.separator())

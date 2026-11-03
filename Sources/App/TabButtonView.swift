@@ -49,6 +49,16 @@ final class TabButtonView: NSView {
     var onMuteToggle: (() -> Void)?
     /// Context menu's "Put Tab to Sleep" (see TabSleepCoordinator).
     var onSleep: (() -> Void)?
+    /// Context menu's "Reopen in <other engine>".
+    var onReopenInEngine: ((EngineChoice) -> Void)?
+    /// Context menu's "Always Open <site> in <other engine>".
+    var onAlwaysOpenSiteInEngine: ((EngineChoice) -> Void)?
+
+    /// The engine this tab's page is in (Tab.engine), for the engine items
+    /// in the context menu.
+    var engine: EngineChoice = .cef
+    /// The host the "Always Open" item names; nil hides it.
+    var siteHost: String?
 
     /// Drag-to-reorder (browser-rhi.6) -- set by TabStripView.rebuildButtons.
     weak var dragDelegate: TabButtonDragDelegate?
@@ -578,7 +588,7 @@ final class TabButtonView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
         menu.addItem(withTitle: isPinned ? "Unpin Tab" : "Pin Tab", action: #selector(pinToggleTapped), keyEquivalent: "").target = self
-        if ActiveEngine.capabilities.perTabAudioMute {
+        if Engines.capabilities(for: engine).perTabAudioMute {
             menu.addItem(withTitle: isMuted ? "Unmute Tab" : "Mute Tab", action: #selector(muteToggleTapped), keyEquivalent: "").target = self
         }
         if onSleep != nil, !isSelected, !isAsleep {
@@ -606,6 +616,12 @@ final class TabButtonView: NSView {
 
         menu.addItem(.separator())
         menu.addItem(withTitle: "Duplicate Tab", action: #selector(duplicateTapped), keyEquivalent: "").target = self
+        if onReopenInEngine != nil {
+            menu.addItem(withTitle: "Reopen in \(engine.other.displayName)", action: #selector(reopenInOtherEngineTapped), keyEquivalent: "").target = self
+        }
+        if onAlwaysOpenSiteInEngine != nil, let siteHost {
+            menu.addItem(withTitle: "Always Open \(siteHost) in \(engine.other.displayName)", action: #selector(alwaysOpenSiteTapped), keyEquivalent: "").target = self
+        }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Close Tab", action: #selector(closeTapped), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Close Other Tabs", action: #selector(closeOthersTapped), keyEquivalent: "").target = self
@@ -661,6 +677,14 @@ final class TabButtonView: NSView {
 
     @objc private func closeOthersTapped() {
         onCloseOthers?()
+    }
+
+    @objc private func reopenInOtherEngineTapped() {
+        onReopenInEngine?(engine.other)
+    }
+
+    @objc private func alwaysOpenSiteTapped() {
+        onAlwaysOpenSiteInEngine?(engine.other)
     }
 
     @objc private func duplicateTapped() {

@@ -14,7 +14,7 @@ extension Notification.Name {
 /// and answers what it asks back -- see ExtensionHost. Private windows are
 /// never reported, so extensions never see or touch them.
 ///
-/// Engine-agnostic: it only ever talks to `ActiveEngine.extensions`, and does
+/// Engine-agnostic: it only ever talks to `Engines.extensions`, and does
 /// nothing at all where the engine has none.
 final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver {
     static let shared = ExtensionsCoordinator()
@@ -27,7 +27,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
     private var observers: [NSObjectProtocol] = []
 
     var manager: EngineExtensionManager? {
-        ActiveEngine.capabilities.webExtensions ? ActiveEngine.extensions : nil
+        Engines.anyEngine(\.webExtensions) ? Engines.extensions : nil
     }
 
     /// Idempotent; called as each browser window is built.

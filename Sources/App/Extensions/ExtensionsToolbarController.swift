@@ -25,7 +25,7 @@ final class ExtensionsToolbarController: NSObject {
 
     func attach(to window: BrowserWindow) {
         self.window = window
-        guard ActiveEngine.capabilities.webExtensions else { return }
+        guard Engines.anyEngine(\.webExtensions) else { return }
         observers.append(NotificationCenter.default.addObserver(
             forName: .browserExtensionsDidChange, object: nil, queue: .main
         ) { [weak self] notification in

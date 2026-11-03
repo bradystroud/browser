@@ -164,7 +164,7 @@ final class TabMemoryDiagnostics: TabLifecycleObserver {
                 "os": ProcessInfo.processInfo.operatingSystemVersionString,
                 "cpuCount": ProcessInfo.processInfo.activeProcessorCount,
                 "policy": BackgroundTabPolicyPreference.current.rawValue,
-                "engine": ActiveEngine.capabilities.backgroundTabPolicy ? "webkit" : "other",
+                "defaultEngine": CommandLineArgs.defaultEngine().rawValue,
             ])
         }
 

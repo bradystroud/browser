@@ -17,8 +17,8 @@ import WebKit
 /// what has a real WKWebView equivalent is wired up here, and what doesn't
 /// is a logged, safe no-op whose comment says why.
 ///
-/// Selected via `--engine webkit` (default `cef`) -- see
-/// `CommandLineArgs.engineChoice()` and `ActiveEngine` at the end of this file.
+/// Runs alongside CEFEngine in the same process; each tab picks one (see
+/// `Engines` and EngineRulesStore).
 ///
 /// Everything WebKit-specific is confined to the Engine/WebKit*.swift files
 /// -- this one, WebKitTab's per-area extensions (WebKitTab+*.swift) and the
@@ -799,25 +799,5 @@ final class WebKitTab: NSObject, EnginePopupTab {
     private func unsupported(_ what: String) {
         guard Self.loggedUnsupportedFeatures.insert(what).inserted else { return }
         NSLog("Browser: unsupported on WebKit engine: %@", what)
-    }
-}
-
-/// The engine the app builds against -- see CommandLineArgs.engineChoice()
-/// for the `--engine cef|webkit` launch argument (default cef) that picks
-/// which of CEFEngine/WebKitEngine this resolves to at launch. BrowserEngine
-/// has no Self-returning or associated-type requirements, so a
-/// `BrowserEngine.Type` existential dispatches its static requirements
-/// correctly at runtime -- this is a genuine runtime switch, not a
-/// build-time flag standing in for one.
-let ActiveEngine: BrowserEngine.Type = CommandLineArgs.engineChoice().engine
-
-extension EngineChoice {
-    /// The conformer this choice launches -- for describing an engine that
-    /// is not the running one (the Settings engine picker).
-    var engine: BrowserEngine.Type {
-        switch self {
-        case .cef: return CEFEngine.self
-        case .webkit: return WebKitEngine.self
-        }
     }
 }

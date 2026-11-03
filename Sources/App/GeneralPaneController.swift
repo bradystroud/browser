@@ -45,8 +45,8 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         "Opens the link in a panel over the page, which you can keep as a tab. Without this, ⌥⇧-click opens a new window like ⇧-click.")
     private static let searchEngineOrder: [SearchEngineChoice] = [.google, .duckDuckGo, .bing, .kagi, .custom]
 
-    /// Engine choice (browser-2a7). Restart-only by nature -- see
-    /// EnginePreference's own doc comment.
+    /// The default engine for new tabs (browser-2a7); site rules live in
+    /// the Engines pane.
     private let enginePopup = NSPopUpButton()
     private let engineHelpLabel = SettingsForm.footnote()
     private static let engineOrder: [EngineChoice] = [.cef, .webkit]
@@ -235,7 +235,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         }
         enginePopup.target = self
         enginePopup.action = #selector(engineChanged)
-        form.addRow("Rendering engine:", enginePopup)
+        form.addRow("Default engine:", enginePopup)
         form.addFootnote(engineHelpLabel)
 
         form.install(in: view)
@@ -274,23 +274,22 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     }
 
     private static func title(for engine: EngineChoice) -> String {
-        switch engine {
-        case .cef: return "Chromium"
-        case .webkit: return "WebKit"
-        }
+        engine.displayName
     }
 
-    /// Says plainly that the change is restart-only, and -- for WebKit --
-    /// what stops working. Both matter: the engine is chosen on the first
-    /// line of main.swift (see EnginePreference), and a WebKit session
-    /// silently loses a real list of features.
+    /// What the default means, and -- for WebKit -- what its tabs lack.
+    /// Changing it applies to the next page a tab opens; tabs already
+    /// showing a page stay in their engine.
     private func updateEngineHelpText(for engine: EngineChoice) {
-        let restartNote = "Takes effect the next time you open Browser. Your windows and tabs are reopened on restart."
+        let common = "New tabs use this unless a site rule in the Engines pane says otherwise, and you can move any tab with Reopen in its right-click menu. The two engines don\u{2019}t share cookies, so a site may ask you to sign in again in the other one."
+        let pinned = CommandLineArgs.hasEngineOverride()
+            ? " This launch was started with --engine \(CommandLineArgs.defaultEngine().rawValue), which wins until you quit."
+            : ""
         switch engine {
         case .cef:
-            engineHelpLabel.stringValue = "Chromium, via CEF. Passkeys work through your phone or a security key, not Touch ID. \(restartNote)"
+            engineHelpLabel.stringValue = "Chromium, via CEF. Passkeys work through your phone or a security key, not Touch ID. \(common)\(pinned)"
         case .webkit:
-            engineHelpLabel.stringValue = "WebKit, the engine Safari uses. Passkeys work with Touch ID and iCloud Keychain. \(Self.missingFeaturesSentence(for: engine.engine.capabilities))Sites are logged out separately from Chromium, since the two engines don\u{2019}t share cookies or storage. \(restartNote)"
+            engineHelpLabel.stringValue = "WebKit, the engine Safari uses. Passkeys work with Touch ID and iCloud Keychain. \(Self.missingFeaturesSentence(for: Engines.capabilities(for: engine)))\(common)\(pinned)"
         }
         helpTextDidChange()
     }
@@ -305,7 +304,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         if !capabilities.customContextMenuItems { missing.append("View Page Source, Look Up Image and the other extra right-click items") }
         guard let last = missing.popLast() else { return "" }
         let list = missing.isEmpty ? last : missing.joined(separator: ", ") + " and " + last
-        return "\(list) don\u{2019}t work. "
+        return "\(list) don\u{2019}t work in its tabs. "
     }
 
     private static let backgroundTabsSliderWidth: CGFloat = 320
@@ -322,10 +321,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// Chromium never suspends a hidden tab, so there it is shown disabled
     /// with the reason, rather than hidden.
     private func updateBackgroundTabsRow(for policy: BackgroundTabPolicy) {
-        let supported = ActiveEngine.capabilities.backgroundTabPolicy
+        let supported = Engines.anyEngine(\.backgroundTabPolicy)
         backgroundTabsSlider.isEnabled = supported
         guard supported else {
-            backgroundTabsHelpLabel.stringValue = "Chromium keeps every open tab loaded, so there is nothing to adjust. This setting applies to the WebKit engine on macOS 14 or later."
+            backgroundTabsHelpLabel.stringValue = "Chromium keeps every open tab loaded, so there is nothing to adjust. This setting applies to WebKit tabs on macOS 14 or later."
             helpTextDidChange()
             return
         }
