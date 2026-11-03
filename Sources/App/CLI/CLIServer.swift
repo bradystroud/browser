@@ -395,7 +395,8 @@ final class CLIServer {
                     isActive: tabIndex == controller.activeTabIndex,
                     title: tab.title,
                     url: url,
-                    isAsleep: tab.isAsleep
+                    isAsleep: tab.isAsleep,
+                    engine: tab.engine.rawValue
                 ))
             }
             windowIndex += 1

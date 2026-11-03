@@ -97,8 +97,11 @@ public struct CLITabInfo: Codable {
     /// or put to sleep). Optional so a CLI and an app from different builds
     /// still understand each other; nil means the app didn't say.
     public let isAsleep: Bool?
+    /// The engine the tab's page is in (or will be created in): `cef` or
+    /// `webkit`. Optional for the same reason as `isAsleep`.
+    public let engine: String?
 
-    public init(profileName: String, windowIndex: Int, tabIndex: Int, isActive: Bool, title: String, url: String, isAsleep: Bool? = nil) {
+    public init(profileName: String, windowIndex: Int, tabIndex: Int, isActive: Bool, title: String, url: String, isAsleep: Bool? = nil, engine: String? = nil) {
         self.profileName = profileName
         self.windowIndex = windowIndex
         self.tabIndex = tabIndex
@@ -106,6 +109,7 @@ public struct CLITabInfo: Codable {
         self.title = title
         self.url = url
         self.isAsleep = isAsleep
+        self.engine = engine
     }
 }
 

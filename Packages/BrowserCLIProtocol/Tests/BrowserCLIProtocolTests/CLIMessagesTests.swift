@@ -55,6 +55,14 @@ final class CLIMessagesTests: XCTestCase {
         XCTAssertNil(try JSONDecoder().decode(CLITabInfo.self, from: Data(fromOlderApp.utf8)).isAsleep)
     }
 
+    func testTabEngineRoundTripsAndOlderAppsOmitIt() throws {
+        let tab = CLITabInfo(profileName: "default", windowIndex: 0, tabIndex: 0, isActive: true, title: "A", url: "https://a.example", engine: "webkit")
+        XCTAssertEqual(try JSONDecoder().decode(CLITabInfo.self, from: JSONEncoder().encode(tab)).engine, "webkit")
+
+        let fromOlderApp = #"{"profileName":"default","windowIndex":0,"tabIndex":0,"isActive":true,"title":"A","url":"https://a.example"}"#
+        XCTAssertNil(try JSONDecoder().decode(CLITabInfo.self, from: Data(fromOlderApp.utf8)).engine)
+    }
+
     func testResponseRoundTripsWithWindows() throws {
         let response = CLIResponse(
             ok: true,

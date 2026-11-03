@@ -21,7 +21,8 @@ public enum TabsCommand {
                 guard let tabs = response.tabs, !tabs.isEmpty else { return "(no open tabs)" }
                 return tabs.map { tab in
                     let marker = tab.isActive ? "*" : (tab.isAsleep == true ? "z" : " ")
-                    return "\(marker) \(tab.profileName)\twindow \(tab.windowIndex) tab \(tab.tabIndex)\t\(tab.title)\t\(tab.url)"
+                    let engine = tab.engine.map { "\t\($0)" } ?? ""
+                    return "\(marker) \(tab.profileName)\twindow \(tab.windowIndex) tab \(tab.tabIndex)\t\(tab.title)\t\(tab.url)\(engine)"
                 }.joined(separator: "\n")
             }
         } catch {
