@@ -165,6 +165,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         solidFallbackColor: .windowBackgroundColor, usesGlass: false
     )
     private let tabSidebarSeparator = HairlineView()
+    /// What only the sidebar layout has (footer, hide button, reveal on
+    /// hover) and its geometry. Inert in the other two orientations.
+    private let sidebarChrome = SidebarChrome()
 
     /// Which way this window's tab strip runs. Initialised from the stored
     /// preference and kept in step with it by
@@ -196,6 +199,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// rendered immediately). Use toolbarRowHeight below to stay inside the
     /// toolbar band instead, which does render reliably.
     var contentAreaTopY: CGFloat { contentContainerView.frame.maxY }
+
+    /// The web content area's trailing edge, in window.contentView's
+    /// coordinates: the window's own edge, except in the sidebar layout,
+    /// where the page is inset and the sidebar may be on the right.
+    var contentAreaMaxX: CGFloat { contentContainerView.frame.maxX }
 
     /// The toolbar/omnibox row's own height. The toolbar always occupies
     /// the top toolbarRowHeight points of window.contentView regardless of
@@ -262,6 +270,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// really is.
     private func layoutTrailingToolbarControls() {
         guard let contentView = window?.contentView else { return }
+        if tabStripOrientation == .sidebar {
+            layoutSidebarFooterControls()
+            return
+        }
         let toolbarOriginX = toolbarView.frame.minX
         var minX = contentView.bounds.width - ChromeMetrics.edgeInset
         var previousWasBadge = false
@@ -574,6 +586,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentContainerView.wantsLayer = true
         contentView.addSubview(contentContainerView)
 
+        sidebarChrome.install(in: contentView, header: toolbarView)
+        sidebarChrome.onLayoutNeeded = { [weak self] in self?.applyChromeLayout() }
+        sidebarChrome.isOmniboxEditing = { [weak self] in self?.isOmniboxFocused ?? false }
+
         applyChromeLayout()
 
         // Every window follows the one preference -- see
@@ -636,9 +652,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let toolbarHeight = Self.toolbarHeight
         let hairline: CGFloat = 0.5
 
-        tabStripView.orientation = tabStripOrientation
+        tabStripView.orientation = tabStripOrientation.stripAxis
+        setSidebarLayoutActive(tabStripOrientation == .sidebar)
 
         switch tabStripOrientation {
+        case .sidebar:
+            applySidebarLayout(in: contentView.bounds)
         case .horizontal:
             let showsStrip = shouldShowHorizontalTabStrip
             isHorizontalTabStripShown = showsStrip
@@ -677,9 +696,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 x: sidebarWidth, y: 0, width: rowWidth, height: height - toolbarHeight
             )
         }
-        toolbarView.autoresizingMask = [.width, .minYMargin]
-        chromeBackground.autoresizingMask = [.width, .minYMargin]
-        chromeSeparator.autoresizingMask = [.width, .minYMargin]
+        if tabStripOrientation != .sidebar {
+            toolbarView.autoresizingMask = [.width, .minYMargin]
+            chromeBackground.autoresizingMask = [.width, .minYMargin]
+            chromeSeparator.autoresizingMask = [.width, .minYMargin]
+        }
         // .width with a fixed leading margin: the sidebar's own width is
         // constant, so a resize's whole delta lands on the content area.
         contentContainerView.autoresizingMask = [.width, .height]
@@ -906,6 +927,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// expanded pill, whose width *is* the band, slide off the band's
     /// leading edge.
     private func omniboxFrame() -> NSRect {
+        if tabStripOrientation == .sidebar { return sidebarChrome.omniboxFrame }
         let toolbarHeight = toolbarView.bounds.height
         let width = isOmniboxFocused ? expandedOmniboxWidth() : collapsedOmniboxWidth()
         let band = omniboxBand()
@@ -1129,6 +1151,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         guard let profilePillButton else { return }
         profilePillButton.sizeToFit()
         let pillWidth = max(44, profilePillButton.frame.width).rounded()
+        if tabStripOrientation == .sidebar {
+            layoutSidebarIdentityControl(profilePillButton, fittedWidth: pillWidth)
+            return
+        }
         let toolbarHeight = toolbarView.bounds.height
         profilePillButton.frame = NSRect(
             x: navigationGroup.frame.maxX + ChromeMetrics.groupSpacing,
@@ -1259,6 +1285,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func setOmniboxFocused(_ focused: Bool, animated: Bool, updatesText: Bool = true) {
         guard isOmniboxFocused != focused else { return }
         isOmniboxFocused = focused
+        if !focused { sidebarChrome.omniboxDidEndEditing() }
         if updatesText, let tab = activeTab {
             omniboxField.stringValue = focused ? tab.urlString : Self.collapsedOmniboxDisplay(for: tab)
         }
@@ -1919,6 +1946,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// legible over vibrancy without needing a fresh contrast check for
     /// every possible glass/vibrancy combination.
     private func updateChromeTint(for tab: Tab) {
+        if tabStripOrientation == .sidebar {
+            applySidebarTint()
+            return
+        }
         let themeColor = tab.themeColorHex.flatMap { NSColor(hex: $0) }
         // A private window's baseline is a faint darkening rather than a
         // profile color, alongside its dark omnibox.
@@ -2151,6 +2182,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if let tab = activeTab {
             omniboxField.stringValue = tab.urlString
         }
+        sidebarChrome.revealForOmnibox()
         window?.makeFirstResponder(omniboxField)
         omniboxField.currentEditor()?.selectAll(nil)
     }
@@ -2232,7 +2264,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             menuItem.title = (activeTab?.isPinned ?? false) ? "Unpin Tab" : "Pin Tab"
             return activeTab != nil
         case #selector(toggleTabSidebar(_:)):
-            menuItem.title = tabStripOrientation == .vertical ? "Hide Tab Sidebar" : "Show Tab Sidebar"
+            switch tabStripOrientation {
+            case .horizontal: menuItem.title = "Show Tab Sidebar"
+            case .vertical: menuItem.title = "Hide Tab Sidebar"
+            case .sidebar: menuItem.title = SidebarLayoutPreference.isHidden ? "Show Sidebar" : "Hide Sidebar"
+            }
             return true
         case #selector(toggleAlwaysShowTabBar(_:)):
             menuItem.state = AlwaysShowTabBarPreference.isEnabled ? .on : .off
@@ -2853,11 +2889,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func layoutLeadingToolbarControls() {
         let height = ChromeMetrics.controlHeight
         let segment = ChromeMetrics.navigationSegmentWidth
-        navigationGroup.frame = NSRect(
-            x: trafficLightReservedWidth,
-            y: ((toolbarView.bounds.height - height) / 2).rounded(),
-            width: segment * 2, height: height
-        )
+        navigationGroup.frame = tabStripOrientation == .sidebar
+            ? sidebarChrome.navigationGroupFrame(width: segment * 2)
+            : NSRect(
+                x: trafficLightReservedWidth,
+                y: ((toolbarView.bounds.height - height) / 2).rounded(),
+                width: segment * 2, height: height
+            )
+        sidebarChrome.layoutHideButton(beside: navigationGroup.frame)
         backButton.frame = NSRect(x: 0, y: 0, width: segment, height: height)
         forwardButton.frame = NSRect(x: segment, y: 0, width: segment, height: height)
         let dividerHeight: CGFloat = 16
@@ -2879,6 +2918,137 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         layoutTrailingToolbarControls()
         layoutOmniboxContainer()
         logChromeFramesIfRequested()
+    }
+}
+
+// MARK: - Sidebar layout
+
+/// The window-controller half of TabStripOrientation.sidebar: framing the
+/// views this controller owns where SidebarChrome says they go. Kept together
+/// here, apart from the other two orientations' code, so the layout reads as
+/// one piece.
+extension BrowserWindowController {
+    /// Everything that differs between the sidebar layout and the other two,
+    /// switched both ways, so leaving the layout restores exactly what the
+    /// other orientations expect: the toolbar band and its hairline, the
+    /// profile pill and private badge back in the toolbar row, square page
+    /// corners and the traffic lights at the leading edge.
+    fileprivate func setSidebarLayoutActive(_ active: Bool) {
+        chromeBackground.isHidden = active
+        chromeSeparator.isHidden = active
+        toolbarView.isHidden = active && !sidebarChrome.isShown
+
+        let identityHost: NSView = active ? sidebarChrome.footerView : toolbarView
+        for view in [profilePillButton as NSView?, privateLabel as NSView?].compactMap({ $0 })
+        where view.superview !== identityHost {
+            identityHost.addSubview(view)
+        }
+
+        contentContainerView.layer?.cornerRadius = active ? SidebarChrome.pageCornerRadius : 0
+        contentContainerView.layer?.cornerCurve = .continuous
+        if #available(macOS 14.0, *) {
+            contentContainerView.clipsToBounds = active
+        } else if active {
+            contentContainerView.layer?.masksToBounds = true
+        }
+
+        if let window = window as? BrowserWindow {
+            window.trafficLightAnchor = active && sidebarChrome.edge == .right
+                ? .trailingColumn(width: SidebarChrome.width) : .leading
+            window.hidesTrafficLights = active && !sidebarChrome.isShown
+        }
+        if !active {
+            sidebarChrome.apply(nil)
+        }
+        if let tab = activeTab {
+            updateChromeTint(for: tab)
+        }
+    }
+
+    /// The frames for the sidebar layout. The sidebar material spans the
+    /// whole window, so it is what shows around the page card's inset and
+    /// rounded corners; the page itself only ever sits beside the column,
+    /// never under it.
+    fileprivate func applySidebarLayout(in bounds: NSRect) {
+        let frames = sidebarChrome.frames(in: bounds, topInset: DevBuildIndicator.topInset)
+        let shown = sidebarChrome.isShown
+        let column = SidebarChrome.columnMask(for: sidebarChrome.edge)
+
+        newTabToolbarButton.isHidden = true
+        tabSidebarSeparator.isHidden = true
+        tabSidebarBackground.isHidden = false
+        tabSidebarBackground.frame = NSRect(x: 0, y: 0, width: bounds.width, height: frames.column.height)
+        tabSidebarBackground.autoresizingMask = [.width, .height]
+
+        toolbarView.frame = frames.header
+        toolbarView.autoresizingMask = column.union(.minYMargin)
+        tabStripView.isHidden = !shown
+        tabStripView.frame = frames.tabList
+        tabStripView.autoresizingMask = column.union(.height)
+        contentContainerView.frame = frames.page
+        sidebarChrome.apply(frames)
+    }
+
+    /// The footer row: the trailing toolbar controls packed against the
+    /// column's trailing edge in slot order, as they are in the toolbar row,
+    /// then the profile pill or private badge on the leading side in what is
+    /// left. With the sidebar hidden they are parked outside the window --
+    /// their owners decide whether they are hidden, so moving them is the
+    /// one way to keep them off the page without overriding that.
+    fileprivate func layoutSidebarFooterControls() {
+        let footer = sidebarChrome.footerView.frame
+        let size = ChromeMetrics.controlHeight
+        let gap = ChromeMetrics.controlSpacing
+        let shown = sidebarChrome.isShown
+        var minX = footer.maxX - ChromeMetrics.edgeInset
+        var placedAny = false
+        for slot in trailingControls.keys.sorted() {
+            guard let view = trailingControls[slot]?.view, view.superview != nil else {
+                trailingControls[slot] = nil
+                continue
+            }
+            guard !view.isHidden else { continue }
+            let maxX = placedAny ? minX - gap : minX
+            view.frame = NSRect(
+                x: maxX - size, y: shown ? (footer.midY - size / 2).rounded() : -size * 2,
+                width: size, height: size
+            )
+            view.autoresizingMask = SidebarChrome.columnMask(for: sidebarChrome.edge).union(.maxYMargin)
+            minX = maxX - size
+            placedAny = true
+        }
+        trailingControlsMinX = minX
+        if profilePillButton != nil {
+            layoutProfilePill()
+        } else if let privateLabel {
+            layoutSidebarIdentityControl(privateLabel, fittedWidth: privateLabel.fittingSize.width)
+        }
+    }
+
+    /// The profile pill or private badge at the footer's leading edge, in
+    /// footer coordinates, narrowed if the trailing controls need the room.
+    fileprivate func layoutSidebarIdentityControl(_ view: NSView, fittedWidth: CGFloat) {
+        let footer = sidebarChrome.footerView.frame
+        let leading = ChromeMetrics.edgeInset
+        let available = trailingControlsMinX - footer.minX - ChromeMetrics.groupSpacing - leading
+        let height = view === privateLabel ? view.fittingSize.height : ChromeMetrics.controlHeight
+        view.frame = NSRect(
+            x: leading, y: ((footer.height - height) / 2).rounded(),
+            width: max(height, min(fittedWidth, available)).rounded(), height: height
+        )
+    }
+
+    /// The whole window takes the profile's colour in the sidebar layout,
+    /// not the page's theme colour: the sidebar is the profile's space, and
+    /// it should read as that profile whatever page is open. Same alpha as
+    /// the toolbar's theme tint, which is what TabButtonView's selected-pill
+    /// contrast check expects the surface behind it to carry.
+    fileprivate func applySidebarTint() {
+        let profileColor: NSColor = isPrivate
+            ? .black
+            : (ProfileManager.shared.profile(id: profile.id).flatMap { NSColor(hex: $0.colorHex) }
+                ?? NSColor(hex: profile.colorHex) ?? .controlAccentColor)
+        tabSidebarBackground.tintColor = profileColor.withAlphaComponent(0.16)
     }
 }
 
