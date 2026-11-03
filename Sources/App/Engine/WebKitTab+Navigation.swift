@@ -49,6 +49,17 @@ extension WebKitTab: WKNavigationDelegate {
     // MARK: - Policy
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        ExternalSchemeDiagnostics.record("decidePolicyFor", [
+            "scheme": navigationAction.request.url?.scheme ?? "nil",
+            "url": navigationAction.request.url?.absoluteString ?? "nil",
+            "navigationType": navigationAction.navigationType.rawValue,
+            "isMainFrame": navigationAction.targetFrame?.isMainFrame ?? false,
+            "hasTargetFrame": navigationAction.targetFrame != nil,
+            "external": navigationAction.request.url.map(Self.isExternalScheme) ?? false,
+            "userClick": Self.isUserClick(navigationAction),
+            "hasWindow": webView.window != nil,
+            "attachedSheet": webView.window?.attachedSheet != nil,
+        ])
         if let url = navigationAction.request.url, Self.isExternalScheme(url) {
             decisionHandler(.cancel)
             openExternally(url, navigationAction: navigationAction)
@@ -225,6 +236,11 @@ extension WebKitTab: WKNavigationDelegate {
             return
         }
         let failingURL = Self.failingURL(of: error) ?? webView.url
+        ExternalSchemeDiagnostics.record("didFailProvisionalNavigation", [
+            "url": failingURL?.absoluteString ?? "nil",
+            "domain": (error as NSError).domain, "code": (error as NSError).code,
+            "description": error.localizedDescription,
+        ])
         NSLog("Browser: WebKit load failed for %@: %@ (%@ %d)", failingURL?.absoluteString ?? "(nil)",
               error.localizedDescription, (error as NSError).domain, (error as NSError).code)
         guard !Self.isBenignNavigationError(error), let failingURL else { return }
@@ -320,6 +336,12 @@ extension WebKitTab: WKNavigationDelegate {
     /// Teams' join pages redirecting themselves included), and a subframe
     /// nobody clicked in can't launch apps or spam prompts.
     private func openExternally(_ url: URL, navigationAction: WKNavigationAction) {
+        ExternalSchemeDiagnostics.record("openExternally", [
+            "url": url.absoluteString,
+            "app": NSWorkspace.shared.urlForApplication(toOpen: url)?.path ?? "none",
+            "suppressed": navigationState.externalAppPromptsSuppressed,
+            "showing": navigationState.externalAppPromptShowing,
+        ])
         guard let appURL = NSWorkspace.shared.urlForApplication(toOpen: url) else {
             NSLog("Browser: no application to open %@", url.scheme ?? "")
             return
@@ -328,6 +350,7 @@ extension WebKitTab: WKNavigationDelegate {
             scheme: url.scheme ?? "",
             userClicked: Self.isUserClick(navigationAction),
             isMainFrame: Self.isMainFrameNavigation(navigationAction))
+        ExternalSchemeDiagnostics.record("decision", ["url": url.absoluteString, "decision": String(describing: decision)])
         switch decision {
         case .ignore:
             NSLog("Browser: ignored a subframe's unclicked link to %@", url.scheme ?? "")
@@ -392,7 +415,9 @@ extension WebKitTab: WKNavigationDelegate {
         alert.informativeText = "\(site) wants to open a link in \(appName)."
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
+        ExternalSchemeDiagnostics.record("presentSheet", ["url": url.absoluteString, "windowVisible": window.isVisible])
         alert.beginSheetModal(for: window) { [weak self] response in
+            ExternalSchemeDiagnostics.record("sheetResponse", ["url": url.absoluteString, "response": response.rawValue])
             self?.navigationState.externalAppPromptShowing = false
             if response == .alertFirstButtonReturn {
                 NSWorkspace.shared.open(url)
@@ -650,6 +675,34 @@ extension WebKitEngine {
             if bypassed.contains(String(candidate)) { return true }
             guard let dot = candidate.firstIndex(of: ".") else { return false }
             candidate = candidate[candidate.index(after: dot)...]
+        }
+    }
+}
+
+
+/// Temporary diagnostics for the external-scheme path: one JSON array of
+/// events at ~/Library/Logs/Browser/external-scheme-diagnostics.json.
+enum ExternalSchemeDiagnostics {
+    private static let path: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Browser", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("external-scheme-diagnostics.json")
+    }()
+
+    static func record(_ event: String, _ fields: [String: Any]) {
+        var entry: [String: Any] = fields
+        entry["event"] = event
+        entry["time"] = ISO8601DateFormatter().string(from: Date())
+        entry["pid"] = ProcessInfo.processInfo.processIdentifier
+        var entries: [[String: Any]] = []
+        if let data = try? Data(contentsOf: path),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            entries = existing
+        }
+        entries.append(entry)
+        if let data = try? JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: path)
         }
     }
 }
