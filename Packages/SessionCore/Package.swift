@@ -1,7 +1,8 @@
 // swift-tools-version: 6.0
 // Standalone package for the persisted-session model (browser-n2j): the
-// `session.json` shape, and the stack of recently closed tabs and windows
-// behind ⇧⌘T. Pure Swift/Foundation, no AppKit, so `swift test` runs it in
+// `session.json` shape, the stack of recently closed tabs and windows
+// behind ⇧⌘T, and the horizontal tab strip's width maths. Pure Swift/
+// Foundation, no AppKit, so `swift test` runs it in
 // isolation. The app target (Sources/App/CMakeLists.txt) compiles these
 // same source files directly into the Browser executable rather than
 // linking this package -- one copy of the logic, two ways to build it, the

@@ -64,13 +64,37 @@ private final class TabStripContentView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// The strip's scroll view. In the horizontal row a plain mouse wheel only
+/// ever scrolls vertically, which a row that scrolls sideways would ignore,
+/// so a mostly-vertical wheel or swipe moves the row sideways instead, as
+/// Safari's tab bar does.
+private final class TabStripScrollView: NSScrollView {
+    var mapsVerticalWheelToHorizontal = false
+
+    override func scrollWheel(with event: NSEvent) {
+        guard mapsVerticalWheelToHorizontal,
+              abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
+              let documentView else {
+            super.scrollWheel(with: event)
+            return
+        }
+        // Line-based wheel deltas are in lines, not points.
+        let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : horizontalLineScroll
+        let maxX = max(0, documentView.frame.width - contentView.bounds.width)
+        var origin = contentView.bounds.origin
+        origin.x = min(max(0, origin.x - event.scrollingDeltaY * scale), maxX)
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+    }
+}
+
 /// Compact Safari-like tab strip in one of two orientations (see
 /// TabStripOrientation):
 ///
 /// - horizontal: a fixed-height row of TabButtonViews (plus
 ///   TabGroupHeaderViews for tab groups) sized to share the available width
-///   (down to a minimum, then they just get crowded rather than scrolling --
-///   fine for this app's tab counts), plus a trailing "+" button.
+///   down to a minimum (see HorizontalTabStripLayout), scrolling sideways once
+///   they no longer fit. The "+" lives in the toolbar row, not here.
 /// - vertical: a fixed-width sidebar of full-width rows, pinned tabs as a
 ///   compact favicon grid at the top, group members indented under their
 ///   header, scrolling when they overflow, and a "New Tab" row pinned to the
@@ -217,18 +241,17 @@ final class TabStripView: NSView {
         button.toolTip = "New Tab"
         return button
     }()
-    /// The item area itself: a direct subview of `self` in horizontal mode,
-    /// and the sidebar scroll view's document view in vertical mode. Every
-    /// tab pill/group header lives inside it (via itemHost below), so
-    /// swapping which of the two it is parented to is the whole of the
-    /// "sidebar scrolls, strip doesn't" difference -- nothing downstream of
-    /// it, drag included, has to know which mode it is in.
+    /// The item area itself: the scroll view's document view in both
+    /// orientations. Every tab pill/group header lives inside it (via
+    /// itemHost below), and every slot frame is in its coordinates, so
+    /// nothing downstream of it, drag included, has to know which way it
+    /// scrolls or how far it has scrolled.
     private let stripContentView = TabStripContentView()
 
-    /// Vertical mode only, and only installed while it is (see
-    /// configureHierarchyForOrientation) -- a sidebar that silently hides
-    /// tabs past the window's height would be worse than no sidebar.
-    private let scrollView = NSScrollView()
+    /// Scrolls the sidebar down and the horizontal row sideways. Either one
+    /// would otherwise draw every tab past the window's edge out of sight and
+    /// out of reach.
+    private let scrollView = TabStripScrollView()
 
     /// Where rebuildButtons() adds each tab/group-header subview. Every slot
     /// frame this view computes is in *this* view's coordinates, which is
@@ -252,16 +275,6 @@ final class TabStripView: NSView {
 
     private var isVertical: Bool { orientation == .vertical }
 
-    private static let minTabWidth: CGFloat = 80
-    /// Pinned tabs render at this fixed, narrow width regardless of strip
-    /// width or tab count -- just enough for a centered favicon, no title,
-    /// no close button (Safari-style).
-    private static let pinnedTabWidth: CGFloat = 36
-    /// Group headers render at one of these two fixed widths (not part of
-    /// the flexible even-width pool tab buttons share) -- expanded shows the
-    /// name, collapsed just a color dot + count badge.
-    private static let groupHeaderWidth: CGFloat = 110
-    private static let collapsedGroupHeaderWidth: CGFloat = 50
     /// Gap between adjacent pills. Unselected tabs have no background, so
     /// this mostly separates hover washes and the selected tab's glass
     /// from its neighbours' titles; it has to clear the soft edge
@@ -322,28 +335,20 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        scrollView.frame = bounds
         stripContentView.frame = bounds
-        stripContentView.autoresizingMask = [.width, .height]
-        addSubview(stripContentView)
-        newTabButton.target = self
-        newTabButton.action = #selector(newTabTapped)
-        // Horizontal (the initial orientation) shows no "+" -- see
-        // configureHierarchyForOrientation.
-        newTabButton.isHidden = true
-        addSubview(newTabButton)
-        configureScrollView()
-    }
-
-    private func configureScrollView() {
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
-        scrollView.horizontalScrollElasticity = .none
         // The clip view must not paint either, or it draws an opaque slab
-        // over the sidebar's own material.
+        // over the strip's own material.
         scrollView.contentView.drawsBackground = false
+        scrollView.documentView = stripContentView
+        addSubview(scrollView)
+        newTabButton.target = self
+        newTabButton.action = #selector(newTabTapped)
+        addSubview(newTabButton)
+        configureHierarchyForOrientation()
     }
 
     required init?(coder: NSCoder) {
@@ -422,22 +427,24 @@ final class TabStripView: NSView {
         reportSelectionContrastIfRequested()
     }
 
-    /// Brings the selected row back on screen when the sidebar has scrolled
-    /// past it. Without this, ⌘1-9 and ⌘⌥→ can activate a tab that stays out
-    /// of sight -- the strip would be showing a selection nobody can see, and
-    /// the horizontal row has no equivalent failure because it never scrolls.
-    /// A no-op in horizontal mode, and whenever the row is already visible.
+    /// Brings the selected tab back on screen when the strip has scrolled
+    /// past it. Without this, ⌘1-9, ⌘⌥→ and a newly opened tab can activate
+    /// a tab that stays out of sight -- the strip would be showing a
+    /// selection nobody can see. A no-op whenever the tab is already visible.
     private func scrollSelectionIntoView() {
-        guard isVertical, scrollView.superview === self,
-              let button = tabButton(forTabIndex: selectedIndex) else { return }
+        guard let button = tabButton(forTabIndex: selectedIndex) else { return }
         // Deferred: a selection change usually arrives with a reload, whose
-        // layout (and therefore this row's real frame) has not run yet.
+        // layout (and therefore this tab's real frame) has not run yet.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVertical, button.superview != nil else { return }
+            guard let self, button.superview != nil else { return }
+            self.layoutSubtreeIfNeeded()
             let frame = button.convert(button.bounds, to: self.stripContentView)
-            // Padded by a whole row's worth, so a row scrolled to the very
-            // bottom does not end up flush against the New Tab band below it.
-            self.stripContentView.scrollToVisible(frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2))
+            // Padded so the tab does not end up flush against the strip's
+            // edge -- or, in the sidebar, the New Tab band below it.
+            let padded = self.isVertical
+                ? frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2)
+                : frame.insetBy(dx: -Self.sidePadding, dy: 0)
+            self.stripContentView.scrollToVisible(padded)
         }
     }
 
@@ -605,20 +612,16 @@ final class TabStripView: NSView {
         // keeps one in the toolbar row, because the strip itself is hidden
         // whenever a window has a single tab and "+" must stay reachable.
         newTabButton.isHidden = !isVertical
-        if isVertical {
-            guard scrollView.superview !== self else { return }
-            stripContentView.removeFromSuperview()
-            stripContentView.autoresizingMask = [.width]
-            scrollView.documentView = stripContentView
-            addSubview(scrollView, positioned: .below, relativeTo: newTabButton)
-        } else {
-            guard stripContentView.superview !== self else { return }
-            scrollView.documentView = nil
-            scrollView.removeFromSuperview()
-            stripContentView.autoresizingMask = [.width, .height]
-            stripContentView.frame = bounds
-            addSubview(stripContentView, positioned: .below, relativeTo: newTabButton)
-        }
+        scrollView.hasVerticalScroller = isVertical
+        scrollView.hasHorizontalScroller = !isVertical
+        scrollView.verticalScrollElasticity = isVertical ? .automatic : .none
+        scrollView.horizontalScrollElasticity = isVertical ? .none : .automatic
+        scrollView.mapsVerticalWheelToHorizontal = !isVertical
+        // layout() sizes the document view itself, along whichever axis
+        // the current orientation scrolls on.
+        stripContentView.autoresizingMask = []
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
     override func layout() {
@@ -626,9 +629,18 @@ final class TabStripView: NSView {
         if isVertical {
             layoutVerticalContainers()
         } else {
-            setFrameIfNeeded(stripContentView, to: bounds)
+            layoutHorizontalContainers()
         }
         layoutTabs()
+    }
+
+    /// The scroll view fills the strip, and its document view is as wide as
+    /// the row of tabs -- wider than the strip once they stop shrinking.
+    private func layoutHorizontalContainers() {
+        setFrameIfNeeded(scrollView, to: bounds)
+        setFrameIfNeeded(stripContentView, to: NSRect(
+            x: 0, y: 0, width: horizontalLayout().contentWidth, height: bounds.height
+        ))
     }
 
     /// Sizes the sidebar's scroll view, its document view (tall enough for
@@ -884,53 +896,28 @@ final class TabStripView: NSView {
         return frames
     }
 
-    /// Horizontal layout, left to right. Pinned tabs and group headers get
-    /// fixed widths off the top; every other tab button (loose, or a member
-    /// of an expanded group) shares whatever width remains, same
-    /// even-width-down-to-a-minimum scheme as before groups existed.
+    /// Horizontal layout, left to right: pinned tabs and group headers at
+    /// fixed widths, every other tab sharing what remains down to a minimum,
+    /// past which the row outgrows the strip and scrolls.
     private func horizontalSlotFrames() -> [NSRect] {
-        let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2)
-        let itemCount = stripItems.count
-        let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
+        let layout = horizontalLayout()
+        let height = max(0, bounds.height - 8)
+        return zip(layout.origins, layout.widths).map { x, width in
+            NSRect(x: x, y: 4, width: width, height: height)
+        }
+    }
 
-        var fixedWidthTotal: CGFloat = 0
-        var flexibleTabCount = 0
-        for item in stripItems {
+    private func horizontalLayout() -> HorizontalTabStripLayout {
+        let items: [HorizontalTabStripLayout.Item] = stripItems.map { item in
             switch item {
-            case .tab(let button):
-                if button.isPinned {
-                    fixedWidthTotal += Self.pinnedTabWidth
-                } else {
-                    flexibleTabCount += 1
-                }
-            case .groupHeader(let header):
-                fixedWidthTotal += header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
+            case .tab(let button): return button.isPinned ? .pinnedTab : .tab
+            case .groupHeader(let header): return .groupHeader(isCollapsed: header.isCollapsed)
             }
         }
-        let remainingForFlexible = max(0, available - totalSpacing - fixedWidthTotal)
-        let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
-        // No upper bound: unpinned tabs stretch to fill the whole strip, so two
-        // tabs take half the bar each, Safari-style. Only the lower bound
-        // survives -- past minTabWidth the tabs stop shrinking and the strip
-        // overflows instead, which is what keeps a tab legible once there are
-        // enough of them.
-        let flexibleWidth = max(Self.minTabWidth, evenFlexibleWidth)
-
-        var frames: [NSRect] = []
-        frames.reserveCapacity(itemCount)
-        var x = leadingInset + Self.sidePadding
-        for item in stripItems {
-            let width: CGFloat
-            switch item {
-            case .tab(let button):
-                width = button.isPinned ? Self.pinnedTabWidth : flexibleWidth
-            case .groupHeader(let header):
-                width = header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
-            }
-            frames.append(NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8)))
-            x += width + Self.tabSpacing
-        }
-        return frames
+        return HorizontalTabStripLayout(
+            items: items, viewportWidth: bounds.width, leadingInset: leadingInset,
+            sidePadding: Self.sidePadding, spacing: Self.tabSpacing
+        )
     }
 
     /// Moves every item into its slot, optionally sliding rather than
