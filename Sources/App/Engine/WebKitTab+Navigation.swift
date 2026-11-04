@@ -49,7 +49,7 @@ extension WebKitTab: WKNavigationDelegate {
     // MARK: - Policy
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        ExternalSchemeDiagnostics.record("decidePolicyFor", [
+        recordExternalSchemeDiagnostic("decidePolicyFor", [
             "scheme": navigationAction.request.url?.scheme ?? "nil",
             "url": navigationAction.request.url?.absoluteString ?? "nil",
             "navigationType": navigationAction.navigationType.rawValue,
@@ -244,7 +244,7 @@ extension WebKitTab: WKNavigationDelegate {
             return
         }
         let failingURL = Self.failingURL(of: error) ?? webView.url
-        ExternalSchemeDiagnostics.record("didFailProvisionalNavigation", [
+        recordExternalSchemeDiagnostic("didFailProvisionalNavigation", [
             "url": failingURL?.absoluteString ?? "nil",
             "domain": (error as NSError).domain, "code": (error as NSError).code,
             "description": error.localizedDescription,
@@ -344,7 +344,7 @@ extension WebKitTab: WKNavigationDelegate {
     /// Teams' join pages redirecting themselves included), and a subframe
     /// nobody clicked in can't launch apps or spam prompts.
     private func openExternally(_ url: URL, navigationAction: WKNavigationAction) {
-        ExternalSchemeDiagnostics.record("openExternally", [
+        recordExternalSchemeDiagnostic("openExternally", [
             "url": url.absoluteString,
             "app": NSWorkspace.shared.urlForApplication(toOpen: url)?.path ?? "none",
             "suppressed": navigationState.externalAppPromptsSuppressed,
@@ -358,7 +358,7 @@ extension WebKitTab: WKNavigationDelegate {
             scheme: url.scheme ?? "",
             userClicked: Self.isUserClick(navigationAction),
             isMainFrame: Self.isMainFrameNavigation(navigationAction))
-        ExternalSchemeDiagnostics.record("decision", ["url": url.absoluteString, "decision": String(describing: decision)])
+        recordExternalSchemeDiagnostic("decision", ["url": url.absoluteString, "decision": String(describing: decision)])
         switch decision {
         case .ignore:
             NSLog("Browser: ignored a subframe's unclicked link to %@", url.scheme ?? "")
@@ -423,9 +423,9 @@ extension WebKitTab: WKNavigationDelegate {
         alert.informativeText = "\(site) wants to open a link in \(appName)."
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
-        ExternalSchemeDiagnostics.record("presentSheet", ["url": url.absoluteString, "windowVisible": window.isVisible])
+        recordExternalSchemeDiagnostic("presentSheet", ["url": url.absoluteString, "windowVisible": window.isVisible])
         alert.beginSheetModal(for: window) { [weak self] response in
-            ExternalSchemeDiagnostics.record("sheetResponse", ["url": url.absoluteString, "response": response.rawValue])
+            self?.recordExternalSchemeDiagnostic("sheetResponse", ["url": url.absoluteString, "response": response.rawValue])
             self?.navigationState.externalAppPromptShowing = false
             if response == .alertFirstButtonReturn {
                 NSWorkspace.shared.open(url)
@@ -690,27 +690,87 @@ extension WebKitEngine {
 
 /// Temporary diagnostics for the external-scheme path: one JSON array of
 /// events at ~/Library/Logs/Browser/external-scheme-diagnostics.json.
+extension WebKitTab {
+    /// A private tab's navigations are a record of private browsing, so they
+    /// never reach the diagnostics file.
+    fileprivate func recordExternalSchemeDiagnostic(_ event: String, _ fields: [String: Any]) {
+        guard webView.configuration.websiteDataStore.isPersistent else { return }
+        ExternalSchemeDiagnostics.record(event, fields)
+    }
+}
+
+/// Opt-in diagnostics for the external-scheme (app handoff) path. Off unless
+/// the marker file `external-scheme-diagnostics.enabled` exists in the
+/// profiles-root metadata directory (or `--external-scheme-diagnostics` is
+/// passed), so a normal install never writes it. URLs lose their query and
+/// fragment before they are written: OAuth and SSO redirects carry codes
+/// there. The file keeps only the newest `maxRecords` entries.
 enum ExternalSchemeDiagnostics {
-    private static let path: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/Browser", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("external-scheme-diagnostics.json")
+    private static let markerName = "external-scheme-diagnostics.enabled"
+    private static let fileName = "external-scheme-diagnostics.json"
+    private static let maxRecords = 500
+    private static let markerRecheckInterval: TimeInterval = 1
+
+    private static let directory: String = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path
+        return ProfilesRootResolver.sessionAndProfilesMetadataDirectory(
+            arguments: CommandLine.arguments, appSupportDirectory: appSupport
+        )
     }()
+    private static let markerPath = (directory as NSString).appendingPathComponent(markerName)
+    private static let path = URL(fileURLWithPath: (directory as NSString).appendingPathComponent(fileName))
+    private static let isForcedOnByArgument = CommandLine.arguments.contains("--external-scheme-diagnostics")
+    private static var markerExists = false
+    private static var markerCheckedAt: TimeInterval?
+    private static var records: [[String: Any]]?
+    private static var flushScheduled = false
+
+    static var isEnabled: Bool {
+        if isForcedOnByArgument { return true }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let checkedAt = markerCheckedAt, now - checkedAt < markerRecheckInterval {
+            return markerExists
+        }
+        markerCheckedAt = now
+        markerExists = FileManager.default.fileExists(atPath: markerPath)
+        return markerExists
+    }
 
     static func record(_ event: String, _ fields: [String: Any]) {
-        var entry: [String: Any] = fields
+        guard isEnabled else { return }
+        var entry = fields.mapValues(redacted)
         entry["event"] = event
         entry["time"] = ISO8601DateFormatter().string(from: Date())
         entry["pid"] = ProcessInfo.processInfo.processIdentifier
-        var entries: [[String: Any]] = []
-        if let data = try? Data(contentsOf: path),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            entries = existing
+        if records == nil {
+            records = (try? Data(contentsOf: path))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
         }
-        entries.append(entry)
-        if let data = try? JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]) {
-            try? data.write(to: path)
+        records!.append(entry)
+        if records!.count > maxRecords { records!.removeFirst(records!.count - maxRecords) }
+        scheduleFlush()
+    }
+
+    /// One write per run-loop turn, however many decisions one navigation makes.
+    private static func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        DispatchQueue.main.async {
+            flushScheduled = false
+            guard let records,
+                  let data = try? JSONSerialization.data(withJSONObject: records, options: [.prettyPrinted, .sortedKeys])
+            else { return }
+            try? data.write(to: path, options: .atomic)
         }
+    }
+
+    private static func redacted(_ value: Any) -> Any {
+        guard let string = value as? String,
+              var components = URLComponents(string: string),
+              components.scheme != nil
+        else { return value }
+        components.query = nil
+        components.fragment = nil
+        return components.string ?? value
     }
 }

@@ -1,0 +1,1 @@
+../../../BrowserCore/Sources/BrowserCore/ProfilesRootResolver.swift
