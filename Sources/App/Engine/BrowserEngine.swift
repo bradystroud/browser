@@ -59,6 +59,13 @@ protocol EngineTabDelegate: AnyObject {
     /// not wait for the real navigation to actually commit.
     func engineTabWillStartMainFrameNavigation(_ url: String)
 
+    /// Asked before a main-frame navigation -- the first request and each
+    /// redirect hop -- is sent. Returning false cancels it in this engine
+    /// before anything reaches the network, so the tab can load it in the
+    /// other engine instead without the site seeing the request twice.
+    /// A cancelled navigation gets no will-start call.
+    func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool
+
     /// Overall page-loading progress, 0.0-1.0 -- see BRWBrowser.h's
     /// -browserDidUpdateLoadingProgress: for the real CEF signal this
     /// mirrors (a genuine percentage, not a fake/eased approximation).
@@ -219,6 +226,10 @@ protocol EngineTabDelegate: AnyObject {
     /// inspectElement(at:), passing `point` unchanged. An engine that claims
     /// its tools through engineTabDevToolsDidOpen() instead never sends it.
     func engineTabDidRequestInspectElement(at point: NSPoint)
+}
+
+extension EngineTabDelegate {
+    func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool { true }
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart

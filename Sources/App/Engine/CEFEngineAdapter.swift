@@ -227,6 +227,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         delegate?.engineTabWillStartMainFrameNavigation(url)
     }
 
+    func browserShouldStartMainFrameNavigation(to url: String) -> Bool {
+        delegate?.engineTabShouldStartMainFrameNavigation(url) ?? true
+    }
+
     func browserDidUpdateLoadingProgress(_ progress: Double) {
         delegate?.engineTabDidUpdateLoadingProgress(progress)
     }

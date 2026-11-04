@@ -106,6 +106,14 @@ extension WebKitTab: WKNavigationDelegate {
             continueToThreatenedSite(originalURL, navigationAction: navigationAction)
             return
         }
+        // Asked again for each server redirect, so a hop onto a site the tab
+        // will show in the other engine stops here too, before it is sent.
+        if navigationAction.targetFrame?.isMainFrame == true,
+           let url = navigationAction.request.url?.absoluteString,
+           delegate?.engineTabShouldStartMainFrameNavigation(url) == false {
+            decisionHandler(.cancel)
+            return
+        }
         decisionHandler(.allow)
     }
 

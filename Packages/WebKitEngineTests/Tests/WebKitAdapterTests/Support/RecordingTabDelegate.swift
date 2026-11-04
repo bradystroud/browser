@@ -51,6 +51,14 @@ final class RecordingTabDelegate: EngineTabDelegate {
         events.append("loading:\(isLoading)")
     }
     func engineTabWillStartMainFrameNavigation(_ url: String) { events.append("willStart:\(url)") }
+
+    /// Answers engineTabShouldStartMainFrameNavigation; nil allows everything.
+    var refuseNavigation: ((String) -> Bool)?
+    func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool {
+        let refused = refuseNavigation?(url) ?? false
+        events.append("\(refused ? "refused" : "shouldStart"):\(url)")
+        return !refused
+    }
     func engineTabDidUpdateLoadingProgress(_ progress: Double) { events.append("progress:\(progress)") }
     func engineTabDidCommitNavigation(_ url: String) { events.append("commit:\(url)") }
     func engineTabDidStartMainFrameLoad() { events.append("didStartLoad") }

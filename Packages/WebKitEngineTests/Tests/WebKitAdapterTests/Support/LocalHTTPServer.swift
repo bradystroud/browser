@@ -22,6 +22,12 @@ final class LocalHTTPServer {
     private let queue = DispatchQueue(label: "LocalHTTPServer")
     private let routes: [String: Response]
     private(set) var port: UInt16 = 0
+    /// Every request path received, in order. Written on `queue`.
+    private var receivedPaths: [String] = []
+
+    /// The paths requested so far, for a test that must prove a request was
+    /// never sent.
+    var requestedPaths: [String] { queue.sync { receivedPaths } }
 
     init(routes: [String: Response]) throws {
         self.routes = routes
@@ -85,6 +91,7 @@ final class LocalHTTPServer {
         let requestLine = head.split(separator: "\r\n", maxSplits: 1).first.map(String.init) ?? ""
         let target = requestLine.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
         let path = target.split(separator: "?", maxSplits: 1).first.map(String.init) ?? target
+        receivedPaths.append(path)
         let response = routes[path] ?? Response(status: 404, contentType: "text/plain", body: Data("not found".utf8))
 
         var lines = ["HTTP/1.1 \(response.status) \(response.status == 200 ? "OK" : "Error")",
