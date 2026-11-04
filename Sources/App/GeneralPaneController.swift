@@ -28,6 +28,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let sidebarEdgePopup = NSPopUpButton()
     private var sidebarEdgeRow: NSGridRow?
     private let tabLayoutHelpLabel = SettingsForm.footnote()
+    private var observers: [NSObjectProtocol] = []
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
 
     private let modePopup = NSPopUpButton()
     private let helpLabel = SettingsForm.footnote()
@@ -168,9 +173,9 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         form.addFootnote(tabLayoutHelpLabel)
         // The View menu changes these too, while this pane may be open.
         for name in [Notification.Name.tabStripOrientationDidChange, .sidebarLayoutPreferenceDidChange] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.updateTabLayoutRows()
-            }
+            })
         }
 
         form.beginSection()
