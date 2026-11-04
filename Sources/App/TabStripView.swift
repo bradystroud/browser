@@ -270,7 +270,24 @@ final class TabStripView: NSView {
         /// mouse-down and removed however the drag ends -- see
         /// tabButton(_:didBeginDragWith:).
         var eventMonitor: Any?
+        /// Where the pointer was at the last drag event, in window
+        /// coordinates -- what the auto-scroll timer repositions the pill
+        /// from while the pointer holds still at the strip's edge.
+        var lastLocationInWindow: NSPoint
+        /// The strip's scroll offset at mouse-down, kept only for the
+        /// diagnostics log.
+        let startScrollOrigin: NSPoint
     }
+
+    /// Runs while a dragged pill is held near either end of the visible
+    /// strip, scrolling it toward that end -- see updateAutoScroll.
+    private var autoScrollTimer: Timer?
+    private var autoScrollLastTick: TimeInterval = 0
+    /// How close to the visible edge the pointer has to be, and how fast the
+    /// strip scrolls when it is right at (or past) it. The speed ramps up
+    /// linearly across the zone, so easing toward the edge scrolls gently.
+    private static let autoScrollEdgeZone: CGFloat = 40
+    private static let autoScrollMaxSpeed: CGFloat = 900
 
     /// How far the pointer must travel along the strip's own axis before a
     /// mouse-down is treated as a drag at all (see continueDrag -- the
@@ -826,6 +843,14 @@ final class TabStripView: NSView {
               let window, stripItems.count >= 3,
               let button = selfTestSubject(), button.bounds.width > 0 else { return }
         hasRunDragSelfTest = true
+        if stripOverflows {
+            // After the launch's own scroll to the selected tab has settled,
+            // so the test starts from a strip that is genuinely scrolled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.runEdgeHoldSelfTest()
+            }
+            return
+        }
 
         func event(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
             let inWindow = itemHost.convert(point, to: nil)
@@ -863,6 +888,80 @@ final class TabStripView: NSView {
         }
         guard let up = event(.leftMouseUp, at: end) else { return }
         tabButton(button, didEndDragWith: up)
+    }
+
+    private var stripOverflows: Bool {
+        isVertical
+            ? verticalContentHeight() > scrollView.contentSize.height
+            : horizontalLayout().overflows
+    }
+
+    /// The self-test for a strip that scrolls: drags a visible tab to the
+    /// visible edge with more of the strip hidden beyond it, holds it there
+    /// with no further pointer movement, and drops it. What it proves on top
+    /// of runDragSelfTestIfRequested is that the hold alone scrolls the strip
+    /// (autoScrollStart/autoScrollStop and endDrag's scroll offsets), and
+    /// that the pill carried along by that scroll commits to the slot it
+    /// ended up over.
+    private func runEdgeHoldSelfTest() {
+        guard let window, drag == nil else { return }
+        let visible = itemHost.visibleRect
+        let hiddenBefore = isVertical ? visible.minY : visible.minX
+        let hiddenAfter = isVertical ? itemHost.bounds.height - visible.maxY : itemHost.bounds.width - visible.maxX
+        let towardEnd = hiddenAfter >= hiddenBefore
+        let middle = NSPoint(x: visible.midX, y: visible.midY)
+        let candidates = stripItems.enumerated().compactMap { position, item -> TabButtonView? in
+            guard case .tab(let button) = item, visible.contains(button.frame),
+                  !(isVertical && button.isPinned),
+                  sectionRange(around: position).count >= 3 else { return nil }
+            return button
+        }
+        guard let button = candidates.min(by: {
+            hypot($0.frame.midX - middle.x, $0.frame.midY - middle.y)
+                < hypot($1.frame.midX - middle.x, $1.frame.midY - middle.y)
+        }) else {
+            TabDragDiagnostics.record("selfTestEdgeHoldSkipped", ["reason": "no-visible-subject"])
+            return
+        }
+
+        let start = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        let edge: NSPoint = isVertical
+            ? NSPoint(x: start.x, y: towardEnd ? visible.maxY - 6 : visible.minY + 6)
+            : NSPoint(x: towardEnd ? visible.maxX - 6 : visible.minX + 6, y: start.y)
+        // Window coordinates, fixed now: the point the pointer "holds" at
+        // must not move with the document once the strip starts scrolling.
+        let startInWindow = itemHost.convert(start, to: nil)
+        let edgeInWindow = itemHost.convert(edge, to: nil)
+        func event(_ type: NSEvent.EventType, at location: NSPoint) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            )
+        }
+        TabDragDiagnostics.record("selfTestEdgeHoldStart", [
+            "tabIndex": button.index, "orientation": orientation.rawValue,
+            "towardEnd": towardEnd,
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY),
+            "visible": TabDragDiagnostics.describe(visible),
+            "documentSize": TabDragDiagnostics.describe(itemHost.bounds)
+        ])
+        guard let down = event(.leftMouseDown, at: startInWindow) else { return }
+        tabButton(button, didBeginDragWith: down)
+        for step in 1...8 {
+            let fraction = CGFloat(step) / 8
+            let location = NSPoint(
+                x: startInWindow.x + (edgeInWindow.x - startInWindow.x) * fraction,
+                y: startInWindow.y + (edgeInWindow.y - startInWindow.y) * fraction
+            )
+            guard let dragged = event(.leftMouseDragged, at: location) else { continue }
+            tabButton(button, didDragWith: dragged)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.drag?.button === button,
+                  let up = event(.leftMouseUp, at: edgeInWindow) else { return }
+            self.tabButton(button, didEndDragWith: up)
+        }
     }
 
     /// The tab the self-test drags: the first one with at least two other
@@ -1083,7 +1182,9 @@ extension TabStripView: TabButtonDragDelegate {
             range: range,
             startPoint: itemHost.convert(event.locationInWindow, from: nil),
             startFrame: button.frame,
-            originalItems: stripItems
+            originalItems: stripItems,
+            lastLocationInWindow: event.locationInWindow,
+            startScrollOrigin: scrollView.contentView.bounds.origin
         )
         session.eventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDragged, .leftMouseUp, .keyDown]
@@ -1091,7 +1192,7 @@ extension TabStripView: TabButtonDragDelegate {
             guard let self, let button = self.drag?.button else { return event }
             switch event.type {
             case .leftMouseDragged:
-                self.continueDrag(button, with: event, source: "monitor")
+                self.continueDrag(button, toWindowLocation: event.locationInWindow, source: "monitor")
                 return event
             case .leftMouseUp:
                 self.endDrag(commit: true, source: "monitor")
@@ -1123,16 +1224,20 @@ extension TabStripView: TabButtonDragDelegate {
     /// conditional on midpoints already crossed, so handling the same event
     /// twice lands on exactly the same state as handling it once.
     func tabButton(_ button: TabButtonView, didDragWith event: NSEvent) {
-        continueDrag(button, with: event, source: "view")
+        continueDrag(button, toWindowLocation: event.locationInWindow, source: "view")
     }
 
     func tabButton(_ button: TabButtonView, didEndDragWith event: NSEvent) {
         endDrag(commit: true, source: "view")
     }
 
-    private func continueDrag(_ button: TabButtonView, with event: NSEvent, source: String) {
+    private func continueDrag(_ button: TabButtonView, toWindowLocation location: NSPoint, source: String) {
         guard let session = drag, session.button === button else { return }
-        let point = itemHost.convert(event.locationInWindow, from: nil)
+        drag?.lastLocationInWindow = location
+        // In document coordinates, so a scroll since mouse-down -- the
+        // auto-scroll below -- counts as travel and keeps the pill under
+        // the pointer while the row slides beneath it.
+        let point = itemHost.convert(location, from: nil)
         let delta = NSSize(width: point.x - session.startPoint.x, height: point.y - session.startPoint.y)
         // Vertical rows travel on y, but a pinned tile in the sidebar's grid
         // travels on both axes, so the threshold there is plain distance
@@ -1162,6 +1267,7 @@ extension TabStripView: TabButtonDragDelegate {
         let itemIndex = isVertical
             ? moveVertically(button, session: session, delta: delta, frames: frames)
             : moveHorizontally(button, session: session, deltaX: delta.width, frames: frames)
+        updateAutoScroll()
 
         guard itemIndex != session.itemIndex else { return }
         drag?.itemIndex = itemIndex
@@ -1271,11 +1377,16 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        stopAutoScroll()
         let revealSelection = revealsSelectionAfterDrag
         revealsSelectionAfterDrag = false
         TabDragDiagnostics.record("endDrag", [
             "source": source, "commit": commit,
-            "tabIndex": session.button.index, "didMove": session.didMove
+            "tabIndex": session.button.index, "didMove": session.didMove,
+            "startScrollX": Double(session.startScrollOrigin.x),
+            "startScrollY": Double(session.startScrollOrigin.y),
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
         ])
 
         // A click that never moved needs nothing more: selection already
@@ -1334,6 +1445,86 @@ extension TabStripView: TabButtonDragDelegate {
         })
     }
 
+    // MARK: Auto-scroll
+
+    /// How fast, in points per second, the strip should scroll for a pointer
+    /// at `location` (window coordinates): negative toward the start,
+    /// positive toward the end, zero away from both edges. Along x for the
+    /// row and y for the sidebar, whose document is flipped, so "toward the
+    /// start" is up there.
+    private func autoScrollSpeed(at location: NSPoint) -> CGFloat {
+        let point = itemHost.convert(location, from: nil)
+        let visible = itemHost.visibleRect
+        guard !visible.isEmpty else { return 0 }
+        let position = isVertical ? point.y : point.x
+        let start = isVertical ? visible.minY : visible.minX
+        let end = isVertical ? visible.maxY : visible.maxX
+        let zone = min(Self.autoScrollEdgeZone, (end - start) / 4)
+        guard zone > 0 else { return 0 }
+        if position < start + zone {
+            return -Self.autoScrollMaxSpeed * min(1, (start + zone - position) / zone)
+        }
+        if position > end - zone {
+            return Self.autoScrollMaxSpeed * min(1, (position - (end - zone)) / zone)
+        }
+        return 0
+    }
+
+    /// Starts or stops the auto-scroll timer for the drag's latest pointer
+    /// location. A timer on the main run loop rather than a tracking loop,
+    /// for the same reason the drag itself is a monitor: BRWMessagePump
+    /// drives the engine off that run loop, and holding the pointer still at
+    /// the edge sends no events to scroll from.
+    private func updateAutoScroll() {
+        guard let session = drag, session.didMove,
+              autoScrollSpeed(at: session.lastLocationInWindow) != 0 else {
+            stopAutoScroll()
+            return
+        }
+        guard autoScrollTimer == nil else { return }
+        autoScrollLastTick = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            self?.autoScrollTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autoScrollTimer = timer
+        TabDragDiagnostics.record("autoScrollStart", [
+            "tabIndex": session.button.index,
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
+        ])
+    }
+
+    private func autoScrollTick() {
+        guard let session = drag, session.didMove else {
+            stopAutoScroll()
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        // Capped, so a stalled run loop does not jump the strip on resume.
+        let elapsed = min(now - autoScrollLastTick, 0.05)
+        autoScrollLastTick = now
+        let speed = autoScrollSpeed(at: session.lastLocationInWindow)
+        guard speed != 0 else {
+            stopAutoScroll()
+            return
+        }
+        let step = speed * CGFloat(elapsed)
+        let moved = scrollView.scrollDocument(by: isVertical ? NSPoint(x: 0, y: step) : NSPoint(x: step, y: 0))
+        guard moved != .zero else { return }
+        continueDrag(session.button, toWindowLocation: session.lastLocationInWindow, source: "autoscroll")
+    }
+
+    private func stopAutoScroll() {
+        guard let timer = autoScrollTimer else { return }
+        timer.invalidate()
+        autoScrollTimer = nil
+        TabDragDiagnostics.record("autoScrollStop", [
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
+        ])
+    }
+
     /// Drops drag state without touching any view -- for when the buttons the
     /// drag refers to are about to stop existing (see reload).
     private func abandonDrag() {
@@ -1342,6 +1533,7 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        stopAutoScroll()
         // Every caller reloads, which scrolls to the selection itself.
         revealsSelectionAfterDrag = false
     }
