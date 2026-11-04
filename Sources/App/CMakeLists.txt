@@ -426,6 +426,7 @@ set(BROWSER_SESSION_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/ClosedItemStack.swift
   ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/TabSleepPolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/TabSleepPageScript.swift
+  ${CMAKE_SOURCE_DIR}/Packages/SessionCore/Sources/SessionCore/HorizontalTabStripLayout.swift
   )
 source_group(SessionCore FILES ${BROWSER_SESSION_CORE_SRCS})
 

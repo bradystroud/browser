@@ -64,13 +64,86 @@ private final class TabStripContentView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// The strip's scroll view. In the horizontal row a plain mouse wheel only
+/// ever scrolls vertically, which a row that scrolls sideways would ignore,
+/// so a mostly-vertical wheel or swipe moves the row sideways instead, as
+/// Safari's tab bar does.
+private final class TabStripScrollView: NSScrollView {
+    var mapsVerticalWheelToHorizontal = false
+
+    /// Whether the current trackpad gesture, and the momentum that follows
+    /// it, is being turned sideways. Decided once from the gesture's first
+    /// movement: deciding per event hands a gesture that wobbles between
+    /// axes to NSScrollView half-way through, without the began phase its
+    /// elastic scrolling expects.
+    private var gestureIsMapped: Bool?
+
+    /// Always overlay. AppKit resets every scroll view to the system's
+    /// preferred style when it changes -- "Always" in System Settings, or
+    /// "Automatically" with a mouse plugged in -- and a legacy horizontal
+    /// scroller takes 15pt out of a strip about twice that tall, clipping
+    /// every tab's lower half.
+    override var scrollerStyle: NSScroller.Style {
+        get { super.scrollerStyle }
+        set { super.scrollerStyle = .overlay }
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard mapsVerticalWheelToHorizontal else {
+            super.scrollWheel(with: event)
+            return
+        }
+        guard shouldMapToHorizontal(event) else {
+            super.scrollWheel(with: event)
+            return
+        }
+        if event.phase == .began {
+            flashScrollers()
+        }
+        // Line-based wheel deltas are in lines, not points.
+        let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : horizontalLineScroll
+        scrollDocument(by: NSPoint(x: -event.scrollingDeltaY * scale, y: 0))
+    }
+
+    private func shouldMapToHorizontal(_ event: NSEvent) -> Bool {
+        let mostlyVertical = abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+        // A phase-less mouse wheel has no gesture to belong to.
+        guard !event.phase.isEmpty || !event.momentumPhase.isEmpty else { return mostlyVertical }
+        if event.phase == .began || event.phase == .mayBegin {
+            gestureIsMapped = nil
+        }
+        if gestureIsMapped == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            gestureIsMapped = mostlyVertical
+        }
+        return gestureIsMapped ?? false
+    }
+
+    /// Moves the visible part of the document by `delta`, clamped so it
+    /// never shows past either end, and returns how far it actually moved.
+    @discardableResult
+    func scrollDocument(by delta: NSPoint) -> NSPoint {
+        guard let documentView else { return .zero }
+        let maxX = max(0, documentView.frame.width - contentView.bounds.width)
+        let maxY = max(0, documentView.frame.height - contentView.bounds.height)
+        let old = contentView.bounds.origin
+        let new = NSPoint(
+            x: min(max(0, old.x + delta.x), maxX),
+            y: min(max(0, old.y + delta.y), maxY)
+        )
+        guard new != old else { return .zero }
+        contentView.scroll(to: new)
+        reflectScrolledClipView(contentView)
+        return NSPoint(x: new.x - old.x, y: new.y - old.y)
+    }
+}
+
 /// Compact Safari-like tab strip in one of two orientations (see
 /// TabStripOrientation):
 ///
 /// - horizontal: a fixed-height row of TabButtonViews (plus
 ///   TabGroupHeaderViews for tab groups) sized to share the available width
-///   (down to a minimum, then they just get crowded rather than scrolling --
-///   fine for this app's tab counts), plus a trailing "+" button.
+///   down to a minimum (see HorizontalTabStripLayout), scrolling sideways once
+///   they no longer fit. The "+" lives in the toolbar row, not here.
 /// - vertical: a fixed-width sidebar of full-width rows, pinned tabs as a
 ///   compact favicon grid at the top, group members indented under their
 ///   header, scrolling when they overflow, and a "New Tab" row pinned to the
@@ -197,7 +270,24 @@ final class TabStripView: NSView {
         /// mouse-down and removed however the drag ends -- see
         /// tabButton(_:didBeginDragWith:).
         var eventMonitor: Any?
+        /// Where the pointer was at the last drag event, in window
+        /// coordinates -- what the auto-scroll timer repositions the pill
+        /// from while the pointer holds still at the strip's edge.
+        var lastLocationInWindow: NSPoint
+        /// The strip's scroll offset at mouse-down, kept only for the
+        /// diagnostics log.
+        let startScrollOrigin: NSPoint
     }
+
+    /// Runs while a dragged pill is held near either end of the visible
+    /// strip, scrolling it toward that end -- see updateAutoScroll.
+    private var autoScrollTimer: Timer?
+    private var autoScrollLastTick: TimeInterval = 0
+    /// How close to the visible edge the pointer has to be, and how fast the
+    /// strip scrolls when it is right at (or past) it. The speed ramps up
+    /// linearly across the zone, so easing toward the edge scrolls gently.
+    private static let autoScrollEdgeZone: CGFloat = 40
+    private static let autoScrollMaxSpeed: CGFloat = 900
 
     /// How far the pointer must travel along the strip's own axis before a
     /// mouse-down is treated as a drag at all (see continueDrag -- the
@@ -217,18 +307,17 @@ final class TabStripView: NSView {
         button.toolTip = "New Tab"
         return button
     }()
-    /// The item area itself: a direct subview of `self` in horizontal mode,
-    /// and the sidebar scroll view's document view in vertical mode. Every
-    /// tab pill/group header lives inside it (via itemHost below), so
-    /// swapping which of the two it is parented to is the whole of the
-    /// "sidebar scrolls, strip doesn't" difference -- nothing downstream of
-    /// it, drag included, has to know which mode it is in.
+    /// The item area itself: the scroll view's document view in both
+    /// orientations. Every tab pill/group header lives inside it (via
+    /// itemHost below), and every slot frame is in its coordinates, so
+    /// nothing downstream of it, drag included, has to know which way it
+    /// scrolls or how far it has scrolled.
     private let stripContentView = TabStripContentView()
 
-    /// Vertical mode only, and only installed while it is (see
-    /// configureHierarchyForOrientation) -- a sidebar that silently hides
-    /// tabs past the window's height would be worse than no sidebar.
-    private let scrollView = NSScrollView()
+    /// Scrolls the sidebar down and the horizontal row sideways. Either one
+    /// would otherwise draw every tab past the window's edge out of sight and
+    /// out of reach.
+    private let scrollView = TabStripScrollView()
 
     /// Where rebuildButtons() adds each tab/group-header subview. Every slot
     /// frame this view computes is in *this* view's coordinates, which is
@@ -252,16 +341,6 @@ final class TabStripView: NSView {
 
     private var isVertical: Bool { orientation == .vertical }
 
-    private static let minTabWidth: CGFloat = 80
-    /// Pinned tabs render at this fixed, narrow width regardless of strip
-    /// width or tab count -- just enough for a centered favicon, no title,
-    /// no close button (Safari-style).
-    private static let pinnedTabWidth: CGFloat = 36
-    /// Group headers render at one of these two fixed widths (not part of
-    /// the flexible even-width pool tab buttons share) -- expanded shows the
-    /// name, collapsed just a color dot + count badge.
-    private static let groupHeaderWidth: CGFloat = 110
-    private static let collapsedGroupHeaderWidth: CGFloat = 50
     /// Gap between adjacent pills. Unselected tabs have no background, so
     /// this mostly separates hover washes and the selected tab's glass
     /// from its neighbours' titles; it has to clear the soft edge
@@ -322,28 +401,20 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        scrollView.frame = bounds
         stripContentView.frame = bounds
-        stripContentView.autoresizingMask = [.width, .height]
-        addSubview(stripContentView)
-        newTabButton.target = self
-        newTabButton.action = #selector(newTabTapped)
-        // Horizontal (the initial orientation) shows no "+" -- see
-        // configureHierarchyForOrientation.
-        newTabButton.isHidden = true
-        addSubview(newTabButton)
-        configureScrollView()
-    }
-
-    private func configureScrollView() {
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
-        scrollView.horizontalScrollElasticity = .none
         // The clip view must not paint either, or it draws an opaque slab
-        // over the sidebar's own material.
+        // over the strip's own material.
         scrollView.contentView.drawsBackground = false
+        scrollView.documentView = stripContentView
+        addSubview(scrollView)
+        newTabButton.target = self
+        newTabButton.action = #selector(newTabTapped)
+        addSubview(newTabButton)
+        configureHierarchyForOrientation()
     }
 
     required init?(coder: NSCoder) {
@@ -422,23 +493,44 @@ final class TabStripView: NSView {
         reportSelectionContrastIfRequested()
     }
 
-    /// Brings the selected row back on screen when the sidebar has scrolled
-    /// past it. Without this, ⌘1-9 and ⌘⌥→ can activate a tab that stays out
-    /// of sight -- the strip would be showing a selection nobody can see, and
-    /// the horizontal row has no equivalent failure because it never scrolls.
-    /// A no-op in horizontal mode, and whenever the row is already visible.
+    /// Brings the selected tab back on screen when the strip has scrolled
+    /// past it. Without this, ⌘1-9, ⌘⌥→ and a newly opened tab can activate
+    /// a tab that stays out of sight -- the strip would be showing a
+    /// selection nobody can see. A no-op whenever the tab is already visible.
     private func scrollSelectionIntoView() {
-        guard isVertical, scrollView.superview === self,
-              let button = tabButton(forTabIndex: selectedIndex) else { return }
+        guard tabButton(forTabIndex: selectedIndex) != nil else { return }
         // Deferred: a selection change usually arrives with a reload, whose
-        // layout (and therefore this row's real frame) has not run yet.
+        // layout (and therefore this tab's real frame) has not run yet.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.isVertical, button.superview != nil else { return }
-            let frame = button.convert(button.bounds, to: self.stripContentView)
-            // Padded by a whole row's worth, so a row scrolled to the very
-            // bottom does not end up flush against the New Tab band below it.
-            self.stripContentView.scrollToVisible(frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2))
+            guard let self else { return }
+            // A press on a tab selects it before its drag is armed, so this
+            // usually lands just after mouse-down. Scrolling then would slide
+            // the row under a pointer that has not moved, and the drag reads
+            // that as travel: a one-pixel wobble after clicking a tab half
+            // off the edge would reorder it. Wait for the mouse to come up.
+            guard self.drag == nil else {
+                self.revealsSelectionAfterDrag = true
+                return
+            }
+            self.layoutSubtreeIfNeeded()
+            self.revealSelection()
         }
+    }
+
+    /// Set while a drag holds back scrollSelectionIntoView.
+    private var revealsSelectionAfterDrag = false
+
+    /// The synchronous half of scrollSelectionIntoView, for callers whose
+    /// layout has already run.
+    private func revealSelection() {
+        guard let button = tabButton(forTabIndex: selectedIndex), button.superview != nil else { return }
+        let frame = button.convert(button.bounds, to: stripContentView)
+        // Padded so the tab does not end up flush against the strip's
+        // edge -- or, in the sidebar, the New Tab band below it.
+        let padded = isVertical
+            ? frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2)
+            : frame.insetBy(dx: -Self.sidePadding, dy: 0)
+        stripContentView.scrollToVisible(padded)
     }
 
     /// ⌘W on a pinned active tab is a no-op (see BrowserWindowController.
@@ -598,6 +690,8 @@ final class TabStripView: NSView {
         }
         configureHierarchyForOrientation()
         needsLayout = true
+        // configureHierarchyForOrientation scrolls back to the start.
+        scrollSelectionIntoView()
     }
 
     private func configureHierarchyForOrientation() {
@@ -605,30 +699,46 @@ final class TabStripView: NSView {
         // keeps one in the toolbar row, because the strip itself is hidden
         // whenever a window has a single tab and "+" must stay reachable.
         newTabButton.isHidden = !isVertical
-        if isVertical {
-            guard scrollView.superview !== self else { return }
-            stripContentView.removeFromSuperview()
-            stripContentView.autoresizingMask = [.width]
-            scrollView.documentView = stripContentView
-            addSubview(scrollView, positioned: .below, relativeTo: newTabButton)
-        } else {
-            guard stripContentView.superview !== self else { return }
-            scrollView.documentView = nil
-            scrollView.removeFromSuperview()
-            stripContentView.autoresizingMask = [.width, .height]
-            stripContentView.frame = bounds
-            addSubview(stripContentView, positioned: .below, relativeTo: newTabButton)
-        }
+        scrollView.hasVerticalScroller = isVertical
+        scrollView.hasHorizontalScroller = !isVertical
+        scrollView.verticalScrollElasticity = isVertical ? .automatic : .none
+        scrollView.horizontalScrollElasticity = isVertical ? .none : .automatic
+        scrollView.mapsVerticalWheelToHorizontal = !isVertical
+        // layout() sizes the document view itself, along whichever axis
+        // the current orientation scrolls on.
+        stripContentView.autoresizingMask = []
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
     }
+
+    /// The size the last layout ran at, so a resize can be told apart from
+    /// the many layouts that change nothing about the strip's own size.
+    private var lastLayoutSize: NSSize?
 
     override func layout() {
         super.layout()
         if isVertical {
             layoutVerticalContainers()
         } else {
-            setFrameIfNeeded(stripContentView, to: bounds)
+            layoutHorizontalContainers()
         }
         layoutTabs()
+        // A narrower window can leave the selected tab past the new edge.
+        // Not mid-drag: the dragged pill is the selection, and it belongs to
+        // the pointer until the drop.
+        if bounds.size != lastLayoutSize {
+            lastLayoutSize = bounds.size
+            if drag == nil { revealSelection() }
+        }
+    }
+
+    /// The scroll view fills the strip, and its document view is as wide as
+    /// the row of tabs -- wider than the strip once they stop shrinking.
+    private func layoutHorizontalContainers() {
+        setFrameIfNeeded(scrollView, to: bounds)
+        setFrameIfNeeded(stripContentView, to: NSRect(
+            x: 0, y: 0, width: horizontalLayout().contentWidth, height: bounds.height
+        ))
     }
 
     /// Sizes the sidebar's scroll view, its document view (tall enough for
@@ -733,6 +843,14 @@ final class TabStripView: NSView {
               let window, stripItems.count >= 3,
               let button = selfTestSubject(), button.bounds.width > 0 else { return }
         hasRunDragSelfTest = true
+        if stripOverflows {
+            // After the launch's own scroll to the selected tab has settled,
+            // so the test starts from a strip that is genuinely scrolled.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.runEdgeHoldSelfTest()
+            }
+            return
+        }
 
         func event(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
             let inWindow = itemHost.convert(point, to: nil)
@@ -770,6 +888,80 @@ final class TabStripView: NSView {
         }
         guard let up = event(.leftMouseUp, at: end) else { return }
         tabButton(button, didEndDragWith: up)
+    }
+
+    private var stripOverflows: Bool {
+        isVertical
+            ? verticalContentHeight() > scrollView.contentSize.height
+            : horizontalLayout().overflows
+    }
+
+    /// The self-test for a strip that scrolls: drags a visible tab to the
+    /// visible edge with more of the strip hidden beyond it, holds it there
+    /// with no further pointer movement, and drops it. What it proves on top
+    /// of runDragSelfTestIfRequested is that the hold alone scrolls the strip
+    /// (autoScrollStart/autoScrollStop and endDrag's scroll offsets), and
+    /// that the pill carried along by that scroll commits to the slot it
+    /// ended up over.
+    private func runEdgeHoldSelfTest() {
+        guard let window, drag == nil else { return }
+        let visible = itemHost.visibleRect
+        let hiddenBefore = isVertical ? visible.minY : visible.minX
+        let hiddenAfter = isVertical ? itemHost.bounds.height - visible.maxY : itemHost.bounds.width - visible.maxX
+        let towardEnd = hiddenAfter >= hiddenBefore
+        let middle = NSPoint(x: visible.midX, y: visible.midY)
+        let candidates = stripItems.enumerated().compactMap { position, item -> TabButtonView? in
+            guard case .tab(let button) = item, visible.contains(button.frame),
+                  !(isVertical && button.isPinned),
+                  sectionRange(around: position).count >= 3 else { return nil }
+            return button
+        }
+        guard let button = candidates.min(by: {
+            hypot($0.frame.midX - middle.x, $0.frame.midY - middle.y)
+                < hypot($1.frame.midX - middle.x, $1.frame.midY - middle.y)
+        }) else {
+            TabDragDiagnostics.record("selfTestEdgeHoldSkipped", ["reason": "no-visible-subject"])
+            return
+        }
+
+        let start = NSPoint(x: button.frame.midX, y: button.frame.midY)
+        let edge: NSPoint = isVertical
+            ? NSPoint(x: start.x, y: towardEnd ? visible.maxY - 6 : visible.minY + 6)
+            : NSPoint(x: towardEnd ? visible.maxX - 6 : visible.minX + 6, y: start.y)
+        // Window coordinates, fixed now: the point the pointer "holds" at
+        // must not move with the document once the strip starts scrolling.
+        let startInWindow = itemHost.convert(start, to: nil)
+        let edgeInWindow = itemHost.convert(edge, to: nil)
+        func event(_ type: NSEvent.EventType, at location: NSPoint) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+            )
+        }
+        TabDragDiagnostics.record("selfTestEdgeHoldStart", [
+            "tabIndex": button.index, "orientation": orientation.rawValue,
+            "towardEnd": towardEnd,
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY),
+            "visible": TabDragDiagnostics.describe(visible),
+            "documentSize": TabDragDiagnostics.describe(itemHost.bounds)
+        ])
+        guard let down = event(.leftMouseDown, at: startInWindow) else { return }
+        tabButton(button, didBeginDragWith: down)
+        for step in 1...8 {
+            let fraction = CGFloat(step) / 8
+            let location = NSPoint(
+                x: startInWindow.x + (edgeInWindow.x - startInWindow.x) * fraction,
+                y: startInWindow.y + (edgeInWindow.y - startInWindow.y) * fraction
+            )
+            guard let dragged = event(.leftMouseDragged, at: location) else { continue }
+            tabButton(button, didDragWith: dragged)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self, self.drag?.button === button,
+                  let up = event(.leftMouseUp, at: edgeInWindow) else { return }
+            self.tabButton(button, didEndDragWith: up)
+        }
     }
 
     /// The tab the self-test drags: the first one with at least two other
@@ -884,53 +1076,28 @@ final class TabStripView: NSView {
         return frames
     }
 
-    /// Horizontal layout, left to right. Pinned tabs and group headers get
-    /// fixed widths off the top; every other tab button (loose, or a member
-    /// of an expanded group) shares whatever width remains, same
-    /// even-width-down-to-a-minimum scheme as before groups existed.
+    /// Horizontal layout, left to right: pinned tabs and group headers at
+    /// fixed widths, every other tab sharing what remains down to a minimum,
+    /// past which the row outgrows the strip and scrolls.
     private func horizontalSlotFrames() -> [NSRect] {
-        let available = max(0, bounds.width - leadingInset - Self.sidePadding * 2)
-        let itemCount = stripItems.count
-        let totalSpacing = itemCount > 1 ? Self.tabSpacing * CGFloat(itemCount - 1) : 0
+        let layout = horizontalLayout()
+        let height = max(0, bounds.height - 8)
+        return zip(layout.origins, layout.widths).map { x, width in
+            NSRect(x: x, y: 4, width: width, height: height)
+        }
+    }
 
-        var fixedWidthTotal: CGFloat = 0
-        var flexibleTabCount = 0
-        for item in stripItems {
+    private func horizontalLayout() -> HorizontalTabStripLayout {
+        let items: [HorizontalTabStripLayout.Item] = stripItems.map { item in
             switch item {
-            case .tab(let button):
-                if button.isPinned {
-                    fixedWidthTotal += Self.pinnedTabWidth
-                } else {
-                    flexibleTabCount += 1
-                }
-            case .groupHeader(let header):
-                fixedWidthTotal += header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
+            case .tab(let button): return button.isPinned ? .pinnedTab : .tab
+            case .groupHeader(let header): return .groupHeader(isCollapsed: header.isCollapsed)
             }
         }
-        let remainingForFlexible = max(0, available - totalSpacing - fixedWidthTotal)
-        let evenFlexibleWidth = flexibleTabCount > 0 ? remainingForFlexible / CGFloat(flexibleTabCount) : 0
-        // No upper bound: unpinned tabs stretch to fill the whole strip, so two
-        // tabs take half the bar each, Safari-style. Only the lower bound
-        // survives -- past minTabWidth the tabs stop shrinking and the strip
-        // overflows instead, which is what keeps a tab legible once there are
-        // enough of them.
-        let flexibleWidth = max(Self.minTabWidth, evenFlexibleWidth)
-
-        var frames: [NSRect] = []
-        frames.reserveCapacity(itemCount)
-        var x = leadingInset + Self.sidePadding
-        for item in stripItems {
-            let width: CGFloat
-            switch item {
-            case .tab(let button):
-                width = button.isPinned ? Self.pinnedTabWidth : flexibleWidth
-            case .groupHeader(let header):
-                width = header.isCollapsed ? Self.collapsedGroupHeaderWidth : Self.groupHeaderWidth
-            }
-            frames.append(NSRect(x: x, y: 4, width: width, height: max(0, bounds.height - 8)))
-            x += width + Self.tabSpacing
-        }
-        return frames
+        return HorizontalTabStripLayout(
+            items: items, viewportWidth: bounds.width, leadingInset: leadingInset,
+            sidePadding: Self.sidePadding, spacing: Self.tabSpacing
+        )
     }
 
     /// Moves every item into its slot, optionally sliding rather than
@@ -1015,7 +1182,9 @@ extension TabStripView: TabButtonDragDelegate {
             range: range,
             startPoint: itemHost.convert(event.locationInWindow, from: nil),
             startFrame: button.frame,
-            originalItems: stripItems
+            originalItems: stripItems,
+            lastLocationInWindow: event.locationInWindow,
+            startScrollOrigin: scrollView.contentView.bounds.origin
         )
         session.eventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDragged, .leftMouseUp, .keyDown]
@@ -1023,7 +1192,7 @@ extension TabStripView: TabButtonDragDelegate {
             guard let self, let button = self.drag?.button else { return event }
             switch event.type {
             case .leftMouseDragged:
-                self.continueDrag(button, with: event, source: "monitor")
+                self.continueDrag(button, toWindowLocation: event.locationInWindow, source: "monitor")
                 return event
             case .leftMouseUp:
                 self.endDrag(commit: true, source: "monitor")
@@ -1055,16 +1224,20 @@ extension TabStripView: TabButtonDragDelegate {
     /// conditional on midpoints already crossed, so handling the same event
     /// twice lands on exactly the same state as handling it once.
     func tabButton(_ button: TabButtonView, didDragWith event: NSEvent) {
-        continueDrag(button, with: event, source: "view")
+        continueDrag(button, toWindowLocation: event.locationInWindow, source: "view")
     }
 
     func tabButton(_ button: TabButtonView, didEndDragWith event: NSEvent) {
         endDrag(commit: true, source: "view")
     }
 
-    private func continueDrag(_ button: TabButtonView, with event: NSEvent, source: String) {
+    private func continueDrag(_ button: TabButtonView, toWindowLocation location: NSPoint, source: String) {
         guard let session = drag, session.button === button else { return }
-        let point = itemHost.convert(event.locationInWindow, from: nil)
+        drag?.lastLocationInWindow = location
+        // In document coordinates, so a scroll since mouse-down -- the
+        // auto-scroll below -- counts as travel and keeps the pill under
+        // the pointer while the row slides beneath it.
+        let point = itemHost.convert(location, from: nil)
         let delta = NSSize(width: point.x - session.startPoint.x, height: point.y - session.startPoint.y)
         // Vertical rows travel on y, but a pinned tile in the sidebar's grid
         // travels on both axes, so the threshold there is plain distance
@@ -1094,6 +1267,7 @@ extension TabStripView: TabButtonDragDelegate {
         let itemIndex = isVertical
             ? moveVertically(button, session: session, delta: delta, frames: frames)
             : moveHorizontally(button, session: session, deltaX: delta.width, frames: frames)
+        updateAutoScroll()
 
         guard itemIndex != session.itemIndex else { return }
         drag?.itemIndex = itemIndex
@@ -1203,14 +1377,24 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        stopAutoScroll()
+        let revealSelection = revealsSelectionAfterDrag
+        revealsSelectionAfterDrag = false
         TabDragDiagnostics.record("endDrag", [
             "source": source, "commit": commit,
-            "tabIndex": session.button.index, "didMove": session.didMove
+            "tabIndex": session.button.index, "didMove": session.didMove,
+            "startScrollX": Double(session.startScrollOrigin.x),
+            "startScrollY": Double(session.startScrollOrigin.y),
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
         ])
 
-        // A click that never moved needs nothing: selection already happened
-        // on mouse-down, and no view left its slot.
-        guard session.didMove else { return }
+        // A click that never moved needs nothing more: selection already
+        // happened on mouse-down, and no view left its slot.
+        guard session.didMove else {
+            if revealSelection { scrollSelectionIntoView() }
+            return
+        }
         if !commit {
             stripItems = session.originalItems
         }
@@ -1241,7 +1425,9 @@ extension TabStripView: TabButtonDragDelegate {
                 item.view.animator().frame = frames[position]
             }
         }, completionHandler: { [weak self] in
-            guard let self, commit, destination != sourceIndex else { return }
+            guard let self else { return }
+            if revealSelection { self.scrollSelectionIntoView() }
+            guard commit, destination != sourceIndex else { return }
             // A reload during the settle animation means these indices
             // describe an order the model has already left behind -- the
             // reload's own layout is authoritative, so drop the move.
@@ -1259,6 +1445,86 @@ extension TabStripView: TabButtonDragDelegate {
         })
     }
 
+    // MARK: Auto-scroll
+
+    /// How fast, in points per second, the strip should scroll for a pointer
+    /// at `location` (window coordinates): negative toward the start,
+    /// positive toward the end, zero away from both edges. Along x for the
+    /// row and y for the sidebar, whose document is flipped, so "toward the
+    /// start" is up there.
+    private func autoScrollSpeed(at location: NSPoint) -> CGFloat {
+        let point = itemHost.convert(location, from: nil)
+        let visible = itemHost.visibleRect
+        guard !visible.isEmpty else { return 0 }
+        let position = isVertical ? point.y : point.x
+        let start = isVertical ? visible.minY : visible.minX
+        let end = isVertical ? visible.maxY : visible.maxX
+        let zone = min(Self.autoScrollEdgeZone, (end - start) / 4)
+        guard zone > 0 else { return 0 }
+        if position < start + zone {
+            return -Self.autoScrollMaxSpeed * min(1, (start + zone - position) / zone)
+        }
+        if position > end - zone {
+            return Self.autoScrollMaxSpeed * min(1, (position - (end - zone)) / zone)
+        }
+        return 0
+    }
+
+    /// Starts or stops the auto-scroll timer for the drag's latest pointer
+    /// location. A timer on the main run loop rather than a tracking loop,
+    /// for the same reason the drag itself is a monitor: BRWMessagePump
+    /// drives the engine off that run loop, and holding the pointer still at
+    /// the edge sends no events to scroll from.
+    private func updateAutoScroll() {
+        guard let session = drag, session.didMove,
+              autoScrollSpeed(at: session.lastLocationInWindow) != 0 else {
+            stopAutoScroll()
+            return
+        }
+        guard autoScrollTimer == nil else { return }
+        autoScrollLastTick = ProcessInfo.processInfo.systemUptime
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            self?.autoScrollTick()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autoScrollTimer = timer
+        TabDragDiagnostics.record("autoScrollStart", [
+            "tabIndex": session.button.index,
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
+        ])
+    }
+
+    private func autoScrollTick() {
+        guard let session = drag, session.didMove else {
+            stopAutoScroll()
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        // Capped, so a stalled run loop does not jump the strip on resume.
+        let elapsed = min(now - autoScrollLastTick, 0.05)
+        autoScrollLastTick = now
+        let speed = autoScrollSpeed(at: session.lastLocationInWindow)
+        guard speed != 0 else {
+            stopAutoScroll()
+            return
+        }
+        let step = speed * CGFloat(elapsed)
+        let moved = scrollView.scrollDocument(by: isVertical ? NSPoint(x: 0, y: step) : NSPoint(x: step, y: 0))
+        guard moved != .zero else { return }
+        continueDrag(session.button, toWindowLocation: session.lastLocationInWindow, source: "autoscroll")
+    }
+
+    private func stopAutoScroll() {
+        guard let timer = autoScrollTimer else { return }
+        timer.invalidate()
+        autoScrollTimer = nil
+        TabDragDiagnostics.record("autoScrollStop", [
+            "scrollX": Double(scrollView.contentView.bounds.minX),
+            "scrollY": Double(scrollView.contentView.bounds.minY)
+        ])
+    }
+
     /// Drops drag state without touching any view -- for when the buttons the
     /// drag refers to are about to stop existing (see reload).
     private func abandonDrag() {
@@ -1267,5 +1533,8 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        stopAutoScroll()
+        // Every caller reloads, which scrolls to the selection itself.
+        revealsSelectionAfterDrag = false
     }
 }
