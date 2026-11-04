@@ -481,20 +481,39 @@ final class TabStripView: NSView {
     /// a tab that stays out of sight -- the strip would be showing a
     /// selection nobody can see. A no-op whenever the tab is already visible.
     private func scrollSelectionIntoView() {
-        guard let button = tabButton(forTabIndex: selectedIndex) else { return }
+        guard tabButton(forTabIndex: selectedIndex) != nil else { return }
         // Deferred: a selection change usually arrives with a reload, whose
         // layout (and therefore this tab's real frame) has not run yet.
         DispatchQueue.main.async { [weak self] in
-            guard let self, button.superview != nil else { return }
+            guard let self else { return }
+            // A press on a tab selects it before its drag is armed, so this
+            // usually lands just after mouse-down. Scrolling then would slide
+            // the row under a pointer that has not moved, and the drag reads
+            // that as travel: a one-pixel wobble after clicking a tab half
+            // off the edge would reorder it. Wait for the mouse to come up.
+            guard self.drag == nil else {
+                self.revealsSelectionAfterDrag = true
+                return
+            }
             self.layoutSubtreeIfNeeded()
-            let frame = button.convert(button.bounds, to: self.stripContentView)
-            // Padded so the tab does not end up flush against the strip's
-            // edge -- or, in the sidebar, the New Tab band below it.
-            let padded = self.isVertical
-                ? frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2)
-                : frame.insetBy(dx: -Self.sidePadding, dy: 0)
-            self.stripContentView.scrollToVisible(padded)
+            self.revealSelection()
         }
+    }
+
+    /// Set while a drag holds back scrollSelectionIntoView.
+    private var revealsSelectionAfterDrag = false
+
+    /// The synchronous half of scrollSelectionIntoView, for callers whose
+    /// layout has already run.
+    private func revealSelection() {
+        guard let button = tabButton(forTabIndex: selectedIndex), button.superview != nil else { return }
+        let frame = button.convert(button.bounds, to: stripContentView)
+        // Padded so the tab does not end up flush against the strip's
+        // edge -- or, in the sidebar, the New Tab band below it.
+        let padded = isVertical
+            ? frame.insetBy(dx: 0, dy: -Self.verticalRowHeight / 2)
+            : frame.insetBy(dx: -Self.sidePadding, dy: 0)
+        stripContentView.scrollToVisible(padded)
     }
 
     /// ⌘W on a pinned active tab is a no-op (see BrowserWindowController.
@@ -1239,14 +1258,19 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        let revealSelection = revealsSelectionAfterDrag
+        revealsSelectionAfterDrag = false
         TabDragDiagnostics.record("endDrag", [
             "source": source, "commit": commit,
             "tabIndex": session.button.index, "didMove": session.didMove
         ])
 
-        // A click that never moved needs nothing: selection already happened
-        // on mouse-down, and no view left its slot.
-        guard session.didMove else { return }
+        // A click that never moved needs nothing more: selection already
+        // happened on mouse-down, and no view left its slot.
+        guard session.didMove else {
+            if revealSelection { scrollSelectionIntoView() }
+            return
+        }
         if !commit {
             stripItems = session.originalItems
         }
@@ -1277,7 +1301,9 @@ extension TabStripView: TabButtonDragDelegate {
                 item.view.animator().frame = frames[position]
             }
         }, completionHandler: { [weak self] in
-            guard let self, commit, destination != sourceIndex else { return }
+            guard let self else { return }
+            if revealSelection { self.scrollSelectionIntoView() }
+            guard commit, destination != sourceIndex else { return }
             // A reload during the settle animation means these indices
             // describe an order the model has already left behind -- the
             // reload's own layout is authoritative, so drop the move.
@@ -1303,5 +1329,7 @@ extension TabStripView: TabButtonDragDelegate {
             NSEvent.removeMonitor(monitor)
         }
         drag = nil
+        // Every caller reloads, which scrolls to the selection itself.
+        revealsSelectionAfterDrag = false
     }
 }
