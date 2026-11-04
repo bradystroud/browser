@@ -22,6 +22,18 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let homepageHelpLabel = SettingsForm.footnote()
     private var homepageHelpRow: NSGridRow?
 
+    /// Tab layout: across the top, down the side, or the sidebar layout,
+    /// plus the sidebar layout's edge (only shown while it is the choice).
+    private let tabLayoutPopup = NSPopUpButton()
+    private let sidebarEdgePopup = NSPopUpButton()
+    private var sidebarEdgeRow: NSGridRow?
+    private let tabLayoutHelpLabel = SettingsForm.footnote()
+    private var observers: [NSObjectProtocol] = []
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
     private let modePopup = NSPopUpButton()
     private let helpLabel = SettingsForm.footnote()
 
@@ -85,6 +97,8 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         homepageField.stringValue = HomepagePreference.homepage
         updateHomepageRow()
 
+        updateTabLayoutRows()
+
         let current = OmniboxDisplayPreference.current
         if let index = OmniboxDisplayMode.allCases.firstIndex(of: current) {
             modePopup.selectItem(at: index)
@@ -142,6 +156,27 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let homepageRow = form.addRow(SettingsForm.label("Homepage:"), [homepageField, setToCurrentPageButton])
         homepageRow.cell(at: 1).xPlacement = .fill
         homepageHelpRow = form.addFootnote(homepageHelpLabel)
+
+        form.beginSection()
+        for layout in TabStripOrientation.allCases {
+            tabLayoutPopup.menu?.addItem(NSMenuItem(title: layout.layoutTitle, action: nil, keyEquivalent: ""))
+        }
+        tabLayoutPopup.target = self
+        tabLayoutPopup.action = #selector(tabLayoutChanged)
+        form.addRow("Tab layout:", tabLayoutPopup)
+        for edge in SidebarEdge.allCases {
+            sidebarEdgePopup.menu?.addItem(NSMenuItem(title: edge.title, action: nil, keyEquivalent: ""))
+        }
+        sidebarEdgePopup.target = self
+        sidebarEdgePopup.action = #selector(sidebarEdgeChanged)
+        sidebarEdgeRow = form.addRow("Sidebar position:", sidebarEdgePopup)
+        form.addFootnote(tabLayoutHelpLabel)
+        // The View menu changes these too, while this pane may be open.
+        for name in [Notification.Name.tabStripOrientationDidChange, .sidebarLayoutPreferenceDidChange] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.updateTabLayoutRows()
+            })
+        }
 
         form.beginSection()
         for mode in OmniboxDisplayMode.allCases {
@@ -366,6 +401,46 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let engine = Self.engineOrder[index]
         EnginePreference.current = engine
         updateEngineHelpText(for: engine)
+    }
+
+    @objc private func tabLayoutChanged() {
+        let layouts = TabStripOrientation.allCases
+        let index = tabLayoutPopup.indexOfSelectedItem
+        guard layouts.indices.contains(index) else { return }
+        TabStripOrientationPreference.choose(layouts[index])
+        updateTabLayoutRows()
+    }
+
+    @objc private func sidebarEdgeChanged() {
+        let edges = SidebarEdge.allCases
+        let index = sidebarEdgePopup.indexOfSelectedItem
+        guard edges.indices.contains(index) else { return }
+        SidebarLayoutPreference.edge = edges[index]
+    }
+
+    private func updateTabLayoutRows() {
+        let layout = TabStripOrientationPreference.current
+        if let index = TabStripOrientation.allCases.firstIndex(of: layout) {
+            tabLayoutPopup.selectItem(at: index)
+        }
+        if let index = SidebarEdge.allCases.firstIndex(of: SidebarLayoutPreference.edge) {
+            sidebarEdgePopup.selectItem(at: index)
+        }
+        let wasHidden = sidebarEdgeRow?.isHidden
+        sidebarEdgeRow?.isHidden = layout != .sidebar
+        let help: String
+        switch layout {
+        case .horizontal:
+            help = "Tabs run in a row under the toolbar."
+        case .vertical:
+            help = "Tabs run down a sidebar beside the page, under the toolbar."
+        case .sidebar:
+            help = "One sidebar holds the address bar, pinned sites, tab groups, tabs and your profile, with no toolbar. Press ⌃⌘S to hide it; while it is hidden, move the pointer to that edge of the window to bring it back."
+        }
+        if tabLayoutHelpLabel.stringValue != help || wasHidden != sidebarEdgeRow?.isHidden {
+            tabLayoutHelpLabel.stringValue = help
+            helpTextDidChange()
+        }
     }
 
     @objc private func modeChanged() {

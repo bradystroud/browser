@@ -277,7 +277,9 @@ final class ExtensionWindowHandle: ExtensionHostWindow {
     func extensionClose() { controller?.window?.performClose(nil) }
 
     func extensionPopupAnchor(forExtension id: String) -> NSView? {
-        (controller?.window as? BrowserWindow)?.extensionsToolbar.anchor(forExtension: id)
+        guard let controller, let view = (controller.window as? BrowserWindow)?.extensionsToolbar.anchor(forExtension: id)
+        else { return nil }
+        return controller.popoverAnchor(for: view)
     }
 }
 

@@ -311,6 +311,9 @@ final class MainMenuBuilder {
             action: #selector(BrowserWindowController.toggleAlwaysShowTabBar(_:)),
             keyEquivalent: ""
         )
+        let tabLayoutItem = NSMenuItem(title: "Tab Layout", action: nil, keyEquivalent: "")
+        tabLayoutItem.submenu = TabLayoutMenuTarget.shared.makeMenu()
+        menu.addItem(tabLayoutItem)
         menu.addItem(.separator())
         responsiveDesignModeItem.submenu = responsiveDesignModeMenu()
         menu.addItem(responsiveDesignModeItem)

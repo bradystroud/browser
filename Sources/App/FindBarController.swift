@@ -78,13 +78,13 @@ final class FindBarController: NSObject, NSTextFieldDelegate {
 
     // MARK: - View setup
 
-    /// Top-right of the page area. The page area's trailing edge is always
-    /// the window's (the vertical tab sidebar sits on the leading side), so
-    /// only its top edge needs asking for.
+    /// Top-right of the page area, wherever that is -- the sidebar layout
+    /// insets the page and can put its sidebar on the right.
     private func barFrame(in contentView: NSView) -> NSRect {
         let contentAreaTopY = windowController?.contentAreaTopY ?? contentView.bounds.height
+        let contentAreaMaxX = windowController?.contentAreaMaxX ?? contentView.bounds.width
         return NSRect(
-            x: contentView.bounds.width - Self.barWidth - Self.edgeMargin,
+            x: contentAreaMaxX - Self.barWidth - Self.edgeMargin,
             y: contentAreaTopY - Self.barHeight - Self.edgeMargin,
             width: Self.barWidth,
             height: Self.barHeight

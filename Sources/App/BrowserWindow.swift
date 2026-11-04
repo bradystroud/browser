@@ -38,6 +38,11 @@ final class BrowserWindow: NSWindow {
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         DevBuildIndicator.attach(to: self)
+        for name in [NSWindow.willEnterFullScreenNotification, NSWindow.didEnterFullScreenNotification,
+                     NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(fullScreenStateDidChange(_:)), name: name, object: self)
+        }
         readerMode.attach(to: self)
         downloadsToolbar.attach(to: self)
         ExtensionsCoordinator.shared.activate()
@@ -73,6 +78,45 @@ final class BrowserWindow: NSWindow {
         didSet { positionTrafficLights() }
     }
 
+    /// Which edge the traffic lights hug. `.trailingColumn` puts them at the
+    /// top of a column of that width against the window's trailing edge --
+    /// the sidebar layout with its sidebar on the right, where the lights
+    /// would otherwise sit over the page.
+    enum TrafficLightAnchor: Equatable {
+        case leading
+        case trailingColumn(width: CGFloat)
+    }
+
+    var trafficLightAnchor: TrafficLightAnchor = .leading {
+        didSet {
+            guard oldValue != trafficLightAnchor else { return }
+            positionTrafficLights()
+        }
+    }
+
+    /// Hides the traffic lights outright: the sidebar layout with its sidebar
+    /// hidden has nothing but the page under them. Ignored in full screen,
+    /// where the lights live in the menu-bar reveal rather than over the
+    /// page, and the green one is the way back out.
+    var hidesTrafficLights = false {
+        didSet {
+            guard oldValue != hidesTrafficLights else { return }
+            applyTrafficLightVisibility()
+        }
+    }
+
+    private func applyTrafficLightVisibility() {
+        let hidden = hidesTrafficLights && !styleMask.contains(.fullScreen)
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = standardWindowButton(type), button.isHidden != hidden else { continue }
+            button.isHidden = hidden
+        }
+    }
+
+    @objc private func fullScreenStateDidChange(_ notification: Notification) {
+        applyTrafficLightVisibility()
+    }
+
     /// The traffic lights' trailing edge, in window coordinates, once moved:
     /// where the toolbar's leading controls may begin.
     var trafficLightsMaxX: CGFloat {
@@ -90,6 +134,7 @@ final class BrowserWindow: NSWindow {
     override func layoutIfNeeded() {
         super.layoutIfNeeded()
         positionTrafficLights()
+        applyTrafficLightVisibility()
     }
 
     /// Puts the traffic lights on the toolbar row's centre line, the close
@@ -125,6 +170,13 @@ final class BrowserWindow: NSWindow {
         let buttons = [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton]
             .compactMap { standardWindowButton($0) }
         let closeMinX = close.frame.minX
+        let leadingX: CGFloat
+        switch trafficLightAnchor {
+        case .leading:
+            leadingX = ChromeMetrics.edgeInset
+        case .trailingColumn(let width):
+            leadingX = themeFrame.bounds.width - width + ChromeMetrics.edgeInset
+        }
         var moved = false
         for button in buttons {
             let height = button.frame.height
@@ -132,7 +184,7 @@ final class BrowserWindow: NSWindow {
                 ? centre - height / 2
                 : titlebarView.bounds.height - centre - height / 2
             let origin = NSPoint(
-                x: ChromeMetrics.edgeInset + (button.frame.minX - closeMinX),
+                x: leadingX + (button.frame.minX - closeMinX),
                 y: y.rounded())
             if button.frame.origin != origin {
                 button.setFrameOrigin(origin)

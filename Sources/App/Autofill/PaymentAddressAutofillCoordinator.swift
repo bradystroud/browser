@@ -317,7 +317,7 @@ final class PaymentAddressAutofillCoordinator: NSObject, TabLifecycleObserver {
     }
 
     private static func anchorFrame(in contentView: NSView, controller: BrowserWindowController) -> NSRect {
-        NSRect(x: contentView.bounds.width / 2 - 150, y: controller.contentAreaTopY, width: 300, height: 1)
+        NSRect(x: controller.contentAreaMidX - 150, y: controller.contentAreaTopY, width: 300, height: 1)
     }
 
     // MARK: - Fill icon

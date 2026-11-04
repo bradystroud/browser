@@ -73,6 +73,18 @@ final class TabButtonView: NSView {
         }
     }
 
+    /// The tint laid over the window background behind this button, when
+    /// the window knows it -- the sidebar layout's profile colour. nil means
+    /// the chrome carries the active tab's theme colour, which backdropColor
+    /// then predicts from themeColorHex.
+    var backdropTint: NSColor? {
+        didSet {
+            guard oldValue != backdropTint else { return }
+            needsDisplay = true
+            updateSelectionAppearance()
+        }
+    }
+
     var isSelected = false {
         didSet {
             guard oldValue != isSelected else { return }
@@ -746,11 +758,15 @@ final class TabButtonView: NSView {
     private static let titleTargetContrast: CGFloat = 4.5
 
     /// The color of the surface *behind* this pill: the chrome glass, which
-    /// carries the active tab's theme color at chromeThemeTintAlpha. Only
+    /// carries backdropTint when the window gives one, and otherwise the
+    /// active tab's theme color at chromeThemeTintAlpha. Only
     /// meaningful for the selected button, which is the one whose own
     /// themeColorHex *is* the active tab's -- and the only one that asks.
     private var backdropColor: NSColor {
         let base = NSColor.windowBackgroundColor.resolvedSRGB(for: effectiveAppearance)
+        if let backdropTint {
+            return backdropTint.withAlphaComponent(1).composited(alpha: backdropTint.alphaComponent, over: base)
+        }
         guard let hex = themeColorHex, let theme = NSColor(hex: hex) else { return base }
         return theme.composited(alpha: Self.chromeThemeTintAlpha, over: base)
     }

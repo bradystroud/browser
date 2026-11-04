@@ -61,6 +61,7 @@ set(BROWSER_SWIFT_SRCS
   HomepagePreference.swift
   SearchEnginePreference.swift
   TabStripOrientationPreference.swift
+  SidebarChrome.swift
   PageZoom.swift
   WindowToast.swift
   EscapeDismissal.swift
