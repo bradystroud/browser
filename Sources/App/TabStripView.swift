@@ -378,6 +378,20 @@ final class TabStripView: NSView {
         tabButton(forTabIndex: index)?.setFavicon(image)
     }
 
+    /// What the window tints the surface behind the strip with, when that is
+    /// not the active tab's theme colour (the sidebar layout's profile
+    /// colour); nil otherwise. Every button measures its selected-pill
+    /// contrast against it.
+    var backdropTint: NSColor? {
+        didSet {
+            guard oldValue != backdropTint else { return }
+            for item in stripItems {
+                if case .tab(let button) = item { button.backdropTint = backdropTint }
+            }
+            reportSelectionContrastIfRequested()
+        }
+    }
+
     /// Cheaper than a full reload -- see updateTitle. `nil` clears the tint
     /// (see TabButtonView.draw(_:) -- only ever visible when this button is
     /// also selected, but harmless to set unconditionally).
@@ -480,6 +494,7 @@ final class TabStripView: NSView {
             button.isPinned = info.isPinned
             button.groupId = info.groupId
             button.themeColorHex = info.themeColorHex
+            button.backdropTint = backdropTint
             button.isMuted = info.isMuted
             button.isAudible = info.isAudible
             button.isLoading = info.isLoading
