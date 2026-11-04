@@ -91,7 +91,9 @@ final class HandoffCoordinator: TabLifecycleObserver {
     /// windows, which is right for routing links but wrong here.
     private func frontmostBrowserWindowController() -> BrowserWindowController? {
         for window in NSApp.orderedWindows where window.isVisible {
+            // An agent's page is not the user's to hand off.
             if let controller = window.windowController as? BrowserWindowController,
+               !WindowManager.shared.isAgentOwned(controller),
                WindowManager.shared.windowControllers.contains(where: { $0 === controller }) {
                 return controller
             }

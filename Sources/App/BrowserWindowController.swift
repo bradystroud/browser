@@ -30,6 +30,51 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// Set by WindowManager so it can drop this controller from its list.
     var onWindowClosed: (() -> Void)?
 
+    /// How a window an agent opened with `browser page open` is shown. It
+    /// never becomes key, so it never takes the user's typing. A headless
+    /// one sits off every screen, out of the Window menu and Mission
+    /// Control; the page keeps working, as WebKit keeps painting agent
+    /// pages (see WebKitAutomation.prepare).
+    enum AgentPresentation {
+        case headed
+        case headless
+    }
+
+    /// nil for every window the user opened. An agent's window keeps one
+    /// layout for its whole life -- the horizontal strip, always shown --
+    /// whatever the user's layout preferences, so its page is never
+    /// resized under the agent by a sidebar revealing on hover, a layout
+    /// toggle, or a second tab bringing the strip in. Its tabs also never
+    /// move engine (see holdsTabEngines).
+    var agentPresentation: AgentPresentation? {
+        didSet {
+            guard agentPresentation != nil, tabStripOrientation != .horizontal else { return }
+            tabStripOrientation = .horizontal
+            applyChromeLayout()
+        }
+    }
+
+    /// Moves an agent's window on or off screen without making it key or
+    /// activating the app.
+    func present(_ presentation: AgentPresentation) {
+        agentPresentation = presentation
+        guard let window else { return }
+        switch presentation {
+        case .headless:
+            let screens = NSScreen.screens.map(\.frame).reduce(CGRect.null) { $0.union($1) }
+            let left = screens.isNull ? 0 : screens.minX
+            window.setFrameOrigin(NSPoint(x: left - window.frame.width - 2000, y: screens.isNull ? 0 : screens.minY))
+            window.isExcludedFromWindowsMenu = true
+            window.collectionBehavior.insert(.transient)
+            window.orderBack(nil)
+        case .headed:
+            window.isExcludedFromWindowsMenu = false
+            window.collectionBehavior.remove(.transient)
+            window.setFrame(WindowManager.frameOnAVisibleScreen(window.frame), display: true)
+            window.orderFront(nil)
+        }
+    }
+
     private let initialURL: String
 
     private let tabStripView = TabStripView(frame: .zero)
@@ -455,6 +500,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if CommandLineArgs.testNoActivate() {
             window?.setFrameOrigin(NSPoint(x: -3000, y: -3000))
             window?.orderBack(nil)
+        } else if let agentPresentation {
+            present(agentPresentation)
         } else {
             window?.makeKeyAndOrderFront(nil)
         }
@@ -601,7 +648,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         NotificationCenter.default.addObserver(
             forName: .tabStripOrientationDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self else { return }
+            guard let self, self.agentPresentation == nil else { return }
             let updated = TabStripOrientationPreference.current
             guard updated != self.tabStripOrientation else { return }
             self.tabStripOrientation = updated
@@ -618,7 +665,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// single tab (pinned or not, popup or not) unless View > Always Show Tab
     /// Bar is on. Meaningless in vertical mode, where the sidebar always shows.
     private var shouldShowHorizontalTabStrip: Bool {
-        AlwaysShowTabBarPreference.isEnabled || tabs.count > 1
+        agentPresentation != nil || AlwaysShowTabBarPreference.isEnabled || tabs.count > 1
     }
 
     /// What applyChromeLayout last laid the horizontal strip out as, so a
@@ -1984,6 +2031,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     // MARK: - TabDelegate
 
+    func tabHoldsEngine(_ tab: Tab) -> Bool {
+        agentPresentation != nil
+    }
+
     func tabDidChangeDisplayState(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0 === tab }) else {
             linkPeek.peekedTabDidChangeDisplayState(tab)
@@ -2178,6 +2229,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     }
 
     @objc func focusOmnibox(_ sender: Any?) {
+        // An agent's window is never typed in by the user, and a focused
+        // omnibox would make ordering it on screen (`page show`) unsafe --
+        // see AGENTS.md on the omnibox's remote completion view.
+        guard agentPresentation == nil else { return }
         siteCard.close()
         // Put the full, editable URL in before taking focus: once the field
         // editor exists, controlTextDidBeginEditing deliberately leaves the
@@ -2673,20 +2728,28 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// wouldn't be Swift-owned (no toolbar/tab strip/session-restore/quit-
     /// sequencing integration).
     func tab(_ tab: Tab, didRequestNewWindowForURL url: String) {
+        // An agent's page keeps everything it opens in its own window: a new
+        // window would be the user's, and would take focus.
+        if agentPresentation != nil {
+            self.tab(tab, didRequestNewTabForURL: url, foreground: true)
+            return
+        }
         if linkPeek.takeNewWindowRequest(url: url, from: tab) { return }
         WindowManager.shared.openNewWindow(profile: profile, initialURL: url, isPrivate: isPrivate)
     }
 
     /// An engine-created popup, already loading and linked to `tab` as its
-    /// opener. Placed exactly where a URL-only request would have put it.
+    /// opener. Placed exactly where a URL-only request would have put it --
+    /// except that an agent's window takes a would-be new window as its
+    /// visible tab, as with didRequestNewWindowForURL.
     func tab(_ tab: Tab, didOpenPopup popup: Tab, inNewWindow: Bool, foreground: Bool) {
-        if inNewWindow {
+        if inNewWindow, agentPresentation == nil {
             if linkPeek.takePopup(popup, from: tab) { return }
             WindowManager.shared.openNewWindow(profile: profile, adoptingPopup: popup, isPrivate: isPrivate)
             return
         }
         let index = tabs.firstIndex(where: { $0 === tab }).map { insertionIndex(afterOpenerAt: $0) } ?? tabs.count
-        insert(popup, makeActive: foreground, at: index, focusOmnibox: false)
+        insert(popup, makeActive: foreground || inNewWindow, at: index, focusOmnibox: false)
     }
 
     /// window.close() from the page. Closes only that tab; the window goes

@@ -48,7 +48,7 @@ extension BrowserWindowController {
 
     /// Titles and enables the two View menu items for the active tab.
     func validateEngineMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        guard let tab = activeTab else { return false }
+        guard let tab = activeTab, !tab.holdsEngine else { return false }
         let other = tab.engine.other.displayName
         if menuItem.action == #selector(reopenInOtherEngine(_:)) {
             menuItem.title = "Reopen in \(other)"

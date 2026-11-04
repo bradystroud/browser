@@ -8,6 +8,19 @@ final class WindowManager {
 
     private(set) var windowControllers: [BrowserWindowController] = []
 
+    /// Windows an agent opened with `browser page open`. They belong to the
+    /// agent until it closes them: a routed link never lands in one, and
+    /// the session never saves one.
+    private let agentOwnedControllers = NSHashTable<BrowserWindowController>.weakObjects()
+
+    func markAgentOwned(_ controller: BrowserWindowController) {
+        agentOwnedControllers.add(controller)
+    }
+
+    func isAgentOwned(_ controller: BrowserWindowController) -> Bool {
+        agentOwnedControllers.contains(controller)
+    }
+
     private init() {}
 
     /// `initialURL` defaults to whatever the user's "New windows open with"
@@ -23,10 +36,16 @@ final class WindowManager {
     func openNewWindow(
         profile: Profile,
         initialURL: String = HomepagePreference.newWindowURL,
-        isPrivate: Bool = false
+        isPrivate: Bool = false,
+        activateApp: Bool = true,
+        agentPresentation: BrowserWindowController.AgentPresentation? = nil
     ) -> BrowserWindowController {
         let controller = BrowserWindowController(profile: profile, initialURL: initialURL, isPrivate: isPrivate)
-        registerAndShow(controller)
+        if let agentPresentation {
+            markAgentOwned(controller)
+            controller.agentPresentation = agentPresentation
+        }
+        registerAndShow(controller, activateApp: activateApp)
         return controller
     }
 
@@ -84,7 +103,8 @@ final class WindowManager {
         _ controller: BrowserWindowController,
         restoring tabs: [SessionSnapshot.Tab] = [],
         groups: [SessionSnapshot.Group] = [],
-        activeIndex: Int = 0
+        activeIndex: Int = 0,
+        activateApp: Bool = true
     ) {
         windowControllers.append(controller)
         controller.onWindowClosed = { [weak self, weak controller] in
@@ -105,17 +125,20 @@ final class WindowManager {
         // omnibox failing to end up focused/selected with this ordering
         // reversed.
         //
-        // Skipped under --test-no-activate: activating steals real keyboard
-        // focus on the actual display, which is exactly what that flag exists
-        // to avoid for contained test launches -- see CommandLineArgs.
-        if !CommandLineArgs.testNoActivate() {
+        // Skipped for a window an agent opens (`activateApp: false`), and
+        // under --test-no-activate inside AppActivation: activating steals
+        // real keyboard focus on the actual display.
+        if activateApp {
             AppActivation.activate()
         }
         controller.show(restoring: tabs, groups: groups, activeIndex: activeIndex)
     }
 
     var keyBrowserWindowController: BrowserWindowController? {
-        (NSApp.keyWindow?.windowController as? BrowserWindowController) ?? windowControllers.last
+        // An agent's window never becomes key, and the fallback skips it
+        // too: a menu command or bookmark the user picks must not land there.
+        (NSApp.keyWindow?.windowController as? BrowserWindowController)
+            ?? windowControllers.last { !isAgentOwned($0) }
     }
 
     /// The frontmost open window belonging to `profileId`, if any -- used by
@@ -128,6 +151,7 @@ final class WindowManager {
         for window in NSApp.orderedWindows {
             if let controller = window.windowController as? BrowserWindowController,
                controller.profile.id == profileId,
+               !isAgentOwned(controller),
                windowControllers.contains(where: { $0 === controller }) {
                 return controller
             }
@@ -144,6 +168,7 @@ final class WindowManager {
         for window in NSApp.orderedWindows {
             if let controller = window.windowController as? BrowserWindowController,
                !controller.isPrivate,
+               !isAgentOwned(controller),
                windowControllers.contains(where: { $0 === controller }) {
                 return controller
             }
@@ -211,7 +236,7 @@ final class WindowManager {
             // Private Browsing (browser-12m.1): never persisted, so there's
             // nothing to restore on next launch either -- consistent with
             // "closing a private window discards everything."
-            guard !controller.isPrivate else { return nil }
+            guard !controller.isPrivate, !isAgentOwned(controller) else { return nil }
             let tabs = controller.tabs.map(\.sessionSnapshot)
             guard !tabs.isEmpty, let frame = controller.window?.frame else { return nil }
             let groups = controller.tabGroups.map {

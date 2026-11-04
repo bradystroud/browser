@@ -62,6 +62,16 @@ protocol TabDelegate: AnyObject {
     /// The engine's context-menu "Peek Link" -- open `url` in a peek over
     /// this tab (see LinkPeekController).
     func tab(_ tab: Tab, didRequestPeekForURL url: String)
+
+    /// True while `tab` must stay in the engine it is in: no rule, explicit
+    /// load or "Reopen in ..." moves it. An agent's window (`browser page`)
+    /// holds its tabs, because the agent drives the engine tab itself, and a
+    /// move would close it under the agent mid-command.
+    func tabHoldsEngine(_ tab: Tab) -> Bool
+}
+
+extension TabDelegate {
+    func tabHoldsEngine(_ tab: Tab) -> Bool { false }
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -152,6 +162,10 @@ final class Tab: NSObject, EngineTabDelegate {
     /// `siteHost`, except in a private tab, where a rule would write the
     /// site it visited to disk.
     var engineRuleHost: String? { isPrivate ? nil : siteHost }
+
+    /// See TabDelegate.tabHoldsEngine. A tab that holds its engine loads
+    /// every address there, rule or not.
+    var holdsEngine: Bool { delegate?.tabHoldsEngine(self) ?? false }
 
     /// "Reopen in ..." -- the user's own engine choice for this tab, which
     /// rules do not override while it lasts. See EngineSwitchPolicy.
@@ -568,6 +582,10 @@ final class Tab: NSObject, EngineTabDelegate {
     /// sleeping one is: CEF can only create a browser into a view with real
     /// bounds, and the tab is created in `newEngine` when it is next shown.
     func switchEngine(to newEngine: EngineChoice, url: String, override: EngineOverride? = nil) {
+        guard !holdsEngine else {
+            NSLog("Browser: tab %@ holds its engine; not moving it to %@", id.uuidString, newEngine.rawValue)
+            return
+        }
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         NSLog("Browser: tab %@ moving from %@ to %@", id.uuidString, engine.rawValue, newEngine.rawValue)
         if let browser {
@@ -638,7 +656,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// choice of address, so it counts as an explicit load.
     private func engineSwapTarget(forNavigationTo url: String) -> EngineChoice? {
         guard !isPopup, !hasLiveOpenedPopup, !hasActiveDownload, !isOwnStartPage(url),
-              !(isPrivate && hasSentWebRequest) else { return nil }
+              !(isPrivate && hasSentWebRequest), !holdsEngine else { return nil }
         let trigger: EngineNavigationTrigger = isShowingStartPage ? .explicitLoad : .pageNavigation
         let decision = EngineRulesStore.shared.decide(url: url, trigger: trigger, currentEngine: engine, override: engineOverride)
         if decision.clearsOverride { engineOverride = nil }
@@ -654,7 +672,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// -- the same limits as a page's own navigation, see
     /// engineSwapTarget(forNavigationTo:).
     var canMoveEngineForRule: Bool {
-        !isPopup && !hasLiveOpenedPopup && !hasActiveDownload && !isPrivate
+        !isPopup && !hasLiveOpenedPopup && !hasActiveDownload && !isPrivate && !holdsEngine
     }
 
     private static func isWebURL(_ url: String) -> Bool {
@@ -757,7 +775,7 @@ final class Tab: NSObject, EngineTabDelegate {
         if decision.clearsOverride { engineOverride = nil }
         // A private tab that has loaded something keeps its engine (and with
         // it its cookie jar) unless the user asks with "Reopen in ...".
-        if decision.engine != engine, !(isPrivate && hasSentWebRequest) {
+        if decision.engine != engine, !(isPrivate && hasSentWebRequest), !holdsEngine {
             switchEngine(to: decision.engine, url: url)
             return
         }
