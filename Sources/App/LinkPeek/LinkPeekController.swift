@@ -170,6 +170,9 @@ final class LinkPeekController: TabLifecycleObserver {
         covered.hostView.frame = container.bounds
         covered.hostView.autoresizingMask = [.width, .height]
         container.addSubview(covered.hostView, positioned: .below, relativeTo: nil)
+        // A tab that changed engine while covered was left with no engine
+        // tab (Tab.switchEngine creates one only on screen).
+        covered.createBrowserIfNeeded()
     }
 
     private static func snapshot(of view: NSView) -> NSImage? {
