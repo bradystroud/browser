@@ -42,13 +42,39 @@ public struct CLIResponse: Codable {
     /// Populated by `windows`.
     public var windows: [CLIWindowInfo]?
 
+    /// The agent page a `page` command acted on.
+    public var page: CLIPageInfo?
+    /// Populated by `page list`.
+    public var pages: [CLIPageInfo]?
+    /// Populated by `page snapshot`.
+    public var snapshot: CLIPageSnapshot?
+    /// Populated by `page eval`: the expression's JSON value.
+    public var value: CLIJSONValue?
+    /// The element a `page click`/`type`/`hover`/`select` acted on.
+    public var element: CLIPageElement?
+    /// A file or directory `page screenshot`/`page record` wrote.
+    public var path: String?
+    /// Populated by `page record stop`: how many frames were written.
+    public var frameCount: Int?
+    /// What an agent page did on its own during a `page` command: dialogs
+    /// answered and file choosers opened.
+    public var pageEvents: [String]?
+
     public init(
         ok: Bool,
         error: String? = nil,
         message: String? = nil,
         profiles: [CLIProfileInfo]? = nil,
         tabs: [CLITabInfo]? = nil,
-        windows: [CLIWindowInfo]? = nil
+        windows: [CLIWindowInfo]? = nil,
+        page: CLIPageInfo? = nil,
+        pages: [CLIPageInfo]? = nil,
+        snapshot: CLIPageSnapshot? = nil,
+        value: CLIJSONValue? = nil,
+        element: CLIPageElement? = nil,
+        path: String? = nil,
+        frameCount: Int? = nil,
+        pageEvents: [String]? = nil
     ) {
         self.ok = ok
         self.error = error
@@ -56,6 +82,14 @@ public struct CLIResponse: Codable {
         self.profiles = profiles
         self.tabs = tabs
         self.windows = windows
+        self.page = page
+        self.pages = pages
+        self.snapshot = snapshot
+        self.value = value
+        self.element = element
+        self.path = path
+        self.frameCount = frameCount
+        self.pageEvents = pageEvents
     }
 
     public static func failure(_ error: String) -> CLIResponse {
@@ -147,5 +181,130 @@ public struct CLIWindowInfo: Codable {
         self.isPrivate = isPrivate
         self.activeTabTitle = activeTabTitle
         self.activeTabURL = activeTabURL
+    }
+}
+
+/// A window an agent opened with `browser page open` -- the only windows the
+/// `page` commands can reach. `id` is short and stays the same until the
+/// window closes; commands act on that window's visible tab.
+public struct CLIPageInfo: Codable {
+    public let id: String
+    public let profileName: String
+    public let isPrivate: Bool
+    public let url: String
+    public let title: String
+    public let isLoading: Bool
+    /// The window is off screen and out of the Window menu and Mission
+    /// Control; `page show` brings it on screen.
+    public let isHeadless: Bool?
+    /// The engine the page is in ("cef" or "webkit"), picked by the engine
+    /// rules when it opened. An agent's page never changes engine.
+    public let engine: String?
+
+    public init(id: String, profileName: String, isPrivate: Bool, url: String, title: String, isLoading: Bool, isHeadless: Bool? = nil, engine: String? = nil) {
+        self.id = id
+        self.profileName = profileName
+        self.isPrivate = isPrivate
+        self.url = url
+        self.title = title
+        self.isLoading = isLoading
+        self.isHeadless = isHeadless
+        self.engine = engine
+    }
+}
+
+/// What `page snapshot` read: the page's visible text and the elements a
+/// user could act on, each with a `ref` that later commands accept.
+public struct CLIPageSnapshot: Codable {
+    public let url: String
+    public let title: String
+    public let text: String
+    public let textTruncated: Bool
+    public let elements: [CLIPageElement]
+    public let elementsTruncated: Bool
+    public let viewportWidth: Double
+    public let viewportHeight: Double
+
+    public init(url: String, title: String, text: String, textTruncated: Bool, elements: [CLIPageElement], elementsTruncated: Bool, viewportWidth: Double, viewportHeight: Double) {
+        self.url = url
+        self.title = title
+        self.text = text
+        self.textTruncated = textTruncated
+        self.elements = elements
+        self.elementsTruncated = elementsTruncated
+        self.viewportWidth = viewportWidth
+        self.viewportHeight = viewportHeight
+    }
+}
+
+/// One element of a page. `ref` (e.g. "e12") stays bound to the same element
+/// for as long as the document keeps it. A password field never carries a
+/// `value`.
+public struct CLIPageElement: Codable {
+    public let ref: String
+    public let role: String
+    public let name: String
+    public let tag: String
+    public let type: String?
+    public let value: String?
+    public let checked: Bool?
+    public let disabled: Bool?
+    public let inViewport: Bool
+    public let x: Double
+    public let y: Double
+    public let width: Double
+    public let height: Double
+}
+
+/// Any JSON value, so `page eval` can hand back exactly what the page
+/// returned.
+public enum CLIJSONValue: Codable, Equatable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([CLIJSONValue])
+    case object([String: CLIJSONValue])
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? container.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? container.decode([CLIJSONValue].self) {
+            self = .array(value)
+        } else {
+            self = .object(try container.decode([String: CLIJSONValue].self))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null: try container.encodeNil()
+        case .bool(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .string(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        }
+    }
+
+    /// From a JSONSerialization value. Anything it cannot represent is null.
+    public init(foundation value: Any?) {
+        switch value {
+        case nil, is NSNull: self = .null
+        case let number as NSNumber:
+            self = CFGetTypeID(number) == CFBooleanGetTypeID() ? .bool(number.boolValue) : .number(number.doubleValue)
+        case let string as String: self = .string(string)
+        case let array as [Any]: self = .array(array.map { CLIJSONValue(foundation: $0) })
+        case let object as [String: Any]: self = .object(object.mapValues { CLIJSONValue(foundation: $0) })
+        default: self = .null
+        }
     }
 }

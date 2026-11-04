@@ -52,6 +52,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     /// the profile-scoped content below.
     private let stripTrackingParamsCheckbox = NSButton(checkboxWithTitle: "Strip tracking parameters from links (utm_*, fbclid, gclid, …)", target: nil, action: nil)
     private let unshortenLinksCheckbox = NSButton(checkboxWithTitle: "Follow shortened links (t.co, bit.ly, …) before opening", target: nil, action: nil)
+    private let agentControlCheckbox = NSButton(checkboxWithTitle: "Let agents control windows they open with the browser command", target: nil, action: nil)
 
     private var selectedProfile: Profile?
     private var allowlistedHosts: [String] = []
@@ -75,6 +76,7 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
     func reload() {
         stripTrackingParamsCheckbox.state = LinkHandlingPreferences.stripTrackingParams ? .on : .off
         unshortenLinksCheckbox.state = LinkHandlingPreferences.unshortenLinks ? .on : .off
+        agentControlCheckbox.state = AgentControlPreference.isEnabledInSettings ? .on : .off
 
         selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
         loadSettingsForSelectedProfile()
@@ -92,6 +94,13 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
         unshortenLinksCheckbox.action = #selector(unshortenLinksToggled)
         form.addRow("Links:", stripTrackingParamsCheckbox)
         form.addRow(nil, unshortenLinksCheckbox)
+
+        agentControlCheckbox.target = self
+        agentControlCheckbox.action = #selector(agentControlToggled)
+        form.addRow("Agents:", agentControlCheckbox).topPadding = Self.groupGap
+        form.addFootnote(SettingsForm.footnote(
+            "Programs you run can then open a window in any profile, read it, click, type and record it, signed in as you. "
+                + "They can never reach your other windows, or type into a password field."))
 
         form.beginSection()
         profilePopup.target = self
@@ -248,6 +257,10 @@ final class PrivacyPaneController: NSObject, NSTableViewDataSource, NSTableViewD
 
     @objc private func threatWarningToggled() {
         saveThreatWarningSettings()
+    }
+
+    @objc private func agentControlToggled() {
+        AgentControlPreference.isEnabledInSettings = agentControlCheckbox.state == .on
     }
 
     @objc private func stripTrackingParamsToggled() {

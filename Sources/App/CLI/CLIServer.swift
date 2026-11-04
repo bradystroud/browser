@@ -33,9 +33,9 @@ import Darwin
 /// uid is checked as well, since this socket can open arbitrary URLs and
 /// read every open tab's address.
 final class CLIServer {
-    /// How long one client may take to send its request line. The accept
-    /// queue is serial, so without a limit a client that connects and never
-    /// finishes its line would stop every later CLI call from being served.
+    /// How long one client may take to send its request line. Without a
+    /// limit, a client that connects and never finishes its line would hold
+    /// a connection thread for ever.
     private static let receiveTimeoutSeconds = 2
 
     /// A request is one small JSON object. Anything longer is not a real
@@ -47,6 +47,12 @@ final class CLIServer {
     private var listenSocketFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private let queue = DispatchQueue(label: "com.browser.CLIServer")
+    /// Connections are served side by side: a `page wait` can take many
+    /// seconds, and must not hold up a `page record stop` sent meanwhile.
+    private let connectionQueue = DispatchQueue(label: "com.browser.CLIServer.connections", attributes: .concurrent)
+
+    /// The longest one `page` command may take before its client is told so.
+    private static let pageCommandTimeoutSeconds = 600
 
     private init() {}
 
@@ -142,7 +148,7 @@ final class CLIServer {
         // take the app down with SIGPIPE.
         var noSigPipe: Int32 = 1
         setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
-        queue.async { [weak self] in
+        connectionQueue.async { [weak self] in
             self?.handleConnection(fd: clientFD)
         }
     }
@@ -162,6 +168,21 @@ final class CLIServer {
         // `defer` closes its socket. Safe to block here specifically (never
         // on the main thread itself): this queue has no other work the main
         // thread could ever be waiting on.
+        // The `page` commands finish asynchronously (they wait on the engine),
+        // so this thread waits for their completion instead.
+        if request.command.hasPrefix("page-") {
+            let done = DispatchSemaphore(value: 0)
+            var response = CLIResponse.failure("the page command did not finish in time")
+            DispatchQueue.main.async {
+                AgentPages.handle(request) { result in
+                    response = result
+                    done.signal()
+                }
+            }
+            _ = done.wait(timeout: .now() + .seconds(Self.pageCommandTimeoutSeconds))
+            Self.write(response, to: fd)
+            return
+        }
         let response = DispatchQueue.main.sync { CLIServer.handle(request) }
         Self.write(response, to: fd)
     }

@@ -26,7 +26,10 @@ public enum ArgParser {
     /// --profile work` would parse `--profile` as `--new-window`'s value and
     /// then lose the profile entirely. Any new valueless flag must be added
     /// here.
-    static let valuelessFlags: Set<String> = ["new-window", "little"]
+    static let valuelessFlags: Set<String> = [
+        "new-window", "little",
+        "private", "cursor", "no-wait", "gone", "double", "clear", "submit", "full-page", "headless",
+    ]
 
     /// `--json` is a bare switch (no value), as is anything in
     /// `valuelessFlags` (recorded with an empty-string value -- callers test

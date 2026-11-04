@@ -61,13 +61,16 @@ public enum SocketClient {
             throw SocketClientError.malformedResponse
         }
 
+        // A snapshot can run to hundreds of kilobytes, so read in chunks.
         var buffer: [UInt8] = []
-        var byte: UInt8 = 0
-        while true {
-            let n = read(fd, &byte, 1)
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        reading: while true {
+            let n = read(fd, &chunk, chunk.count)
             if n <= 0 { break }
-            if byte == 0x0A { break }
-            buffer.append(byte)
+            for index in 0..<n {
+                if chunk[index] == 0x0A { break reading }
+                buffer.append(chunk[index])
+            }
         }
         guard !buffer.isEmpty, let response = try? JSONDecoder().decode(CLIResponse.self, from: Data(buffer)) else {
             throw SocketClientError.malformedResponse

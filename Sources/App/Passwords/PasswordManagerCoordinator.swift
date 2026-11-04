@@ -370,7 +370,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
     /// notification to hook, and an already-loaded page the user is looking
     /// at still has the key icon as its manual path.
     private func autofillIfNeeded(_ tab: Tab) {
-        guard PasswordAutofillPreference.isAutomaticFillEnabled else { return }
+        guard PasswordAutofillPreference.isAutomaticFillEnabled, !AgentPages.controls(tab) else { return }
         let url = tab.urlString
         guard (autofilledURL.object(forKey: tab) as String?) != url,
               let origin = WebOrigin(urlString: url),

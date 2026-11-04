@@ -248,6 +248,8 @@ set(BROWSER_SWIFT_SRCS
   TabSleep/TabSleepPreferences.swift
   TabSleep/BrowserWindowController+TabSleep.swift
   CLI/CLIServer.swift
+  CLI/AgentPages.swift
+  CLI/AgentPageScript.swift
   Update/UpdateCoordinator.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})

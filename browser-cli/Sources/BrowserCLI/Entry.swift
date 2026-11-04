@@ -65,6 +65,8 @@ struct BrowserCLIEntry {
                 return false
             }
             return WindowCommand.new(args: ArgParser.parse(Array(argv.dropFirst(2))))
+        case "page":
+            return PageCommand.run(argv: Array(argv.dropFirst()))
         case "history":
             guard argv.count >= 2, argv[1] == "search" else {
                 FileHandle.standardError.write(Data("usage: browser history search <query> [--limit N] [--profile <name>]\n".utf8))
@@ -121,6 +123,7 @@ struct BrowserCLIEntry {
           browser tabs [--profile <name>]
           browser history search <query> [--limit N] [--profile <name>]
           browser bookmarks list [--folder <path>] [--profile <name>]
+          browser page <subcommand> ...   (agent control; `browser page help`)
 
         Every command accepts --json for machine-readable output, and
         --profiles-root <path> to target a scratch instance instead of the
