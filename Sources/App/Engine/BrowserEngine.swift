@@ -247,6 +247,8 @@ extension Notification.Name {
 
 protocol EngineTab: AnyObject {
     var delegate: EngineTabDelegate? { get set }
+    /// Agent control for this tab's page, or nil when the engine has none.
+    var automation: EngineTabAutomation? { get }
     /// The process rendering this tab's page, for memory diagnostics. Nil
     /// when the engine can't say (CEF), or the tab has no process yet.
     var contentProcessIdentifier: pid_t? { get }
@@ -393,6 +395,126 @@ protocol EngineTab: AnyObject {
     func respondToPageMessage(requestId: Int64, success: Bool, response: String)
 }
 
+extension EngineTab {
+    /// No agent control (see `EngineCapabilities.agentControl`).
+    var automation: EngineTabAutomation? { nil }
+}
+
+/// Drives one tab's page the way a user would, from inside the engine:
+/// synthetic input reaches the page itself, never the OS, so it never moves
+/// the real pointer, takes keyboard focus or activates the app. Reaches only
+/// the page of the tab it belongs to. Every completion runs on the main
+/// thread.
+protocol EngineTabAutomation: AnyObject {
+    /// Makes the page behave as if its window were focused, so focus, typing
+    /// and caret logic work while the window is in the background.
+    func prepare(completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    /// Evaluates `expression` in the page's main frame, awaiting a promise,
+    /// and returns its JSON-compatible value (nil for undefined or null).
+    func evaluate(_ expression: String, completion: @escaping (Result<Any?, EngineAutomationError>) -> Void)
+    /// Moves the page's own pointer to `point` (CSS pixels from the
+    /// viewport's top-left).
+    func mouseMove(to point: CGPoint, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    /// A left click at `point` (CSS pixels from the viewport's top-left).
+    func click(at point: CGPoint, clickCount: Int, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    /// Scrolls as a wheel turned over `point` would.
+    func scroll(at point: CGPoint, deltaX: Double, deltaY: Double, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    /// Types `text` into whatever has focus, as an input method would.
+    func insertText(_ text: String, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    func pressKey(_ key: EngineAutomationKey, modifiers: EngineAutomationModifiers, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    /// A PNG of the visible page (or the whole document) at device
+    /// resolution.
+    func screenshot(fullPage: Bool, completion: @escaping (Result<Data, EngineAutomationError>) -> Void)
+    /// Starts delivering JPEG frames each time the page repaints, with the
+    /// engine's own timestamp in seconds. One screencast per tab at a time.
+    func startScreencast(quality: Int, onFrame: @escaping (_ jpeg: Data, _ timestamp: TimeInterval) -> Void, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
+    func stopScreencast()
+    /// Answers the page's JavaScript dialogs and file choosers in place of
+    /// the user, so none is shown and none blocks the page. nil shows them
+    /// as usual. An engine that cannot intercept them ignores it.
+    var dialogHandler: ((EngineAutomationDialog) -> EngineAutomationDialogAnswer)? { get set }
+}
+
+extension EngineTabAutomation {
+    var dialogHandler: ((EngineAutomationDialog) -> EngineAutomationDialogAnswer)? {
+        get { nil }
+        set {}
+    }
+}
+
+enum EngineAutomationDialog {
+    case alert(message: String)
+    case confirm(message: String)
+    case prompt(message: String, defaultText: String?)
+    case fileChooser(allowsMultiple: Bool, allowsDirectories: Bool)
+}
+
+enum EngineAutomationDialogAnswer {
+    /// OK, with the text a prompt returns.
+    case accept(text: String?)
+    case dismiss
+    /// The files a file chooser returns.
+    case files([URL])
+}
+
+struct EngineAutomationError: Error, CustomStringConvertible {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var description: String { message }
+}
+
+struct EngineAutomationModifiers: OptionSet {
+    let rawValue: Int
+    static let alt = EngineAutomationModifiers(rawValue: 1 << 0)
+    static let control = EngineAutomationModifiers(rawValue: 1 << 1)
+    static let command = EngineAutomationModifiers(rawValue: 1 << 2)
+    static let shift = EngineAutomationModifiers(rawValue: 1 << 3)
+}
+
+/// A key as DOM KeyboardEvent names it: `key` ("Enter", "a"), `code`
+/// ("Enter", "KeyA"), the Windows virtual key code Chromium-based engines
+/// route on, and the text it types, if any.
+struct EngineAutomationKey {
+    let key: String
+    let code: String
+    let keyCode: Int
+    let text: String?
+
+    /// Named keys plus any single printable character; nil for anything else.
+    init?(name: String) {
+        let named: [String: (String, Int, String?)] = [
+            "Enter": ("Enter", 13, "\r"), "Escape": ("Escape", 27, nil), "Tab": ("Tab", 9, nil),
+            "Backspace": ("Backspace", 8, nil), "Delete": ("Delete", 46, nil), "Space": ("Space", 32, " "),
+            "ArrowLeft": ("ArrowLeft", 37, nil), "ArrowUp": ("ArrowUp", 38, nil),
+            "ArrowRight": ("ArrowRight", 39, nil), "ArrowDown": ("ArrowDown", 40, nil),
+            "Home": ("Home", 36, nil), "End": ("End", 35, nil),
+            "PageUp": ("PageUp", 33, nil), "PageDown": ("PageDown", 34, nil),
+        ]
+        if let match = named.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame }) {
+            let (code, keyCode, text) = match.value
+            self.key = match.key == "Space" ? " " : match.key
+            self.code = code
+            self.keyCode = keyCode
+            self.text = text
+            return
+        }
+        guard name.count == 1, let scalar = name.unicodeScalars.first, scalar.value >= 0x20 else { return nil }
+        let upper = name.uppercased()
+        key = name
+        if let ascii = upper.unicodeScalars.first?.value, (65...90).contains(ascii) {
+            code = "Key\(upper)"
+            keyCode = Int(ascii)
+        } else if let ascii = upper.unicodeScalars.first?.value, (48...57).contains(ascii) {
+            code = "Digit\(upper)"
+            keyCode = Int(ascii)
+        } else {
+            code = ""
+            keyCode = 0
+        }
+        text = name
+    }
+}
+
 /// A tab the engine created on its own for a page-opened popup, before it
 /// has anywhere to draw -- see EngineTabDelegate.engineTabDidCreatePopup.
 protocol EnginePopupTab: EngineTab {
@@ -451,6 +573,8 @@ struct EngineCapabilities {
     /// Chrome extensions can be installed and run -- `extensions` on the
     /// engine is non-nil.
     var webExtensions: Bool = false
+    /// Tabs offer `automation`, so the `browser page` CLI commands work.
+    var agentControl: Bool = false
 }
 
 /// How hard the engine works to save memory in tabs the user can't see.

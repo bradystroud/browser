@@ -11,6 +11,7 @@
 #include "include/cef_values.h"
 #include "include/cef_x509_certificate.h"
 
+#import "BRWAutomationChannel.h"
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
 #import "BRWPageMessageRouter.h"
@@ -169,6 +170,7 @@ bool IsCertStatusError(cef_cert_status_t status) {
 
 @implementation BRWBrowser {
   CefRefPtr<BRWClientHandler> _handler;
+  CefRefPtr<BRWAutomationChannel> _automation;
 }
 
 - (instancetype)initWithProfileName:(NSString *)profileName
@@ -260,9 +262,29 @@ bool IsCertStatusError(cef_cert_status_t status) {
 }
 
 - (void)close {
+  if (_automation) {
+    _automation->Close();
+  }
   if (_handler) {
     _handler->RequestClose();
   }
+}
+
+- (void)executeAutomationMethod:(NSString *)method
+                     paramsJSON:(NSString *)paramsJSON
+                     completion:(void (^)(BOOL success, NSString *resultJSON))completion {
+  if (!_automation) {
+    _automation = new BRWAutomationChannel();
+  }
+  _automation->Execute(_handler ? _handler->GetBrowser() : nullptr, ToStdString(method),
+                       paramsJSON ? ToStdString(paramsJSON) : std::string(), completion);
+}
+
+- (void)setAutomationEventHandler:(void (^)(NSString *method, NSString *paramsJSON))handler {
+  if (!_automation) {
+    _automation = new BRWAutomationChannel();
+  }
+  _automation->SetEventHandler(handler);
 }
 
 - (void)showDevTools {

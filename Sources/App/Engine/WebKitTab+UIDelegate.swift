@@ -93,6 +93,10 @@ extension WebKitTab: WKUIDelegate {
     // MARK: - JavaScript dialogs
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        if let handler = webKitAutomation.dialogHandler {
+            _ = handler(.alert(message: message))
+            return completionHandler()
+        }
         let alert = makeDialog(message: message, frame: frame)
         alert.addButton(withTitle: "OK")
         presentPageSheet(alert.window, in: webView, fallback: completionHandler, start: { window, done in
@@ -101,6 +105,10 @@ extension WebKitTab: WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        if let handler = webKitAutomation.dialogHandler {
+            if case .accept = handler(.confirm(message: message)) { return completionHandler(true) }
+            return completionHandler(false)
+        }
         let alert = makeDialog(message: message, frame: frame)
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
@@ -110,6 +118,10 @@ extension WebKitTab: WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        if let handler = webKitAutomation.dialogHandler {
+            if case .accept(let text) = handler(.prompt(message: prompt, defaultText: defaultText)) { return completionHandler(text ?? defaultText ?? "") }
+            return completionHandler(nil)
+        }
         let alert = makeDialog(message: prompt, frame: frame)
         alert.addButton(withTitle: "OK")
         alert.addButton(withTitle: "Cancel")
@@ -127,6 +139,11 @@ extension WebKitTab: WKUIDelegate {
     // MARK: - File upload
 
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+        if let handler = webKitAutomation.dialogHandler {
+            let answer = handler(.fileChooser(allowsMultiple: parameters.allowsMultipleSelection, allowsDirectories: parameters.allowsDirectories))
+            if case .files(let urls) = answer, !urls.isEmpty { return completionHandler(urls) }
+            return completionHandler(nil)
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = parameters.allowsDirectories

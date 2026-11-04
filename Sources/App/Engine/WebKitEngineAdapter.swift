@@ -61,7 +61,8 @@ enum WebKitEngine: BrowserEngine {
             customContextMenuItems: false,
             backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable,
             nativeSwipeNavigation: true,
-            webExtensions: extensionsAvailable)
+            webExtensions: extensionsAvailable,
+            agentControl: true)
     }
 
     /// WKWebExtension is macOS 15.4+.
@@ -261,6 +262,9 @@ final class WebKitTab: NSObject, EnginePopupTab {
 
     let webView: WKWebView
     let profileName: String
+
+    private(set) lazy var webKitAutomation = WebKitAutomation(webView: webView)
+    var automation: EngineTabAutomation? { webKitAutomation }
     private var observations: [NSKeyValueObservation] = []
     private var isFindingActive = false
     /// Bumped per find/stop so a slower, superseded result never overwrites

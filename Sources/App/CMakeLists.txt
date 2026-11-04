@@ -12,6 +12,8 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWCefApp.mm
   ../Bridge/BRWClientHandler.h
   ../Bridge/BRWClientHandler.mm
+  ../Bridge/BRWAutomationChannel.h
+  ../Bridge/BRWAutomationChannel.mm
   ../Bridge/BRWDevToolsHandler.h
   ../Bridge/BRWDevToolsHandler.mm
   ../Bridge/BRWDevToolsShared.h
@@ -92,8 +94,10 @@ set(BROWSER_SWIFT_SRCS
   PageMessageDispatcher.swift
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
+  Engine/DevToolsProtocolAutomation.swift
   Engine/Engines.swift
   Engine/WebKitEngineAdapter.swift
+  Engine/WebKitAutomation.swift
   Engine/WebKitBackgroundTabPolicy.swift
   Engine/WebKitContentBlocking.swift
   Engine/WebKitTab+Navigation.swift

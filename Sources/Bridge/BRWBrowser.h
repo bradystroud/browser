@@ -446,6 +446,24 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
                                     mobile:(BOOL)mobile
     NS_SWIFT_NAME(setResponsiveDesignMode(width:height:deviceScaleFactor:mobile:));
 
+/// Agent control (the `browser page` CLI commands): sends one DevTools
+/// protocol command to this tab's own page and reports its result. Only this
+/// tab is reachable -- never another tab or the browser target. `paramsJSON`
+/// is a JSON object, or nil for none. `completion` runs on the main thread
+/// exactly once, with the result object as JSON, or with NO and an error
+/// object ({"message": ...}) when the command fails, the page has no live
+/// browser yet, or the tab closes first.
+- (void)executeAutomationMethod:(NSString *)method
+                     paramsJSON:(nullable NSString *)paramsJSON
+                     completion:(void (^)(BOOL success, NSString *resultJSON))completion
+    NS_SWIFT_NAME(executeAutomationMethod(_:paramsJSON:completion:));
+
+/// DevTools protocol events for this tab's page (for the domains an
+/// -executeAutomationMethod: call enabled), on the main thread. nil stops
+/// delivery.
+- (void)setAutomationEventHandler:(nullable void (^)(NSString *method, NSString *paramsJSON))handler
+    NS_SWIFT_NAME(setAutomationEventHandler(_:));
+
 /// Turns off any override set by -setResponsiveDesignModeWithWidth:... --
 /// safe to call even if none is currently active.
 - (void)clearResponsiveDesignMode;

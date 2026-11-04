@@ -22,7 +22,8 @@ enum CEFEngine: BrowserEngine {
             customContextMenuItems: true,
             // Chromium's extension system is Chrome-style only; this app's
             // Alloy-style CEF 150 browsers have none.
-            webExtensions: false)
+            webExtensions: false,
+            agentControl: true)
     }
 
     static func initialize(profilesRootPath: String) -> Bool {
@@ -98,6 +99,20 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         super.init()
         browser.delegate = self
     }
+
+    private lazy var protocolAutomation: DevToolsProtocolAutomation = {
+        let browser = self.browser
+        return DevToolsProtocolAutomation(
+            execute: { [weak browser] method, params, completion in
+                guard let browser else { return completion(false, #"{"message":"the page closed"}"#) }
+                browser.executeAutomationMethod(method, paramsJSON: params, completion: completion)
+            },
+            setEventHandler: { [weak browser] handler in
+                browser?.setAutomationEventHandler(handler)
+            })
+    }()
+
+    var automation: EngineTabAutomation? { protocolAutomation }
 
     /// Private Browsing (browser-12m.1) -- see BRWBrowser.h's
     /// -initPrivateWithHostView:initialURL: for what makes this different
