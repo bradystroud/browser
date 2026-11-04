@@ -164,6 +164,9 @@ final class TabMemoryDiagnostics: TabLifecycleObserver {
                 "os": ProcessInfo.processInfo.operatingSystemVersionString,
                 "cpuCount": ProcessInfo.processInfo.activeProcessorCount,
                 "policy": BackgroundTabPolicyPreference.current.rawValue,
+                // The key earlier logs used, in their vocabulary: what a new
+                // tab opens in. Each sample's tabs say which engine they are in.
+                "engine": CommandLineArgs.defaultEngine() == .webkit ? "webkit" : "other",
                 "defaultEngine": CommandLineArgs.defaultEngine().rawValue,
             ])
         }
@@ -176,7 +179,7 @@ final class TabMemoryDiagnostics: TabLifecycleObserver {
             guard let engineTab = tab.browser else { continue }
             let key = ObjectIdentifier(tab)
             let hidden = controller.activeTab !== tab
-            var entry: [String: Any] = ["tab": number(for: key), "hidden": hidden]
+            var entry: [String: Any] = ["tab": number(for: key), "hidden": hidden, "engine": tab.engine.rawValue]
             if hidden, let since = hiddenSince[key] {
                 entry["hiddenSeconds"] = Int(Date().timeIntervalSince(since))
             }
