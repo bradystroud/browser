@@ -768,9 +768,13 @@ final class TabStripView: NSView {
         // A narrower window can leave the selected tab past the new edge.
         // Not mid-drag: the dragged pill is the selection, and it belongs to
         // the pointer until the drop.
+        // Only a shrink along the scrolling axis can hide the selection, so a
+        // taller window never pulls a list the user has scrolled back to it.
         if bounds.size != lastLayoutSize {
+            let previous = lastLayoutSize
             lastLayoutSize = bounds.size
-            if drag == nil { revealSelection() }
+            let shrank = previous.map { isVertical ? bounds.height < $0.height : bounds.width < $0.width } ?? true
+            if drag == nil, shrank { revealSelection() }
         }
     }
 
