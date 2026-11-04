@@ -68,6 +68,11 @@
   _isTerminating = YES;
 
   [BRWEngine requestShutdownWithCompletion:^{
+    // AppKit's own -terminate: would post this; exit() below skips it, and
+    // the app's last jobs at quit (a final flush, clearing a copied
+    // password off the pasteboard) are registered for it.
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationWillTerminateNotification
+                                                        object:self];
     exit(0);
   }];
   // Return, don't exit -- the completion above exits once CEF confirms every

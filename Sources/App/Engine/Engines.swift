@@ -16,9 +16,10 @@ import AppKit
 ///   subclass at all and runs under it unchanged.
 /// - Quitting is CEF's: `-[BRWApplication terminate:]` closes every window
 ///   (WebKit tabs included) through the window close handler, waits for
-///   CEF's browsers to finish closing, then exits. AppKit's
-///   `willTerminateNotification` is never posted on that path, so WebKit's
-///   own quit hook is not registered.
+///   CEF's browsers to finish closing, posts AppKit's
+///   `willTerminateNotification` itself, then exits. WebKit's own quit hook
+///   (which closes windows from that notification) is not registered: the
+///   windows are already closed by then.
 /// - Every process-wide setting (downloads folder, blocking lists, threat
 ///   lists, background-tab policy) goes to both engines.
 /// - Extensions are WebKit's only; CEF 150 Alloy has none.
