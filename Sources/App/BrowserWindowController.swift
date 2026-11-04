@@ -459,7 +459,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabGroups = restoreGroups.map { TabGroup(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed) }
 
         for restoreTab in restoreTabs {
-            let tab = addTab(url: restoreTab.url, makeActive: false)
+            let tab = insertTab(url: restoreTab.url, makeActive: false, at: tabs.count, focusOmnibox: false,
+                                engine: restoreTab.savedEngine, engineOverride: restoreTab.savedEngineOverride)
             tab.needsInitialOmniboxFocus = false
             tab.seedRestoredTitle(restoreTab.title)
             tab.isPinned = restoreTab.isPinned
@@ -501,7 +502,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 title: $0.displayTitle, favicon: $0.faviconImage, isPinned: $0.isPinned,
                 groupId: $0.groupId, themeColorHex: $0.themeColorHex,
                 isMuted: $0.isMuted, isAudible: $0.isAudible, isLoading: $0.isLoading,
-                isAsleep: $0.isAsleep, engine: $0.engine, siteHost: $0.siteHost)
+                isAsleep: $0.isAsleep, engine: $0.engine, siteHost: $0.engineRuleHost)
         }
     }
 
@@ -1326,9 +1327,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         return openerIndex + 1
     }
 
+    /// `engine`/`engineOverride` are a restored, reopened or duplicated
+    /// tab's own -- see Tab.init.
     @discardableResult
-    private func insertTab(url: String, makeActive: Bool, at index: Int, focusOmnibox: Bool) -> Tab {
-        let tab = Tab(profileName: profile.name, profileId: profile.id, initialURL: url, isPrivate: isPrivate)
+    private func insertTab(url: String, makeActive: Bool, at index: Int, focusOmnibox: Bool,
+                           engine: EngineChoice? = nil, engineOverride: EngineOverride? = nil) -> Tab {
+        let tab = Tab(profileName: profile.name, profileId: profile.id, initialURL: url, isPrivate: isPrivate,
+                      engine: engine, engineOverride: engineOverride)
         insert(tab, makeActive: makeActive, at: index, focusOmnibox: focusOmnibox)
         return tab
     }
@@ -1485,12 +1490,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // trusting every caller to guard.
         ClosedItemStore.shared.record(
             .tab(ClosedTab(
-                tab: SessionSnapshot.Tab(
-                    url: closedTab.urlString,
-                    title: closedTab.title,
-                    isPinned: closedTab.isPinned,
-                    groupId: closedTab.groupId
-                ),
+                tab: closedTab.sessionSnapshot,
                 profileId: profile.id,
                 index: index,
                 closedAt: Date()
@@ -1965,7 +1965,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabStripView.updateAudioState(at: index, isMuted: tab.isMuted, isAudible: tab.isAudible)
         tabStripView.updateLoadingState(at: index, isLoading: tab.isLoading)
         tabStripView.updateSleepState(at: index, isAsleep: tab.isAsleep)
-        tabStripView.updateEngine(at: index, engine: tab.engine, siteHost: tab.siteHost)
+        tabStripView.updateEngine(at: index, engine: tab.engine, siteHost: tab.engineRuleHost)
         if index == activeTabIndex {
             refreshToolbar(for: tab)
             updateWindowTitle(for: tab)
@@ -2459,13 +2459,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func reopen(_ item: ClosedItem) {
         switch item {
         case .tab(let closed):
-            _ = addTab(url: closed.tab.url.isEmpty ? "about:blank" : closed.tab.url, makeActive: true)
+            insertTab(url: closed.tab.url.isEmpty ? "about:blank" : closed.tab.url, makeActive: true,
+                      at: tabs.count, focusOmnibox: true,
+                      engine: closed.tab.savedEngine, engineOverride: closed.tab.savedEngineOverride)
         case .window(let closed):
-            let restored = closed.tabs.map {
-                SessionSnapshot.Tab(url: $0.url, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
-            }
             WindowManager.shared.reopenClosedWindow(
-                profile: profile, tabs: restored, groups: closed.groups, activeIndex: closed.activeTabIndex
+                profile: profile, tabs: closed.tabs, groups: closed.groups, activeIndex: closed.activeTabIndex
             )
         }
     }
@@ -2767,12 +2766,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     private func duplicateTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
-        let url = tabs[index].urlString
+        let original = tabs[index]
+        let url = original.urlString
         guard !url.isEmpty else {
             newTab(nil)
             return
         }
-        openTabForLinkClick(url: url, afterIndex: index, foreground: true)
+        // In the original's engine, override included: a duplicate of a page
+        // that only works where it is should work too.
+        insertTab(url: url, makeActive: true, at: insertionIndex(afterOpenerAt: index), focusOmnibox: false,
+                  engine: original.engine, engineOverride: original.engineOverride)
     }
 
     /// Context-menu "Peek Link", from any tab in this window.
@@ -2803,9 +2806,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             ClosedItemStore.shared.record(
                 .window(ClosedWindow(
                     profileId: profile.id,
-                    tabs: closedTabs.map {
-                        SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
-                    },
+                    tabs: closedTabs.map(\.sessionSnapshot),
                     groups: tabGroups.map { SessionSnapshot.Group(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed) },
                     activeTabIndex: activeTabIndex ?? 0,
                     // The frame too, so a reopened window comes back where it

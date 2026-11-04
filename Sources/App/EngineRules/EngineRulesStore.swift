@@ -37,17 +37,13 @@ final class EngineRulesStore {
         save()
     }
 
-    /// Adds a rule for `pattern`, or retargets the user's existing rule for
-    /// exactly that pattern, so "always open this site in ..." never piles
-    /// up duplicates.
-    func setEngine(_ engine: SiteEngine, forPattern pattern: String) {
-        if let index = configuration.userRules.firstIndex(where: { $0.pattern.caseInsensitiveCompare(pattern) == .orderedSame }) {
-            configuration.userRules[index].engine = engine
-            configuration.userRules[index].isEnabled = true
-            save()
-        } else {
-            addRule(EngineSiteRule(pattern: pattern, engine: engine))
-        }
+    /// "Always open this site in ...": see
+    /// EngineRuleConfiguration.setEngine(_:forPattern:).
+    @discardableResult
+    func setEngine(_ engine: SiteEngine, forPattern pattern: String) -> EngineSiteRule {
+        let rule = configuration.setEngine(engine, forPattern: pattern)
+        save()
+        return rule
     }
 
     func updateRule(_ rule: EngineSiteRule) {
@@ -98,5 +94,18 @@ extension EngineChoice {
 
     var siteEngine: SiteEngine {
         SiteEngine(rawValue: rawValue) ?? .chromium
+    }
+}
+
+extension SessionSnapshot.Tab {
+    /// The engine the tab was saved in, or nil to let the rules decide (an
+    /// older file, or an engine this version does not know).
+    var savedEngine: EngineChoice? {
+        engine.flatMap(EngineChoice.init(rawValue:))
+    }
+
+    var savedEngineOverride: EngineOverride? {
+        guard let saved = engineOverride, let engine = SiteEngine(rawValue: saved.engine) else { return nil }
+        return EngineOverride(engine: engine, host: saved.host)
     }
 }
