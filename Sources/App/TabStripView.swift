@@ -71,20 +71,69 @@ private final class TabStripContentView: NSView {
 private final class TabStripScrollView: NSScrollView {
     var mapsVerticalWheelToHorizontal = false
 
+    /// Whether the current trackpad gesture, and the momentum that follows
+    /// it, is being turned sideways. Decided once from the gesture's first
+    /// movement: deciding per event hands a gesture that wobbles between
+    /// axes to NSScrollView half-way through, without the began phase its
+    /// elastic scrolling expects.
+    private var gestureIsMapped: Bool?
+
+    /// Always overlay. AppKit resets every scroll view to the system's
+    /// preferred style when it changes -- "Always" in System Settings, or
+    /// "Automatically" with a mouse plugged in -- and a legacy horizontal
+    /// scroller takes 15pt out of a strip about twice that tall, clipping
+    /// every tab's lower half.
+    override var scrollerStyle: NSScroller.Style {
+        get { super.scrollerStyle }
+        set { super.scrollerStyle = .overlay }
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        guard mapsVerticalWheelToHorizontal,
-              abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-              let documentView else {
+        guard mapsVerticalWheelToHorizontal else {
             super.scrollWheel(with: event)
             return
         }
+        guard shouldMapToHorizontal(event) else {
+            super.scrollWheel(with: event)
+            return
+        }
+        if event.phase == .began {
+            flashScrollers()
+        }
         // Line-based wheel deltas are in lines, not points.
         let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : horizontalLineScroll
+        scrollDocument(by: NSPoint(x: -event.scrollingDeltaY * scale, y: 0))
+    }
+
+    private func shouldMapToHorizontal(_ event: NSEvent) -> Bool {
+        let mostlyVertical = abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+        // A phase-less mouse wheel has no gesture to belong to.
+        guard !event.phase.isEmpty || !event.momentumPhase.isEmpty else { return mostlyVertical }
+        if event.phase == .began || event.phase == .mayBegin {
+            gestureIsMapped = nil
+        }
+        if gestureIsMapped == nil, event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 {
+            gestureIsMapped = mostlyVertical
+        }
+        return gestureIsMapped ?? false
+    }
+
+    /// Moves the visible part of the document by `delta`, clamped so it
+    /// never shows past either end, and returns how far it actually moved.
+    @discardableResult
+    func scrollDocument(by delta: NSPoint) -> NSPoint {
+        guard let documentView else { return .zero }
         let maxX = max(0, documentView.frame.width - contentView.bounds.width)
-        var origin = contentView.bounds.origin
-        origin.x = min(max(0, origin.x - event.scrollingDeltaY * scale), maxX)
-        contentView.scroll(to: origin)
+        let maxY = max(0, documentView.frame.height - contentView.bounds.height)
+        let old = contentView.bounds.origin
+        let new = NSPoint(
+            x: min(max(0, old.x + delta.x), maxX),
+            y: min(max(0, old.y + delta.y), maxY)
+        )
+        guard new != old else { return .zero }
+        contentView.scroll(to: new)
         reflectScrolledClipView(contentView)
+        return NSPoint(x: new.x - old.x, y: new.y - old.y)
     }
 }
 
