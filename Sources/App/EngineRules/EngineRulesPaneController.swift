@@ -21,6 +21,11 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
     private var rules: [EngineSiteRule] = []
     private var observer: NSObjectProtocol?
 
+    /// A rule the + button added that has no site yet. It lives only in this
+    /// table until a valid site is typed, so cancelling (or leaving it
+    /// blank) saves nothing.
+    private var draft: EngineSiteRule?
+
     private enum Column {
         static let enabled = NSUserInterfaceItemIdentifier("enabled")
         static let site = NSUserInterfaceItemIdentifier("site")
@@ -43,6 +48,9 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
 
     func reload() {
         rules = EngineRulesStore.shared.effectiveRules
+        if let draft {
+            rules.insert(draft, at: EngineRulesStore.shared.userRules.count)
+        }
         tableView.reloadData()
         updateButtons()
     }
@@ -94,11 +102,13 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
     }
 
     /// A new rule sends a site to the engine that isn't the default --
-    /// the only reason to write one -- and opens its site for typing.
+    /// the only reason to write one -- and opens its site for typing. It is
+    /// saved only once a site is typed; see `draft`.
     private func addRule() {
         let engine = CommandLineArgs.defaultEngine().other
-        let rule = EngineSiteRule(pattern: "example.com", engine: engine.siteEngine)
-        EngineRulesStore.shared.addRule(rule)
+        let rule = EngineSiteRule(pattern: "", engine: engine.siteEngine)
+        draft = rule
+        reload()
         guard let row = rules.firstIndex(where: { $0.id == rule.id }) else { return }
         tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         tableView.editColumn(tableView.column(withIdentifier: Column.site), row: row, with: nil, select: true)
@@ -107,7 +117,23 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
     private func removeSelectedRule() {
         let row = tableView.selectedRow
         guard rules.indices.contains(row), !BuiltInEngineRules.isBuiltIn(rules[row].id) else { return }
+        if rules[row].id == draft?.id {
+            draft = nil
+            reload()
+            return
+        }
         EngineRulesStore.shared.deleteRule(id: rules[row].id)
+    }
+
+    /// Saves `rule`, or -- while it is still the unsaved draft -- keeps the
+    /// change in the draft.
+    private func update(_ rule: EngineSiteRule) {
+        if rule.id == draft?.id {
+            draft = rule
+            reload()
+        } else {
+            EngineRulesStore.shared.updateRule(rule)
+        }
     }
 
     @objc private func tableDoubleClicked() {
@@ -121,7 +147,7 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
         guard rules.indices.contains(row) else { return }
         var rule = rules[row]
         rule.isEnabled = sender.state == .on
-        EngineRulesStore.shared.updateRule(rule)
+        update(rule)
     }
 
     @objc private func engineChosen(_ sender: NSPopUpButton) {
@@ -132,23 +158,37 @@ final class EngineRulesPaneController: NSObject, NSTableViewDataSource, NSTableV
         else { return }
         var rule = rules[row]
         rule.engine = engine
-        EngineRulesStore.shared.updateRule(rule)
+        update(rule)
     }
 
-    /// A site that doesn't parse is refused, and the old one put back.
+    /// A site that doesn't parse (a typo, a port) is refused, and the old one
+    /// put back. The draft's first valid site saves it; leaving the draft
+    /// without one discards it.
     func controlTextDidEndEditing(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
         let row = tableView.row(for: field)
         guard rules.indices.contains(row) else { return }
         let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rule = rules[row]
+        let isDraft = rule.id == draft?.id
         guard EngineSitePattern(text) != nil else {
-            NSSound.beep()
-            field.stringValue = rules[row].pattern
+            if isDraft {
+                draft = nil
+                if !text.isEmpty { NSSound.beep() }
+                reload()
+            } else {
+                NSSound.beep()
+                field.stringValue = rule.pattern
+            }
             return
         }
-        var rule = rules[row]
         rule.pattern = text
-        EngineRulesStore.shared.updateRule(rule)
+        if isDraft {
+            draft = nil
+            EngineRulesStore.shared.addRule(rule)
+        } else {
+            EngineRulesStore.shared.updateRule(rule)
+        }
     }
 
     // MARK: - NSTableViewDataSource / Delegate
