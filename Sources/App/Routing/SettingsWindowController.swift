@@ -28,7 +28,7 @@ extension SettingsPaneController {
 /// pane as it is selected. This controller owns the window and composes the
 /// panes; each pane's own logic lives in its controller.
 ///
-/// A toolbar rather than a sidebar: there are at most nine panes, which fit
+/// A toolbar rather than a sidebar: there are at most ten panes, which fit
 /// across a settings window the way Safari's own do, and a toolbar window
 /// can take each pane's height -- a sidebar window would carry the sidebar's
 /// height even for a pane of three rows.
@@ -46,6 +46,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     private let generalPane = GeneralPaneController()
     private let linksPane = RoutingRulesPaneController()
+    private let enginesPane = EngineRulesPaneController()
     private let profilesPane = ProfilesPaneController()
     private let privacyPane = PrivacyPaneController()
     private let startPagePane = StartPageSettingsPaneController()
@@ -98,6 +99,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         panes = [
             PaneInfo(identifier: "general", title: "General", symbol: "gearshape", controller: generalPane),
             PaneInfo(identifier: "links", title: "Links", symbol: "link", controller: linksPane),
+            PaneInfo(identifier: "engines", title: "Engines", symbol: "square.stack.3d.up", controller: enginesPane),
             PaneInfo(identifier: "profiles", title: "Profiles", symbol: "person.2", controller: profilesPane),
             PaneInfo(identifier: "privacy", title: "Privacy", symbol: "hand.raised", controller: privacyPane),
             PaneInfo(identifier: "start-page", title: "Start Page", symbol: "square.grid.2x2", controller: startPagePane),
@@ -105,7 +107,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             PaneInfo(identifier: "autofill", title: "Autofill", symbol: "person.text.rectangle", controller: autofillPane),
             PaneInfo(identifier: "safari", title: "Safari", symbol: "safari", controller: safariSyncPane),
         ]
-        if ActiveEngine.capabilities.webExtensions {
+        if Engines.anyEngine(\.webExtensions) {
             panes.append(PaneInfo(identifier: "extensions", title: "Extensions", symbol: "puzzlepiece.extension", controller: extensionsPane))
         }
 

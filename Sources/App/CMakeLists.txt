@@ -92,6 +92,7 @@ set(BROWSER_SWIFT_SRCS
   PageMessageDispatcher.swift
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
+  Engine/Engines.swift
   Engine/WebKitEngineAdapter.swift
   Engine/WebKitBackgroundTabPolicy.swift
   Engine/WebKitContentBlocking.swift
@@ -118,6 +119,9 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitExtensionAdapters.swift
   Engine/WebKitExtensionInstaller.swift
   Routing/RoutingRulesStore.swift
+  EngineRules/EngineRulesStore.swift
+  EngineRules/EngineRulesPaneController.swift
+  EngineRules/BrowserWindowController+Engine.swift
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
@@ -256,6 +260,7 @@ set(BROWSER_ROUTING_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RoutingRule.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/RuleMatcher.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/LinkOpening.swift
+  ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/EngineRules.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamList.swift
   ${CMAKE_SOURCE_DIR}/RoutingCore/Sources/RoutingCore/TrackingParamStripper.swift
   )

@@ -21,6 +21,12 @@ protocol TabStripViewDelegate: AnyObject {
     /// Tab context menu -- "Put Tab to Sleep".
     func tabStripView(_ tabStripView: TabStripView, didRequestSleepAt index: Int)
 
+    /// Tab context menu -- "Reopen in <engine>".
+    func tabStripView(_ tabStripView: TabStripView, didRequestReopenAt index: Int, in engine: EngineChoice)
+
+    /// Tab context menu -- "Always Open <site> in <engine>".
+    func tabStripView(_ tabStripView: TabStripView, didRequestAlwaysOpenSiteAt index: Int, in engine: EngineChoice)
+
     /// Tab context menu -- "Move to Group > <existing group>".
     func tabStripView(_ tabStripView: TabStripView, didRequestMoveToGroupAt index: Int, groupId: UUID)
 
@@ -178,6 +184,11 @@ final class TabStripView: NSView {
         let isLoading: Bool
         /// Mirrors Tab.isAsleep.
         var isAsleep = false
+        /// Mirrors Tab.engine.
+        var engine: EngineChoice = .cef
+        /// The host of the tab's page, for "Always Open <site> in ...";
+        /// nil when it shows no web page.
+        var siteHost: String?
     }
 
     struct GroupDisplayInfo {
@@ -497,6 +508,12 @@ final class TabStripView: NSView {
         tabButton(forTabIndex: index)?.isAsleep = isAsleep
     }
 
+    func updateEngine(at index: Int, engine: EngineChoice, siteHost: String?) {
+        guard let button = tabButton(forTabIndex: index) else { return }
+        button.engine = engine
+        button.siteHost = siteHost
+    }
+
     func updateSelection(_ index: Int) {
         selectedIndex = index
         for item in stripItems {
@@ -591,6 +608,8 @@ final class TabStripView: NSView {
             button.isAudible = info.isAudible
             button.isLoading = info.isLoading
             button.isAsleep = info.isAsleep
+            button.engine = info.engine
+            button.siteHost = info.siteHost
             button.availableGroups = availableGroups
             button.isVerticalLayout = isVertical
             button.isSelected = index == selectedIndex
@@ -622,6 +641,14 @@ final class TabStripView: NSView {
             button.onSleep = { [weak self] in
                 guard let self else { return }
                 self.delegate?.tabStripView(self, didRequestSleepAt: index)
+            }
+            button.onReopenInEngine = { [weak self] engine in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestReopenAt: index, in: engine)
+            }
+            button.onAlwaysOpenSiteInEngine = { [weak self] engine in
+                guard let self else { return }
+                self.delegate?.tabStripView(self, didRequestAlwaysOpenSiteAt: index, in: engine)
             }
             button.onMoveToGroup = { [weak self] groupId in
                 guard let self else { return }

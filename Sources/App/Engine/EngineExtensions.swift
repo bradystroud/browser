@@ -5,7 +5,7 @@ import AppKit
 // and asks the app, through the `ExtensionHost*` protocols, about the
 // browser around them: which windows and tabs exist, which is in front,
 // where a new tab goes, whether the user agrees. UI code talks to
-// `ActiveEngine.extensions` and never to an engine's own extension types.
+// `Engines.extensions` and never to an engine's own extension types.
 
 /// A browser tab as extensions see it. Implemented by the app.
 protocol ExtensionHostTab: AnyObject {

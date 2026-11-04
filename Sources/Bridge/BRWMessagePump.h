@@ -19,6 +19,11 @@ class BRWMessagePump {
   // May be called from any CEF thread; hops to the main thread internally.
   void OnScheduleMessagePumpWork(int64_t delay_ms);
 
+  // True while CefDoMessageLoopWork() is on the stack. Anything CEF calls
+  // back into from there -- [NSApp terminate:] included, which Chromium's
+  // own SIGTERM handling sends -- must not run CefShutdown before it returns.
+  bool IsPerformingWork() const { return is_active_; }
+
   BRWMessagePump(const BRWMessagePump&) = delete;
   BRWMessagePump& operator=(const BRWMessagePump&) = delete;
 

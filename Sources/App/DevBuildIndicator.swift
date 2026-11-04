@@ -58,9 +58,9 @@ enum DevBuildIndicator {
     }
 
     fileprivate static var engineName: String {
-        switch CommandLineArgs.engineChoice() {
-        case .cef: return "CEF"
-        case .webkit: return "WebKit"
+        switch CommandLineArgs.defaultEngine() {
+        case .cef: return "CEF default"
+        case .webkit: return "WebKit default"
         }
     }
 

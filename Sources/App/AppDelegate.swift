@@ -93,8 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let profilesRootPath = CommandLineArgs.profilesRootPath()
         // Before initialize(), so no browser can ever exist with the engine
         // still pointed at the default ~/Downloads (browser-5kq.14).
-        ActiveEngine.setDownloadDirectory(CommandLineArgs.downloadsDirectory())
-        guard ActiveEngine.initialize(profilesRootPath: profilesRootPath) else {
+        Engines.setDownloadDirectory(CommandLineArgs.downloadsDirectory())
+        guard Engines.initialize(profilesRootPath: profilesRootPath) else {
             NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)
             NSApp.terminate(nil)
             return
@@ -120,16 +120,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // target is 12.0, so on an older Mac the flag is never set to true
         // and no "Look Up Image" menu item ever appears.
         if #available(macOS 13.0, *) {
-            ActiveEngine.setVisualLookUpAvailable(ImageAnalyzer.isSupported)
+            Engines.setVisualLookUpAvailable(ImageAnalyzer.isSupported)
         }
-        ActiveEngine.setBackgroundTabPolicy(BackgroundTabPolicyPreference.current)
+        Engines.setBackgroundTabPolicy(BackgroundTabPolicyPreference.current)
 
         // See -[BRWApplication terminate:] and WindowManager.closeAllWindowsForShutdown:
         // quitting must close every Swift-owned window (and thus its tabs'
         // engine tabs) through their normal path before the engine's own
         // shutdown runs, not leave them for AppKit's own at-exit teardown to
         // reach afterward.
-        ActiveEngine.setWindowCloseHandler {
+        Engines.setWindowCloseHandler {
             WindowManager.shared.closeAllWindowsForShutdown()
         }
 
@@ -191,13 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // Normally true (closing the last window quits, standard for this kind
     // of app) -- except while -[BRWApplication terminate:] is already mid-
-    // sequence (ActiveEngine.isTerminating), since then it's the one
+    // sequence (Engines.isTerminating), since then it's the one
     // closing every window as a step in its own close-and-wait-for-CEF
     // sequence, and there's no need for AppKit to also re-enter -terminate:
     // from here (that reentrant call is harmless -- see -terminate:'s guard
     // -- but redundant).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !ActiveEngine.isTerminating
+        !Engines.isTerminating
     }
 
     // CEF's required shutdown sequencing (close every browser, wait for

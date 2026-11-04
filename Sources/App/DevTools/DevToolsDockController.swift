@@ -64,15 +64,24 @@ final class DevToolsDockController {
         layoutView.header.onClose = { [weak self] in self?.close() }
     }
 
-    /// The tab's engine side, once it exists.
-    func attach(to engineTab: EngineTab) {
+    /// What the attached engine tab's engine can do; tabs of both engines
+    /// sit side by side, so this is per tab.
+    private var capabilities = EngineCapabilities(
+        inAppDevTools: false, responsiveDesignMode: false, perTabCPUUsage: false,
+        perTabAudioMute: false, customContextMenuItems: false)
+
+    /// The tab's engine side, once it exists. Called again with a new
+    /// engine tab when the tab moves engines.
+    func attach(to engineTab: EngineTab, capabilities: EngineCapabilities) {
         self.engineTab = engineTab
+        self.capabilities = capabilities
+        layoutView.hasOwnChrome = capabilities.devToolsHasOwnChrome
     }
 
     /// The side the engine can actually honour. An engine without docking
     /// always uses its own window.
     private var effectiveSide: DevToolsDockSide {
-        ActiveEngine.capabilities.devToolsDocking ? dockSide : .window
+        capabilities.devToolsDocking ? dockSide : .window
     }
 
     // MARK: - Commands
@@ -83,7 +92,7 @@ final class DevToolsDockController {
 
     func open(panel: DevToolsPanel) {
         guard let engineTab else { return }
-        guard ActiveEngine.capabilities.inAppDevTools else {
+        guard capabilities.inAppDevTools else {
             // The engine explains where to inspect the page instead.
             engineTab.showDevTools(panel: panel, dockSide: .window, in: nil)
             return
@@ -213,6 +222,12 @@ private final class DevToolsDockLayoutView: NSView {
         didSet { if isToolsVisible != oldValue { layoutNow() } }
     }
 
+    /// The docked tools draw their own dock-side and close controls, so the
+    /// header is not needed (EngineCapabilities.devToolsHasOwnChrome).
+    var hasOwnChrome = false {
+        didSet { if hasOwnChrome != oldValue { layoutNow() } }
+    }
+
     private var isDocked: Bool { isToolsVisible && dockSide != .window }
 
     init(pageView: NSView) {
@@ -257,7 +272,7 @@ private final class DevToolsDockLayoutView: NSView {
     func layoutNow() {
         layoutSplit()
         // Read live: the header only exists for tools without their own.
-        let showsHeader = isDocked && !ActiveEngine.capabilities.devToolsHasOwnChrome
+        let showsHeader = isDocked && !hasOwnChrome
         header.isHidden = !showsHeader
         if showsHeader {
             let tools = toolsView.frame

@@ -212,9 +212,7 @@ final class WindowManager {
             // nothing to restore on next launch either -- consistent with
             // "closing a private window discards everything."
             guard !controller.isPrivate else { return nil }
-            let tabs = controller.tabs.map {
-                SessionSnapshot.Tab(url: $0.urlString, title: $0.title, isPinned: $0.isPinned, groupId: $0.groupId)
-            }
+            let tabs = controller.tabs.map(\.sessionSnapshot)
             guard !tabs.isEmpty, let frame = controller.window?.frame else { return nil }
             let groups = controller.tabGroups.map {
                 SessionSnapshot.Group(id: $0.id, name: $0.name, colorHex: $0.colorHex, isCollapsed: $0.isCollapsed)

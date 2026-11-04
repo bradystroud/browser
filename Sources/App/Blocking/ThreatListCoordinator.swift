@@ -34,7 +34,7 @@ final class ThreatListCoordinator {
     /// always has a settings entry for every profile that currently
     /// exists.
     func start() {
-        ActiveEngine.setThreatInterstitialBuilder { host, originalURL in
+        Engines.setThreatInterstitialBuilder { host, originalURL in
             ThreatWarningPageRenderer.dataURL(host: host, originalURL: originalURL)
         }
         pushSnapshot()
@@ -80,6 +80,6 @@ final class ThreatListCoordinator {
         // too").
         engineSettings["private"] = EngineProfileThreatSettings(enabled: true)
 
-        ActiveEngine.updateThreatBlocking(domains: domains, profileSettings: engineSettings)
+        Engines.updateThreatBlocking(domains: domains, profileSettings: engineSettings)
     }
 }

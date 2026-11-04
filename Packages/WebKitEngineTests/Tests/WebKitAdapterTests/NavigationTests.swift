@@ -10,7 +10,34 @@ final class NavigationTests: WebKitTabTestCase {
                 <body><p>Hello from the navigation test.</p></body></html>
                 """),
             "/after-error": .html("<!DOCTYPE html><title>Recovered</title><p>back</p>"),
+            "/redirect": LocalHTTPServer.Response(status: 302, headers: ["Location": "/target"], body: Data()),
+            "/target": .html("<!DOCTYPE html><title>Target</title><p>target</p>"),
         ]
+    }
+
+    /// A tab that will show a URL in the other engine refuses it here, and
+    /// the refused request must never reach the site: a single-use token
+    /// would be spent, a POST sent twice.
+    func testRefusedNavigationIsNeverSent() {
+        recorder.refuseNavigation = { $0.hasSuffix("/target") }
+        tab.loadURL(server.url("/target"))
+        XCTAssertTrue(waitUntil("asked about the navigation") { !self.recorder.events(named: "refused").isEmpty })
+        settle(0.5)
+        XCTAssertFalse(server.requestedPaths.contains("/target"), "\(server.requestedPaths)")
+        XCTAssertTrue(recorder.events(named: "willStart").isEmpty, "\(recorder.events)")
+        XCTAssertTrue(recorder.events(named: "commit").isEmpty, "\(recorder.events)")
+    }
+
+    /// The same for a redirect hop: the first request goes, the hop does not.
+    func testRefusedRedirectHopIsNeverFollowed() {
+        recorder.refuseNavigation = { $0.hasSuffix("/target") }
+        tab.loadURL(server.url("/redirect"))
+        XCTAssertTrue(waitUntil("asked about the redirect hop") {
+            self.recorder.events(named: "refused") == ["refused:\(self.server.url("/target"))"]
+        }, "\(recorder.events)")
+        settle(0.5)
+        XCTAssertEqual(server.requestedPaths.filter { $0 != "/favicon.ico" }, ["/redirect"])
+        XCTAssertTrue(recorder.events(named: "commit").isEmpty, "\(recorder.events)")
     }
 
     /// The order the CEF adapter delivers and the shell depends on:

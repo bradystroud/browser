@@ -31,7 +31,7 @@ final class SwipeNavigationController {
     private init() {}
 
     func start() {
-        guard SwipeScrollProbeScript.isNeeded, monitor == nil else { return }
+        guard SwipeScrollProbeScript.isNeededByAnyEngine, monitor == nil else { return }
         PageMessageDispatcher.shared.register(types: [SwipeScrollProbeScript.messageType]) { [weak self] message in
             message.tab.respondToPageMessage(requestId: message.requestId, success: true, response: "")
             self?.pageReported(message)
@@ -106,7 +106,8 @@ final class SwipeNavigationController {
     private func pageTab(under event: NSEvent) -> Tab? {
         guard let window = event.window,
               let controller = WindowManager.shared.windowControllers.first(where: { $0.window === window }),
-              let tab = controller.activeTab
+              let tab = controller.activeTab,
+              SwipeScrollProbeScript.isNeeded(for: tab.capabilities)
         else { return nil }
         let pageView = tab.devTools.pageView
         guard pageView.window === window, !pageView.isHiddenOrHasHiddenAncestor else { return nil }

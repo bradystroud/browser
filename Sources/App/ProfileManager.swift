@@ -241,7 +241,7 @@ final class ProfileManager {
         let root = URL(fileURLWithPath: CommandLineArgs.profilesRootPath())
         for profile in profilesToDelete {
             // Its extensions stop first, so none writes the folder back.
-            ActiveEngine.extensions?.unloadProfile(profileId: profile.id)
+            Engines.extensions?.unloadProfile(profileId: profile.id)
             try? FileManager.default.removeItem(at: root.appendingPathComponent(profile.id))
         }
         return true

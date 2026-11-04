@@ -950,10 +950,18 @@ bool BRWClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   if (request->GetURL().ToString().rfind("devtools:", 0) == 0) {
     return true;
   }
+  // A navigation the tab will load in another engine stops here, before
+  // CEF sends the request (or follows the redirect), so the site never sees
+  // it twice: a single-use sign-in token is not spent, a POST is not sent
+  // twice, and this engine's cookies never go to the site.
+  if (frame->IsMain() && delegate_ &&
+      [delegate_ respondsToSelector:@selector(browserShouldStartMainFrameNavigationTo:)] &&
+      ![delegate_ browserShouldStartMainFrameNavigationTo:ToNSString(request->GetURL())]) {
+    return true;
+  }
   // Must be called "only if the navigation is allowed to proceed" per
-  // CefMessageRouterBrowserSide::OnBeforeBrowse's own doc comment -- this
-  // override never itself blocks navigation (always returns false, "allow"),
-  // so that condition is always satisfied here.
+  // CefMessageRouterBrowserSide::OnBeforeBrowse's own doc comment -- every
+  // return above cancels, so the navigation does proceed from here.
   BRWPageMessageRouter::Get().OnBeforeBrowse(browser, frame);
   // browser-7z5 -- the earliest possible hook for a main-frame navigation
   // (fires before it commits), so the omnibox can show optimistic feedback

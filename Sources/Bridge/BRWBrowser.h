@@ -67,6 +67,12 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// what the tab is actually showing.
 - (void)browserWillStartMainFrameNavigationTo:(NSString *)url;
 
+/// Asked from the same point (OnBeforeBrowse), for the first request and
+/// for every redirect hop, before anything is sent. NO cancels the
+/// navigation -- the tab is about to load it in another engine -- and no
+/// -browserWillStartMainFrameNavigationTo: follows. Unimplemented means YES.
+- (BOOL)browserShouldStartMainFrameNavigationTo:(NSString *)url;
+
 /// Overall page-loading progress, 0.0-1.0 (browser-7z5) -- mirrors CEF's
 /// own CefDisplayHandler::OnLoadingProgressChange directly, a real
 /// percentage, not an approximation.

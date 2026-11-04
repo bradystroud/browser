@@ -84,6 +84,6 @@ final class ContentBlockerCoordinator {
         // settings UI of its own to manage one from.
         engineSettings["private"] = EngineProfileBlockingSettings(enabled: true, allowlistedHosts: [])
 
-        ActiveEngine.updateContentBlocking(domains: domains, profileSettings: engineSettings)
+        Engines.updateContentBlocking(domains: domains, profileSettings: engineSettings)
     }
 }

@@ -12,6 +12,7 @@
 #import "BRWCefApp.h"
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
+#include "BRWMessagePump.h"
 #import "BRWStringUtil.h"
 
 namespace {
@@ -55,6 +56,11 @@ ShutdownCompletionBlock __strong &PendingShutdownCompletion() {
 
 void CheckShutdownCompletion() {
   if (!PendingShutdownCompletion() || BRWClientHandler::LiveCount() > 0) {
+    return;
+  }
+  // CefShutdown inside a CefDoMessageLoopWork() tick trips a CEF CHECK. The
+  // pump checks again the moment that tick returns.
+  if (BRWMessagePump::Get().IsPerformingWork()) {
     return;
   }
   ShutdownCompletionBlock completion = PendingShutdownCompletion();
@@ -162,8 +168,13 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   // CloseAll() may not have needed to touch CEF at all (no open browsers),
   // in which case the message pump's next tick could be arbitrarily far
   // off (or never come, if the caller relies on this to signal quitting) --
-  // check right away rather than waiting on that pump.
-  CheckShutdownCompletion();
+  // so check without waiting on that pump, but on a fresh run-loop turn:
+  // this method can itself be running inside a CEF tick (Chromium answers
+  // SIGTERM with [NSApp terminate:] from there), and with no browser left
+  // a synchronous check would run CefShutdown inside it.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    CheckShutdownCompletion();
+  });
 }
 
 @end
