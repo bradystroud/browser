@@ -74,16 +74,33 @@ final class SidebarChrome {
     /// Re-run the window's chrome layout; called whenever the sidebar shows
     /// or hides itself.
     var onLayoutNeeded: (() -> Void)?
-    /// True while the omnibox is being edited, which keeps a revealed sidebar
-    /// out however far the pointer wanders.
+    /// True while the omnibox has the keyboard, which keeps a revealed
+    /// sidebar out however far the pointer wanders.
     var isOmniboxEditing: () -> Bool = { false }
+    /// True while something covers the whole window (Tab Overview), so the
+    /// pointer reaching the edge does not bring the sidebar out under it.
+    var isRevealSuppressed: () -> Bool = { false }
+    /// The window's profile was renamed or recoloured; the sidebar's tint
+    /// follows the profile colour.
+    var onProfileChanged: (() -> Void)?
 
     private(set) var isActive = false
     /// Out because the pointer reached the edge (or ⌘L asked for the
-    /// omnibox) while the sidebar is set to hidden.
+    /// omnibox, or a popover is hung from the column) while the sidebar is
+    /// set to hidden.
     private(set) var isRevealed = false
     private var revealTimer: Timer?
     private var concealTimer: Timer?
+    /// Things that need a revealed sidebar to stay out regardless of the
+    /// pointer: a popover or prompt hung from a view in the column. While
+    /// this is above zero the sidebar does not hide.
+    private var holdCount = 0
+    /// A hold taken for a popover that is about to be shown, waiting to
+    /// learn which popover it is (see holdOpenForNextPopover).
+    private var hasPendingPopoverHold = false
+    private var heldPopovers = Set<ObjectIdentifier>()
+    private var observers: [NSObjectProtocol] = []
+    private var hideButtonEdge: SidebarEdge?
 
     var edge: SidebarEdge { SidebarLayoutPreference.edge }
     var isShown: Bool { !SidebarLayoutPreference.isHidden || isRevealed }
@@ -94,7 +111,11 @@ final class SidebarChrome {
         hotZone.onEnter = { [weak self] in self?.pointerReachedEdge() }
         hotZone.onExit = { [weak self] in self?.revealTimer?.invalidate() }
         columnTracker.onExit = { [weak self] in self?.scheduleConceal() }
-        NotificationCenter.default.addObserver(
+        overflowButton.target = self
+        overflowButton.action = #selector(overflowButtonTapped(_:))
+        footerView.addSubview(overflowButton)
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
             forName: .sidebarLayoutPreferenceDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             guard let self else { return }
@@ -103,12 +124,33 @@ final class SidebarChrome {
             self.revealTimer?.invalidate()
             self.concealTimer?.invalidate()
             if self.isActive { self.onLayoutNeeded?() }
-        }
+        })
+        observers.append(center.addObserver(
+            forName: .profileManagerDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.isActive else { return }
+            self.onProfileChanged?()
+        })
+        observers.append(center.addObserver(
+            forName: NSPopover.willShowNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self, self.hasPendingPopoverHold, let popover = notification.object as? NSPopover else { return }
+            self.hasPendingPopoverHold = false
+            self.heldPopovers.insert(ObjectIdentifier(popover))
+        })
+        observers.append(center.addObserver(
+            forName: NSPopover.didCloseNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let self, let popover = notification.object as? NSPopover,
+                  self.heldPopovers.remove(ObjectIdentifier(popover)) != nil else { return }
+            self.endHold()
+        })
     }
 
     deinit {
         revealTimer?.invalidate()
         concealTimer?.invalidate()
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
     }
 
     /// Adds this layout's own views. The footer goes in the content view
@@ -162,9 +204,21 @@ final class SidebarChrome {
             isRevealed = false
             revealTimer?.invalidate()
             concealTimer?.invalidate()
+            holdCount = 0
+            hasPendingPopoverHold = false
+            heldPopovers.removeAll()
+            overflowedControls = []
+            unparkAll()
             return
         }
         let column = Self.columnMask(for: edge)
+        if hideButtonEdge != edge {
+            hideButtonEdge = edge
+            hideButton.image = NSImage(
+                systemSymbolName: edge == .left ? "sidebar.left" : "sidebar.right",
+                accessibilityDescription: "Hide Sidebar"
+            )
+        }
         footerView.isHidden = !isShown
         footerView.frame = frames.footer
         footerView.autoresizingMask = column.union(.maxYMargin)
@@ -220,8 +274,8 @@ final class SidebarChrome {
     // MARK: - Reveal on hover
 
     /// ⌘L or a new tab while the sidebar is hidden: bring it out so the
-    /// omnibox can be seen. It goes away again once editing ends and the
-    /// pointer is elsewhere.
+    /// omnibox can be seen. It goes away again once the omnibox loses the
+    /// keyboard and the pointer is elsewhere.
     func revealForOmnibox() {
         guard isActive, !isShown else { return }
         reveal()
@@ -233,10 +287,11 @@ final class SidebarChrome {
     }
 
     private func pointerReachedEdge() {
-        guard isActive, !isShown else { return }
+        guard isActive, !isShown, !isRevealSuppressed() else { return }
         revealTimer?.invalidate()
         revealTimer = Self.makeTimer(after: Self.revealDelay) { [weak self] in
-            guard let self, self.isActive, !self.isShown, self.hotZone.containsPointer else { return }
+            guard let self, self.isActive, !self.isShown, !self.isRevealSuppressed(),
+                  self.hotZone.containsPointer else { return }
             self.reveal()
         }
     }
@@ -251,34 +306,188 @@ final class SidebarChrome {
         scheduleConceal()
     }
 
-    private func scheduleConceal() {
+    private func conceal() {
+        revealTimer?.invalidate()
+        concealTimer?.invalidate()
         guard isRevealed else { return }
+        isRevealed = false
+        onLayoutNeeded?()
+    }
+
+    private func scheduleConceal() {
+        guard isRevealed, holdCount == 0 else { return }
         concealTimer?.invalidate()
         concealTimer = Self.makeTimer(after: Self.concealDelay) { [weak self] in
-            guard let self, self.isRevealed else { return }
+            guard let self, self.isRevealed, self.holdCount == 0 else { return }
             // Still wanted: pointer back in the column, a button held (a tab
-            // drag, a resize), or the omnibox mid-edit. Ask again later.
+            // drag, a resize), or the omnibox has the keyboard. Ask again
+            // later.
             if self.columnTracker.containsPointer || NSEvent.pressedMouseButtons != 0 || self.isOmniboxEditing() {
                 self.scheduleConceal()
                 return
             }
-            self.isRevealed = false
-            self.onLayoutNeeded?()
+            self.conceal()
         }
     }
 
-    /// Default run-loop mode only, deliberately: a context menu or popover
-    /// opened from the sidebar runs in event-tracking mode, and the sidebar
-    /// must not vanish from under a menu that is still open. The timer fires
-    /// once that menu closes and checks the pointer then.
+    /// Default run-loop mode only, deliberately: a menu opened from the
+    /// sidebar runs in event-tracking mode, and the sidebar must not vanish
+    /// from under a menu that is still open. The timer fires once that menu
+    /// closes and checks the pointer then. Popovers run no tracking loop, so
+    /// the timer does fire while one is open: a popover hung from the column
+    /// holds the sidebar out instead (holdOpenForNextPopover).
     private static func makeTimer(after delay: TimeInterval, _ block: @escaping () -> Void) -> Timer {
         let timer = Timer(timeInterval: delay, repeats: false) { _ in block() }
         RunLoop.main.add(timer, forMode: .default)
         return timer
     }
 
+    /// On a sidebar the pointer brought out the preference already says
+    /// hidden, so the button puts that reveal away at once instead.
     @objc private func hideButtonTapped() {
-        SidebarLayoutPreference.isHidden = true
+        if SidebarLayoutPreference.isHidden {
+            holdCount = 0
+            hasPendingPopoverHold = false
+            heldPopovers.removeAll()
+            conceal()
+        } else {
+            SidebarLayoutPreference.isHidden = true
+        }
+    }
+
+    // MARK: - Holding the sidebar open
+
+    /// Call just before showing a popover hung from a view in the column. A
+    /// hidden sidebar comes out first -- synchronously, so the anchor is in
+    /// place by the time the popover measures it -- and stays out until that
+    /// popover closes. If no popover shows before the next run-loop turn
+    /// (the caller's own guard said no, or it toggled one closed), the hold
+    /// lapses.
+    func holdOpenForNextPopover() {
+        guard isActive else { return }
+        if !isShown { reveal() }
+        guard isRevealed else { return }
+        if hasPendingPopoverHold { endHold() }
+        hasPendingPopoverHold = true
+        beginHold()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.hasPendingPopoverHold else { return }
+            self.hasPendingPopoverHold = false
+            self.endHold()
+        }
+    }
+
+    private func beginHold() {
+        holdCount += 1
+        concealTimer?.invalidate()
+    }
+
+    private func endHold() {
+        guard holdCount > 0 else { return }
+        holdCount -= 1
+        if holdCount == 0 { scheduleConceal() }
+    }
+
+    // MARK: - Footer overflow
+
+    /// The footer's "more" button: the trailing controls that do not fit
+    /// beside the profile pill are listed in its menu, rather than drawn
+    /// past the column's edge onto the page or off the window.
+    let overflowButton: NSButton = {
+        let button = NSButton()
+        button.title = ""
+        button.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "More Controls")
+        button.imagePosition = .imageOnly
+        button.applyChromeAppearance(.glass)
+        button.toolTip = "More"
+        button.isHidden = true
+        return button
+    }()
+
+    /// The trailing controls currently in the overflow menu, in slot order.
+    var overflowedControls: [NSView] = [] {
+        didSet { overflowButton.isHidden = overflowedControls.isEmpty }
+    }
+
+    func isOverflowed(_ view: NSView) -> Bool {
+        overflowedControls.contains { $0 === view }
+    }
+
+    @objc private func overflowButtonTapped(_ sender: NSButton) {
+        let menu = NSMenu()
+        for (index, view) in overflowedControls.enumerated() {
+            let button = view as? NSButton
+            let title = [button?.toolTip, view.accessibilityLabel(), button?.title]
+                .compactMap { $0 }.first { !$0.isEmpty } ?? "Control \(index + 1)"
+            let item = NSMenuItem(title: title, action: #selector(overflowItemChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            if let image = button?.image?.copy() as? NSImage {
+                image.size = NSSize(width: 16, height: 16)
+                item.image = image
+            }
+            item.isEnabled = (view as? NSControl)?.isEnabled ?? true
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    /// Presses an overflowed control. It stands where the overflow button is
+    /// for the length of the press, so a menu it pops up from itself opens
+    /// there rather than off the window; a popover it shows asks
+    /// BrowserWindowController.popoverAnchor(for:), which hands out the
+    /// overflow button for it.
+    @objc private func overflowItemChosen(_ sender: NSMenuItem) {
+        guard overflowedControls.indices.contains(sender.tag),
+              let control = overflowedControls[sender.tag] as? NSControl,
+              let host = control.superview, footerView.window != nil else { return }
+        let parkedFrame = control.frame
+        let presented = footerView.convert(overflowButton.frame, to: host)
+        control.frame = presented
+        control.performClick(nil)
+        if control.frame == presented { control.frame = parkedFrame }
+    }
+
+    // MARK: - Parked controls
+
+    /// What a parked control's own focus and accessibility settings were,
+    /// so unparking puts back exactly what its owner chose.
+    private struct ParkedState {
+        weak var view: NSView?
+        let refusedFirstResponder: Bool
+        let wasAccessibilityElement: Bool
+    }
+
+    private var parked: [ObjectIdentifier: ParkedState] = [:]
+
+    /// A trailing control moved out of the window (sidebar hidden, or in the
+    /// overflow menu) is still unhidden -- its owner decides that -- so it
+    /// leaves the key-view loop and the accessibility tree instead.
+    func setParked(_ view: NSView, _ isParked: Bool) {
+        let key = ObjectIdentifier(view)
+        if isParked {
+            guard parked[key] == nil else { return }
+            let control = view as? NSControl
+            parked[key] = ParkedState(
+                view: view, refusedFirstResponder: control?.refusesFirstResponder ?? false,
+                wasAccessibilityElement: view.isAccessibilityElement()
+            )
+            control?.refusesFirstResponder = true
+            view.setAccessibilityElement(false)
+            if view.window?.firstResponder === view { view.window?.makeFirstResponder(nil) }
+        } else if let state = parked.removeValue(forKey: key) {
+            (view as? NSControl)?.refusesFirstResponder = state.refusedFirstResponder
+            view.setAccessibilityElement(state.wasAccessibilityElement)
+        }
+    }
+
+    func unparkAll() {
+        for state in parked.values {
+            guard let view = state.view else { continue }
+            (view as? NSControl)?.refusesFirstResponder = state.refusedFirstResponder
+            view.setAccessibilityElement(state.wasAccessibilityElement)
+        }
+        parked.removeAll()
     }
 }
 

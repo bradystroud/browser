@@ -133,7 +133,7 @@ final class DownloadsToolbarController: NSObject, NSPopoverDelegate {
     // MARK: - Popover
 
     private func showPopover() {
-        guard let anchor = buttonView, !anchor.isHidden,
+        guard let button = buttonView, !button.isHidden,
               let controller = window?.windowController as? BrowserWindowController else { return }
         let content = DownloadsPopoverViewController(
             profile: controller.profile,
@@ -144,6 +144,7 @@ final class DownloadsToolbarController: NSObject, NSPopoverDelegate {
         )
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
+        let anchor = controller.popoverAnchor(for: button)
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
 

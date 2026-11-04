@@ -586,9 +586,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentContainerView.wantsLayer = true
         contentView.addSubview(contentContainerView)
 
-        sidebarChrome.install(in: contentView, header: toolbarView)
-        sidebarChrome.onLayoutNeeded = { [weak self] in self?.applyChromeLayout() }
-        sidebarChrome.isOmniboxEditing = { [weak self] in self?.isOmniboxFocused ?? false }
+        installSidebarChrome(in: contentView)
 
         applyChromeLayout()
 
@@ -754,6 +752,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 ("omnibox", self.omniboxContainerView), ("newTab", self.newTabToolbarButton),
                 ("privateBadge", self.privateLabel), ("hairline", self.chromeSeparator),
                 ("siteGlyph", self.siteButton), ("field", self.omniboxField),
+                ("page", self.contentContainerView), ("overflow", self.sidebarChrome.overflowButton),
             ]
             for (name, view) in named {
                 if let entry = describe(name, view) { parts.append(entry) }
@@ -1916,7 +1915,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     @objc private func toggleContentBlockerPopover(_ sender: Any?) {
         guard let tab = activeTab, let host = URL(string: tab.urlString)?.host else { return }
         contentBlockerPopover.toggle(
-            anchorView: contentBlockerButton, profileId: profile.id, host: host,
+            anchorView: popoverAnchor(for: contentBlockerButton), profileId: profile.id, host: host,
             blockedCount: tab.blockedRequestCount,
             // Passing the tracker set is what lets the popover NAME what it
             // blocked, and count trackers rather than requests (browser-e7r).
@@ -2435,7 +2434,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     @objc func addBookmark(_ sender: Any?) {
         guard let tab = activeTab else { return }
         let bookmarks = ProfileDataStoreManager.shared.stores(for: profile).bookmarks
-        addBookmarkPrompt.show(pageTitle: tab.title, bookmarks: bookmarks, anchorView: omniboxField) { name, folderId in
+        addBookmarkPrompt.show(pageTitle: tab.title, bookmarks: bookmarks, anchorView: popoverAnchor(for: omniboxField)) { name, folderId in
             try? bookmarks.addBookmark(title: name, url: tab.urlString, parentId: folderId)
         }
     }
@@ -2631,7 +2630,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
 
         pendingPermissionRequest = (tab, promptId)
-        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: omniboxField) { [weak self] allow in
+        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: popoverAnchor(for: omniboxField)) { [weak self] allow in
             self?.pendingPermissionRequest = nil
             store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
             decision(allow)
@@ -2729,7 +2728,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
               omniboxField.currentEditor() == nil else { return }
         let anchor: NSView = siteButton.isHidden ? omniboxContainerView : siteButton
         let hasSite = SiteIdentity.host(forURLString: tab.urlString) != nil
-        siteCard.show(for: tab, relativeTo: anchor, actions: SiteCardActions(
+        siteCard.show(for: tab, relativeTo: popoverAnchor(for: anchor), actions: SiteCardActions(
             copyAddress: { [weak self] in self?.copyCurrentURL(nil) },
             print: { [weak self] in self?.activeTab?.print() },
             showSiteSettings: hasSite ? { [weak self] in
@@ -2928,10 +2927,44 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 /// here, apart from the other two orientations' code, so the layout reads as
 /// one piece.
 extension BrowserWindowController {
+    /// The narrowest the profile pill is squeezed to before trailing controls
+    /// move into the footer's overflow menu: room for its glyph and a short
+    /// profile name.
+    fileprivate static let sidebarIdentityMinimumWidth: CGFloat = 76
+
+    /// Hooks SidebarChrome up to this window. Called once, from setUpViews.
+    fileprivate func installSidebarChrome(in contentView: NSView) {
+        sidebarChrome.install(in: contentView, header: toolbarView)
+        sidebarChrome.onLayoutNeeded = { [weak self] in self?.applyChromeLayout() }
+        // The field editor is attached from ⌘L or a click on, well before
+        // controlTextDidBeginEditing, which waits for the first keystroke.
+        sidebarChrome.isOmniboxEditing = { [weak self] in
+            guard let self else { return false }
+            return self.isOmniboxFocused || self.omniboxField.currentEditor() != nil
+        }
+        sidebarChrome.isRevealSuppressed = { [weak self] in self?.tabOverview.isShowing ?? false }
+        sidebarChrome.onProfileChanged = { [weak self] in
+            guard let self, self.tabStripOrientation == .sidebar else { return }
+            self.applySidebarTint()
+        }
+    }
+
+    /// Where a popover or prompt hung from `view` should hang from. In the
+    /// sidebar layout this brings a hidden sidebar out (and keeps it out
+    /// until the popover closes), and hands out the footer's overflow button
+    /// for a control that is in its menu. Every other layout gets `view`
+    /// back unchanged. Call it immediately before showing the popover.
+    func popoverAnchor(for view: NSView) -> NSView {
+        guard tabStripOrientation == .sidebar else { return view }
+        sidebarChrome.holdOpenForNextPopover()
+        return sidebarChrome.isOverflowed(view) ? sidebarChrome.overflowButton : view
+    }
+
     /// Everything that differs between the sidebar layout and the other two,
     /// switched both ways, so leaving the layout restores exactly what the
     /// other orientations expect: the toolbar band and its hairline, the
-    /// profile pill and private badge back in the toolbar row, square page
+    /// profile pill and private badge back in the toolbar row under the
+    /// omnibox, the trailing controls' toolbar autoresizing, square page
     /// corners and the traffic lights at the leading edge.
     fileprivate func setSidebarLayoutActive(_ active: Bool) {
         chromeBackground.isHidden = active
@@ -2941,15 +2974,20 @@ extension BrowserWindowController {
         let identityHost: NSView = active ? sidebarChrome.footerView : toolbarView
         for view in [profilePillButton as NSView?, privateLabel as NSView?].compactMap({ $0 })
         where view.superview !== identityHost {
-            identityHost.addSubview(view)
+            if active {
+                identityHost.addSubview(view)
+            } else {
+                identityHost.addSubview(view, positioned: .below, relativeTo: omniboxContainerView)
+            }
         }
+        privateLabel?.autoresizingMask = active ? [] : [.minXMargin]
 
         contentContainerView.layer?.cornerRadius = active ? SidebarChrome.pageCornerRadius : 0
         contentContainerView.layer?.cornerCurve = .continuous
         if #available(macOS 14.0, *) {
             contentContainerView.clipsToBounds = active
-        } else if active {
-            contentContainerView.layer?.masksToBounds = true
+        } else {
+            contentContainerView.layer?.masksToBounds = active
         }
 
         if let window = window as? BrowserWindow {
@@ -2959,9 +2997,15 @@ extension BrowserWindowController {
         }
         if !active {
             sidebarChrome.apply(nil)
+            tabStripView.backdropTint = nil
+            for control in trailingControls.values {
+                control.view?.autoresizingMask = [.minXMargin, .minYMargin]
+            }
         }
         if let tab = activeTab {
             updateChromeTint(for: tab)
+        } else if active {
+            applySidebarTint()
         }
     }
 
@@ -2992,30 +3036,73 @@ extension BrowserWindowController {
     /// The footer row: the trailing toolbar controls packed against the
     /// column's trailing edge in slot order, as they are in the toolbar row,
     /// then the profile pill or private badge on the leading side in what is
-    /// left. With the sidebar hidden they are parked outside the window --
-    /// their owners decide whether they are hidden, so moving them is the
-    /// one way to keep them off the page without overriding that.
+    /// left. What does not fit between the edge insets with the pill kept
+    /// readable goes into the overflow menu, the last slots first, so nothing
+    /// is ever drawn past the column onto the page.
+    ///
+    /// Overflowed controls, and every control while the sidebar is hidden,
+    /// are parked outside the window: their owners decide whether they are
+    /// hidden, so moving them is the one way to keep them off the page
+    /// without overriding that.
     fileprivate func layoutSidebarFooterControls() {
         let footer = sidebarChrome.footerView.frame
         let size = ChromeMetrics.controlHeight
         let gap = ChromeMetrics.controlSpacing
+        let inset = ChromeMetrics.edgeInset
         let shown = sidebarChrome.isShown
-        var minX = footer.maxX - ChromeMetrics.edgeInset
-        var placedAny = false
+        let mask = SidebarChrome.columnMask(for: sidebarChrome.edge).union(.maxYMargin)
+
+        var visible: [NSView] = []
         for slot in trailingControls.keys.sorted() {
             guard let view = trailingControls[slot]?.view, view.superview != nil else {
                 trailingControls[slot] = nil
                 continue
             }
-            guard !view.isHidden else { continue }
-            let maxX = placedAny ? minX - gap : minX
-            view.frame = NSRect(
-                x: maxX - size, y: shown ? (footer.midY - size / 2).rounded() : -size * 2,
+            if view.isHidden {
+                sidebarChrome.setParked(view, false)
+            } else {
+                visible.append(view)
+            }
+        }
+
+        let identityWidth = sidebarIdentityFittedWidth().map {
+            min($0, Self.sidebarIdentityMinimumWidth) + ChromeMetrics.groupSpacing
+        } ?? 0
+        let room = footer.width - inset * 2 - identityWidth
+        func rowWidth(_ count: Int) -> CGFloat {
+            count == 0 ? 0 : CGFloat(count) * size + CGFloat(count - 1) * gap
+        }
+        var fitting = visible.count
+        if rowWidth(fitting) > room {
+            // The overflow button takes a slot of its own.
+            fitting = 0
+            while fitting < visible.count - 1, rowWidth(fitting + 2) <= room { fitting += 1 }
+        }
+        let overflowed = Array(visible[fitting...])
+        sidebarChrome.overflowedControls = overflowed
+
+        let parkedY = -size * 2
+        let rowY = (footer.midY - size / 2).rounded()
+        var minX = footer.maxX - inset
+        for (index, view) in visible[..<fitting].enumerated() {
+            let maxX = index == 0 ? minX : minX - gap
+            view.frame = NSRect(x: maxX - size, y: shown ? rowY : parkedY, width: size, height: size)
+            view.autoresizingMask = mask
+            sidebarChrome.setParked(view, !shown)
+            minX = maxX - size
+        }
+        if !overflowed.isEmpty {
+            let maxX = fitting == 0 ? minX : minX - gap
+            sidebarChrome.overflowButton.frame = NSRect(
+                x: maxX - size - footer.minX, y: ((footer.height - size) / 2).rounded(),
                 width: size, height: size
             )
-            view.autoresizingMask = SidebarChrome.columnMask(for: sidebarChrome.edge).union(.maxYMargin)
             minX = maxX - size
-            placedAny = true
+        }
+        for view in overflowed {
+            view.frame = NSRect(x: minX, y: parkedY, width: size, height: size)
+            view.autoresizingMask = mask
+            sidebarChrome.setParked(view, true)
         }
         trailingControlsMinX = minX
         if profilePillButton != nil {
@@ -3023,6 +3110,15 @@ extension BrowserWindowController {
         } else if let privateLabel {
             layoutSidebarIdentityControl(privateLabel, fittedWidth: privateLabel.fittingSize.width)
         }
+    }
+
+    /// The profile pill's or private badge's natural width, or nil if the
+    /// window has neither.
+    private func sidebarIdentityFittedWidth() -> CGFloat? {
+        if let profilePillButton {
+            return max(44, profilePillButton.fittingSize.width).rounded()
+        }
+        return privateLabel?.fittingSize.width
     }
 
     /// The profile pill or private badge at the footer's leading edge, in
@@ -3040,15 +3136,17 @@ extension BrowserWindowController {
 
     /// The whole window takes the profile's colour in the sidebar layout,
     /// not the page's theme colour: the sidebar is the profile's space, and
-    /// it should read as that profile whatever page is open. Same alpha as
-    /// the toolbar's theme tint, which is what TabButtonView's selected-pill
-    /// contrast check expects the surface behind it to carry.
+    /// it should read as that profile whatever page is open. The tab strip
+    /// is told the same colour, so the selected tab's contrast is measured
+    /// against the backdrop it is really drawn on.
     fileprivate func applySidebarTint() {
         let profileColor: NSColor = isPrivate
             ? .black
             : (ProfileManager.shared.profile(id: profile.id).flatMap { NSColor(hex: $0.colorHex) }
                 ?? NSColor(hex: profile.colorHex) ?? .controlAccentColor)
-        tabSidebarBackground.tintColor = profileColor.withAlphaComponent(0.16)
+        let tint = profileColor.withAlphaComponent(0.16)
+        tabSidebarBackground.tintColor = tint
+        tabStripView.backdropTint = tint
     }
 }
 
