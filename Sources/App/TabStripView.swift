@@ -673,6 +673,8 @@ final class TabStripView: NSView {
         }
         configureHierarchyForOrientation()
         needsLayout = true
+        // configureHierarchyForOrientation scrolls back to the start.
+        scrollSelectionIntoView()
     }
 
     private func configureHierarchyForOrientation() {
@@ -692,6 +694,10 @@ final class TabStripView: NSView {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    /// The size the last layout ran at, so a resize can be told apart from
+    /// the many layouts that change nothing about the strip's own size.
+    private var lastLayoutSize: NSSize?
+
     override func layout() {
         super.layout()
         if isVertical {
@@ -700,6 +706,13 @@ final class TabStripView: NSView {
             layoutHorizontalContainers()
         }
         layoutTabs()
+        // A narrower window can leave the selected tab past the new edge.
+        // Not mid-drag: the dragged pill is the selection, and it belongs to
+        // the pointer until the drop.
+        if bounds.size != lastLayoutSize {
+            lastLayoutSize = bounds.size
+            if drag == nil { revealSelection() }
+        }
     }
 
     /// The scroll view fills the strip, and its document view is as wide as
