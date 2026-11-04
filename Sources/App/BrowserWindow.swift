@@ -38,6 +38,11 @@ final class BrowserWindow: NSWindow {
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         DevBuildIndicator.attach(to: self)
+        for name in [NSWindow.willEnterFullScreenNotification, NSWindow.didEnterFullScreenNotification,
+                     NSWindow.didExitFullScreenNotification] {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(fullScreenStateDidChange(_:)), name: name, object: self)
+        }
         readerMode.attach(to: self)
         downloadsToolbar.attach(to: self)
         ExtensionsCoordinator.shared.activate()
@@ -90,7 +95,9 @@ final class BrowserWindow: NSWindow {
     }
 
     /// Hides the traffic lights outright: the sidebar layout with its sidebar
-    /// hidden has nothing but the page under them.
+    /// hidden has nothing but the page under them. Ignored in full screen,
+    /// where the lights live in the menu-bar reveal rather than over the
+    /// page, and the green one is the way back out.
     var hidesTrafficLights = false {
         didSet {
             guard oldValue != hidesTrafficLights else { return }
@@ -99,10 +106,15 @@ final class BrowserWindow: NSWindow {
     }
 
     private func applyTrafficLightVisibility() {
+        let hidden = hidesTrafficLights && !styleMask.contains(.fullScreen)
         for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            guard let button = standardWindowButton(type), button.isHidden != hidesTrafficLights else { continue }
-            button.isHidden = hidesTrafficLights
+            guard let button = standardWindowButton(type), button.isHidden != hidden else { continue }
+            button.isHidden = hidden
         }
+    }
+
+    @objc private func fullScreenStateDidChange(_ notification: Notification) {
+        applyTrafficLightVisibility()
     }
 
     /// The traffic lights' trailing edge, in window coordinates, once moved:
