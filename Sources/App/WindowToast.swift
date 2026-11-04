@@ -10,12 +10,13 @@ final class WindowToast {
     private var hideWorkItem: DispatchWorkItem?
 
     /// `topY` is the y (in `container`'s coordinates) of the top of the page
-    /// area; the toast hangs just below it, centred.
-    func show(_ message: String, symbolName: String? = nil, in container: NSView, belowY topY: CGFloat) {
+    /// area; the toast hangs just below it, centred on `midX` (the page's
+    /// centre), or on the container when that is not given.
+    func show(_ message: String, symbolName: String? = nil, in container: NSView, belowY topY: CGFloat, centredOn midX: CGFloat? = nil) {
         view.configure(message: message, symbolName: symbolName)
         let size = view.fittingSize
         view.frame = NSRect(
-            x: ((container.bounds.width - size.width) / 2).rounded(),
+            x: ((midX ?? container.bounds.midX) - size.width / 2).rounded(),
             y: (topY - size.height - 12).rounded(),
             width: size.width, height: size.height)
         view.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]

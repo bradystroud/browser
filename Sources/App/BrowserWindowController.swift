@@ -205,6 +205,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// where the page is inset and the sidebar may be on the right.
     var contentAreaMaxX: CGFloat { contentContainerView.frame.maxX }
 
+    /// The web content area's horizontal centre, in the same coordinates:
+    /// what prompts and toasts over the page centre on.
+    var contentAreaMidX: CGFloat { contentContainerView.frame.midX }
+
     /// The toolbar/omnibox row's own height. The toolbar always occupies
     /// the top toolbarRowHeight points of window.contentView regardless of
     /// where the tab strip sits relative to it (see setUpViews), so
@@ -2209,11 +2213,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// same value). Rapid repeat presses cancel and restart the same
     /// timer rather than stacking reverts.
     private func showCopiedFeedback(for tab: Tab) {
-        // The pill can't say it while it is being edited, so the page says it
-        // instead: an in-window view, never a window of its own.
-        guard !isOmniboxFocused, omniboxField.currentEditor() == nil else {
+        // The pill can't say it while it is being edited, or while the
+        // sidebar layout's hidden sidebar has it out of sight, so the page
+        // says it instead: an in-window view, never a window of its own.
+        guard !isOmniboxFocused, omniboxField.currentEditor() == nil, !toolbarView.isHidden else {
             if let contentView = window?.contentView {
-                toast.show("Copied to Clipboard", symbolName: "doc.on.clipboard", in: contentView, belowY: contentAreaTopY)
+                toast.show("Copied to Clipboard", symbolName: "doc.on.clipboard", in: contentView, belowY: contentAreaTopY, centredOn: contentAreaMidX)
             }
             return
         }

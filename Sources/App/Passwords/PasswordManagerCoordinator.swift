@@ -420,7 +420,7 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
 
     private static func anchorFrame(in contentView: NSView, controller: BrowserWindowController) -> NSRect {
         NSRect(
-            x: contentView.bounds.width / 2 - 150,
+            x: controller.contentAreaMidX - 150,
             y: controller.contentAreaTopY,
             width: 300,
             height: 1
