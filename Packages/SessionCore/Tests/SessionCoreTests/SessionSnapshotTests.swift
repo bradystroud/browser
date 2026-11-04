@@ -81,4 +81,42 @@ struct SessionSnapshotBackCompatTests {
         )
         #expect(String(decoding: encoded, as: UTF8.self).contains("isPinned"))
     }
+
+    @Test("a file written before per-tab engines loads, with no engine or override")
+    func missingEngine() throws {
+        let decoded = try snapshot("""
+        {"windows":[{"profileId":"p1","tabs":[{"url":"https://a.example","title":"A"}],"activeTabIndex":0}]}
+        """)
+        let tab = try #require(decoded.windows.first?.tabs.first)
+        #expect(tab.engine == nil)
+        #expect(tab.engineOverride == nil)
+    }
+
+    @Test("a tab's engine and override round-trip, and a broken override loses only itself")
+    func engineRoundTrip() throws {
+        let tab = SessionSnapshot.Tab(
+            url: "https://play.hbomax.com", title: "Max", engine: "webkit",
+            engineOverride: SessionSnapshot.SavedEngineOverride(engine: "cef", host: "hbomax.com"))
+        let decoded = try JSONDecoder().decode(SessionSnapshot.Tab.self, from: JSONEncoder().encode(tab))
+        #expect(decoded == tab)
+        let startPage = SessionSnapshot.Tab(
+            url: "", title: "", engine: "cef",
+            engineOverride: SessionSnapshot.SavedEngineOverride(engine: "webkit", host: nil))
+        #expect(try JSONDecoder().decode(SessionSnapshot.Tab.self, from: JSONEncoder().encode(startPage)) == startPage)
+
+        let broken = try JSONDecoder().decode(SessionSnapshot.Tab.self, from: Data("""
+        {"url":"https://a.example","title":"A","engine":"webkit","engineOverride":{"host":"a.example"}}
+        """.utf8))
+        #expect(broken.engine == "webkit")
+        #expect(broken.engineOverride == nil)
+    }
+
+    @Test("a closed tab keeps its engine for reopening")
+    func closedTabEngine() throws {
+        let closed = ClosedTab(
+            tab: SessionSnapshot.Tab(url: "https://a.example", title: "A", engine: "webkit"),
+            profileId: "p1", index: 0, closedAt: Date(timeIntervalSince1970: 0))
+        let decoded = try JSONDecoder().decode(ClosedTab.self, from: JSONEncoder().encode(closed))
+        #expect(decoded.tab.engine == "webkit")
+    }
 }

@@ -27,16 +27,27 @@ struct SessionSnapshot: Codable {
         /// with no extra fallback needed, unlike isPinned's Bool above
         /// (which has no "absent" state of its own).
         let groupId: UUID?
+        /// The engine the tab's page was in (`cef` or `webkit`, the
+        /// `--engine` names), so a tab a rule or a redirect put in an engine
+        /// comes back in it rather than being decided again from the rules.
+        /// nil in an older file, or for a value this version does not know:
+        /// the rules then decide, as they always did.
+        let engine: String?
+        /// The tab's "Reopen in ..." choice, which rules do not override.
+        let engineOverride: SavedEngineOverride?
 
-        init(url: String, title: String, isPinned: Bool = false, groupId: UUID? = nil) {
+        init(url: String, title: String, isPinned: Bool = false, groupId: UUID? = nil,
+             engine: String? = nil, engineOverride: SavedEngineOverride? = nil) {
             self.url = url
             self.title = title
             self.isPinned = isPinned
             self.groupId = groupId
+            self.engine = engine
+            self.engineOverride = engineOverride
         }
 
         private enum CodingKeys: String, CodingKey {
-            case url, title, isPinned, groupId
+            case url, title, isPinned, groupId, engine, engineOverride
         }
 
         init(from decoder: Decoder) throws {
@@ -45,6 +56,9 @@ struct SessionSnapshot: Codable {
             title = try container.decode(String.self, forKey: .title)
             isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
             groupId = try container.decodeIfPresent(UUID.self, forKey: .groupId)
+            engine = try container.decodeIfPresent(String.self, forKey: .engine)
+            // A malformed override loses only itself, never the tab.
+            engineOverride = try? container.decodeIfPresent(SavedEngineOverride.self, forKey: .engineOverride)
         }
 
         func encode(to encoder: Encoder) throws {
@@ -53,7 +67,16 @@ struct SessionSnapshot: Codable {
             try container.encode(title, forKey: .title)
             try container.encode(isPinned, forKey: .isPinned)
             try container.encodeIfPresent(groupId, forKey: .groupId)
+            try container.encodeIfPresent(engine, forKey: .engine)
+            try container.encodeIfPresent(engineOverride, forKey: .engineOverride)
         }
+    }
+
+    /// A tab's "Reopen in ..." override as saved: the engine it chose, and
+    /// the host it was made on (nil when made on the start page).
+    struct SavedEngineOverride: Codable, Equatable {
+        let engine: String
+        let host: String?
     }
 
     /// A persisted tab group -- see TabGroup for the live in-memory type this
