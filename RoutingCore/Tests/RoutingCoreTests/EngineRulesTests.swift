@@ -36,6 +36,23 @@ struct EngineSitePatternTests {
         #expect(!pattern.matches(host: "www.amazon.com", path: ""))
     }
 
+    @Test("a trailing slash on a path rule still covers the bare path")
+    func trailingSlash() throws {
+        let pattern = try #require(EngineSitePattern("amazon.com/gp/video/"))
+        #expect(pattern == EngineSitePattern("amazon.com/gp/video"))
+        #expect(pattern.matches(host: "www.amazon.com", path: "/gp/video"))
+        #expect(pattern.matches(host: "www.amazon.com", path: "/gp/video/x"))
+        #expect(!pattern.matches(host: "www.amazon.com", path: "/gp/videos"))
+        #expect(try #require(EngineSitePattern("x.com//")).pathPrefix == nil)
+    }
+
+    @Test("a pattern with a port is refused")
+    func port() {
+        #expect(EngineSitePattern("example.com:8080") == nil)
+        #expect(EngineSitePattern("https://example.com:443/path") == nil)
+        #expect(EngineSitePattern("localhost:3000") == nil)
+    }
+
     @Test("an internationalized pattern matches the punycode host")
     func idn() throws {
         let pattern = try #require(EngineSitePattern("bücher.de"))
@@ -71,11 +88,16 @@ struct EngineRuleMatcherTests {
             "https://www.netflix.com/watch/1", "https://www.disneyplus.com/", "https://play.max.com/",
             "https://www.primevideo.com/", "https://www.amazon.com/gp/video/storefront",
             "https://tv.apple.com/us/show/x", "https://open.spotify.com/track/1",
+            "https://accounts.spotify.com/login", "https://www.spotify.com/", "https://play.hbomax.com/",
+            "https://www.amazon.co.uk/gp/video/storefront", "https://www.amazon.com.au/gp/video",
+            "https://www.amazon.de/gp/video/detail/1", "https://www.amazon.co.jp/gp/video/",
+            "https://www.amazon.ca/gp/video",
         ] {
             #expect(EngineRuleMatcher.matchingRule(for: url, in: rules)?.engine == .webkit, "\(url)")
         }
         #expect(EngineRuleMatcher.matchingRule(for: "https://www.amazon.com/dp/B0001", in: rules) == nil)
-        #expect(EngineRuleMatcher.matchingRule(for: "https://www.spotify.com/", in: rules) == nil)
+        #expect(EngineRuleMatcher.matchingRule(for: "https://www.amazon.co.uk/dp/B0001", in: rules) == nil)
+        #expect(Set(BuiltInEngineRules.all.map(\.id)).count == BuiltInEngineRules.all.count)
     }
 
     @Test("a disabled built-in no longer matches, and user rules come first")
@@ -96,6 +118,45 @@ struct EngineRuleMatcherTests {
         #expect(try JSONDecoder().decode(EngineRuleConfiguration.self, from: data) == config)
         #expect(String(decoding: data, as: UTF8.self).contains("\"cef\"") == false)
         #expect(String(decoding: try JSONEncoder().encode(SiteEngine.chromium), as: UTF8.self) == "\"cef\"")
+    }
+
+    @Test("one unreadable rule is skipped, not the whole file")
+    func lossyDecoding() throws {
+        let json = """
+        {"userRules": [
+            {"id": "a", "pattern": "a.com", "engine": "webkit", "isEnabled": false},
+            {"id": "b", "pattern": "b.com", "engine": "gecko", "isEnabled": true},
+            {"id": "c", "pattern": "c.com", "engine": "cef"},
+            {"id": "d", "engine": "cef"},
+            {"pattern": "e.com", "engine": "webkit"}
+        ]}
+        """
+        let config = try JSONDecoder().decode(EngineRuleConfiguration.self, from: Data(json.utf8))
+        #expect(config.userRules.map(\.pattern) == ["a.com", "c.com", "e.com"])
+        #expect(config.userRules[0].isEnabled == false)
+        #expect(config.userRules[1].isEnabled == true)
+        #expect(!config.userRules[2].id.isEmpty)
+        #expect(config.disabledBuiltInIds.isEmpty)
+        #expect(try JSONDecoder().decode(EngineRuleConfiguration.self, from: Data("{}".utf8)) == EngineRuleConfiguration())
+    }
+
+    @Test("always-open puts its rule first and reuses the same site's rule")
+    func setEngineFirst() throws {
+        var config = EngineRuleConfiguration(userRules: [
+            EngineSiteRule(id: "broad", pattern: "example.com", engine: .webkit),
+            EngineSiteRule(id: "same", pattern: "https://docs.example.com/", engine: .webkit, isEnabled: false),
+        ])
+        let rule = config.setEngine(.chromium, forPattern: "docs.example.com")
+        #expect(rule.id == "same")
+        #expect(config.userRules.map(\.id) == ["same", "broad"])
+        #expect(config.userRules[0].isEnabled)
+        #expect(EngineRuleMatcher.matchingRule(for: "https://docs.example.com/x", in: config.effectiveRules)?.engine == .chromium)
+
+        let wildcard = config.setEngine(.webkit, forPattern: "*.x.com")
+        let bare = config.setEngine(.chromium, forPattern: "x.com")
+        #expect(wildcard.id == bare.id)
+        #expect(config.userRules.count == 3)
+        #expect(config.userRules[0].engine == .chromium)
     }
 }
 
@@ -160,6 +221,24 @@ struct EngineSwitchPolicyTests {
         let startPageOverride = EngineOverride(engine: .webkit, url: "data:text/html,start")
         #expect(startPageOverride.host == nil)
         #expect(decide("https://other.com/", .explicitLoad, current: .webkit, override: startPageOverride).clearsOverride)
+    }
+
+    @Test("an override covers its site's subdomains but never a parent domain")
+    func overrideNotParent() {
+        let override = EngineOverride(engine: .webkit, url: "https://user.github.io/page")
+        #expect(decide("https://user.github.io/other", .explicitLoad, current: .webkit, override: override).engine == .webkit)
+        #expect(decide("https://a.user.github.io/", .explicitLoad, current: .webkit, override: override).engine == .webkit)
+        let parent = decide("https://github.io/", .explicitLoad, current: .webkit, override: override)
+        #expect(parent.engine == .chromium)
+        #expect(parent.clearsOverride)
+    }
+
+    @Test("an override restored from a session matches one made live")
+    func restoredOverride() {
+        let live = EngineOverride(engine: .webkit, url: "https://www.Example.com/a")
+        #expect(live.host == "example.com")
+        #expect(EngineOverride(engine: .webkit, host: live.host) == live)
+        #expect(EngineOverride(engine: .chromium, host: nil).host == nil)
     }
 
     @Test("the swap throttle stops a ping-pong")

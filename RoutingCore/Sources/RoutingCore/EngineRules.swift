@@ -26,6 +26,21 @@ public struct EngineSiteRule: Codable, Equatable, Identifiable, Sendable {
         self.engine = engine
         self.isEnabled = isEnabled
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, pattern, engine, isEnabled
+    }
+
+    /// Only `pattern` and `engine` are required. An engine name this version
+    /// does not know throws, which drops that one rule (see
+    /// EngineRuleConfiguration's decoder), never the file.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        pattern = try container.decode(String.self, forKey: .pattern)
+        engine = try container.decode(SiteEngine.self, forKey: .engine)
+        isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+    }
 }
 
 /// A parsed `EngineSiteRule.pattern`.
@@ -36,7 +51,8 @@ public struct EngineSitePattern: Equatable, Sendable {
     public let pathPrefix: String?
 
     /// nil for a pattern with no usable host -- an empty string, a bare `*`,
-    /// or anything with a scheme other than http(s).
+    /// anything with a scheme other than http(s) -- or with a port, which
+    /// could never match: `matches(host:path:)` is given hosts, never ports.
     public init?(_ pattern: String) {
         var text = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
         if let schemeRange = text.range(of: "://") {
@@ -49,13 +65,16 @@ public struct EngineSitePattern: Equatable, Sendable {
         var path: String?
         if let slash = text.firstIndex(of: "/") {
             host = String(text[..<slash])
-            let rest = String(text[slash...])
-            path = rest == "/" ? nil : rest
+            // A trailing slash is dropped, so `amazon.com/gp/video/` means
+            // what `amazon.com/gp/video` does and also covers the bare path.
+            var rest = Substring(text[slash...])
+            while rest.hasSuffix("/") { rest = rest.dropLast() }
+            path = rest.isEmpty ? nil : String(rest)
         } else {
             host = text
         }
         let domain = RuleMatcher.normalizedDomain(host)
-        guard !domain.isEmpty, !domain.contains("*"), !domain.contains(" ") else { return nil }
+        guard !domain.isEmpty, !domain.contains("*"), !domain.contains(" "), !domain.contains(":") else { return nil }
         self.domain = domain
         self.pathPrefix = path
     }
@@ -67,7 +86,7 @@ public struct EngineSitePattern: Equatable, Sendable {
         let path = path.isEmpty ? "/" : path
         guard path.lowercased().hasPrefix(pathPrefix.lowercased()) else { return false }
         // `/gp/video` covers `/gp/video` and `/gp/video/...`, not `/gp/videos`.
-        if pathPrefix.hasSuffix("/") || path.count == pathPrefix.count { return true }
+        if path.count == pathPrefix.count { return true }
         let next = path[path.index(path.startIndex, offsetBy: pathPrefix.count)]
         return next == "/" || next == "?" || next == "#"
     }
@@ -85,10 +104,25 @@ public enum BuiltInEngineRules {
         EngineSiteRule(id: "builtin.netflix", pattern: "netflix.com", engine: .webkit),
         EngineSiteRule(id: "builtin.disneyplus", pattern: "disneyplus.com", engine: .webkit),
         EngineSiteRule(id: "builtin.max", pattern: "max.com", engine: .webkit),
+        // Where max.com redirects.
+        EngineSiteRule(id: "builtin.hbomax", pattern: "hbomax.com", engine: .webkit),
         EngineSiteRule(id: "builtin.primevideo", pattern: "primevideo.com", engine: .webkit),
         EngineSiteRule(id: "builtin.amazon-video", pattern: "amazon.com/gp/video", engine: .webkit),
+    ] + amazonVideoStorefronts.map { domain in
+        EngineSiteRule(id: "builtin.amazon-video.\(domain)", pattern: "\(domain)/gp/video", engine: .webkit)
+    } + [
         EngineSiteRule(id: "builtin.apple-tv", pattern: "tv.apple.com", engine: .webkit),
-        EngineSiteRule(id: "builtin.spotify", pattern: "open.spotify.com", engine: .webkit),
+        // The whole domain, not just the web player: signing in happens on
+        // accounts.spotify.com, and its cookies must land in the engine
+        // that plays.
+        EngineSiteRule(id: "builtin.spotify", pattern: "spotify.com", engine: .webkit),
+    ]
+
+    /// Amazon's regional stores, each of which serves Prime Video under
+    /// `/gp/video`. amazon.com has its own rule above.
+    static let amazonVideoStorefronts = [
+        "amazon.co.uk", "amazon.de", "amazon.co.jp", "amazon.ca", "amazon.com.au",
+        "amazon.fr", "amazon.it", "amazon.es", "amazon.in", "amazon.com.mx", "amazon.com.br",
     ]
 
     public static func isBuiltIn(_ id: String) -> Bool {
@@ -105,6 +139,42 @@ public struct EngineRuleConfiguration: Codable, Equatable, Sendable {
     public init(userRules: [EngineSiteRule] = [], disabledBuiltInIds: Set<String> = []) {
         self.userRules = userRules
         self.disabledBuiltInIds = disabledBuiltInIds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case userRules, disabledBuiltInIds
+    }
+
+    /// Decodes each rule on its own, skipping one it cannot read (an engine
+    /// a later version added, a hand edit gone wrong) and keeping the rest.
+    /// A missing key is an empty list. Anything stricter would fail the
+    /// whole file, which the store sets aside as corrupt -- losing every
+    /// rule over one bad entry.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userRules = (try container.decodeIfPresent([SkippingInvalid<EngineSiteRule>].self, forKey: .userRules) ?? [])
+            .compactMap(\.value)
+        disabledBuiltInIds = try container.decodeIfPresent(Set<String>.self, forKey: .disabledBuiltInIds) ?? []
+    }
+
+    /// "Always open this site in ...": the user's rule for `pattern` now
+    /// sends it to `engine`, and goes first, ahead of every older rule --
+    /// including a broader one (`example.com` against `docs.example.com`)
+    /// that would otherwise keep winning. A rule already written for the
+    /// same site, however it was spelled (`https://x.com/`, `*.x.com`), is
+    /// moved and retargeted rather than duplicated. Returns the rule.
+    @discardableResult
+    public mutating func setEngine(_ engine: SiteEngine, forPattern pattern: String) -> EngineSiteRule {
+        let parsed = EngineSitePattern(pattern)
+        let existing = userRules.firstIndex { rule in
+            if let parsed { return EngineSitePattern(rule.pattern) == parsed }
+            return rule.pattern.caseInsensitiveCompare(pattern) == .orderedSame
+        }
+        var rule = existing.map { userRules.remove(at: $0) } ?? EngineSiteRule(pattern: pattern, engine: engine)
+        rule.engine = engine
+        rule.isEnabled = true
+        userRules.insert(rule, at: 0)
+        return rule
     }
 
     /// Evaluation order: the user's own rules first, in their order, then the
@@ -163,13 +233,41 @@ public struct EngineOverride: Equatable, Sendable {
 
     public init(engine: SiteEngine, url: String) {
         self.engine = engine
-        self.host = URLComponents(string: url)?.host.map(RuleMatcher.normalizedDomain)
+        self.host = URLComponents(string: url)?.host.flatMap(Self.siteHost)
     }
 
+    /// An override read back from a saved session, as `engine` and `host`
+    /// were when it was made.
+    public init(engine: SiteEngine, host: String?) {
+        self.engine = engine
+        self.host = host.flatMap(Self.siteHost)
+    }
+
+    /// The override's site and its subdomains -- never a parent domain: an
+    /// override made on `user.github.io` says nothing about `github.io`.
     func covers(_ url: String) -> Bool {
-        guard let host, let urlHost = URLComponents(string: url)?.host else { return false }
-        let normalized = RuleMatcher.normalizedDomain(urlHost)
-        return normalized == host || normalized.hasSuffix("." + host) || host.hasSuffix("." + normalized)
+        guard let host, let urlHost = URLComponents(string: url)?.host, let normalized = Self.siteHost(urlHost) else {
+            return false
+        }
+        return normalized == host || normalized.hasSuffix("." + host)
+    }
+
+    /// Normalized, without a leading `www.`, so an override made on
+    /// `www.example.com` holds on `example.com` too.
+    private static func siteHost(_ host: String) -> String? {
+        var normalized = RuleMatcher.normalizedDomain(host)
+        if normalized.hasPrefix("www.") { normalized.removeFirst(4) }
+        return normalized.isEmpty ? nil : normalized
+    }
+}
+
+/// Decodes to nil instead of throwing, so one bad element of an array does
+/// not fail the array.
+struct SkippingInvalid<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
     }
 }
 
