@@ -114,6 +114,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/SiteStyleSheetScript.swift
   Engine/WebKitSiteStyleSheets.swift
   Engine/WebKitLinkPeekMenu.swift
+  Engine/WebKitGeolocation.swift
   LinkPeek/LinkPeekPreference.swift
   LinkPeek/LinkPeekGesture.swift
   LinkPeek/LinkPeekOverlayView.swift

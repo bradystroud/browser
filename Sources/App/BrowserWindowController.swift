@@ -2692,9 +2692,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
 
         pendingPermissionRequest = (tab, promptId)
-        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: popoverAnchor(for: omniboxField)) { [weak self] allow in
+        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: popoverAnchor(for: omniboxField)) { [weak self] allow, chosen in
             self?.pendingPermissionRequest = nil
-            store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            if chosen {
+                store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            }
             decision(allow)
         }
     }
