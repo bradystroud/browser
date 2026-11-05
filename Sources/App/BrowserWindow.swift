@@ -35,6 +35,8 @@ final class BrowserWindow: NSWindow {
     /// downloads button; read by ExtensionWindowHandle for popup anchors.
     let extensionsToolbar = ExtensionsToolbarController()
 
+    private let undoCloseTab = UndoCloseTab()
+
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
         super.init(contentRect: contentRect, styleMask: style, backing: backingStoreType, defer: flag)
         DevBuildIndicator.attach(to: self)
@@ -42,6 +44,8 @@ final class BrowserWindow: NSWindow {
         downloadsToolbar.attach(to: self)
         ExtensionsCoordinator.shared.activate()
         extensionsToolbar.attach(to: self)
+        undoCloseTab.window = self
+        TabLifecycleCenter.shared.addObserver(undoCloseTab)
         // Idempotent -- see PasswordManagerCoordinator.activate()'s own doc
         // comment for why it's kicked off here rather than in AppDelegate or
         // BrowserWindowController (browser-ojh.1).
@@ -165,6 +169,13 @@ final class BrowserWindow: NSWindow {
         return tab.devTools.toolsPaneContains(view)
     }
 
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, !UndoCloseTab.isUndoChord(event) {
+            undoCloseTab.cancel()
+        }
+        super.sendEvent(event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // ⇧⌘M, Developer > Toggle Device Toolbar, taken before any web view
         // -- the tools' own front-end included -- can claim it.
@@ -187,6 +198,11 @@ final class BrowserWindow: NSWindow {
                 // matches Ctrl+Tab cycling's same "visible tabs as one sequence"
                 // rule (see BrowserWindowController.visibleTabIndices).
                 controller.selectVisibleTab(atPosition: digit - 1)
+                return true
+            }
+            // ⌘Z just after closing a tab -- see UndoCloseTab. Otherwise the
+            // chord falls through to the page or the omnibox as usual.
+            if characters == "z", undoCloseTab.reopenIfRecent(in: controller) {
                 return true
             }
             // Plain ⌘= -- the unshifted chord almost everyone actually presses
@@ -338,4 +354,54 @@ final class BrowserWindow: NSWindow {
     @objc func setReaderFontSizeSmall(_ sender: Any?) { readerMode.setFontSize(.small) }
     @objc func setReaderFontSizeMedium(_ sender: Any?) { readerMode.setFontSize(.medium) }
     @objc func setReaderFontSizeLarge(_ sender: Any?) { readerMode.setFontSize(.large) }
+}
+
+/// ⌘Z reopens a tab that was just closed in this window, as Safari does.
+///
+/// ⌘Z also means "undo" to the page and the omnibox, so the offer is narrow:
+/// it lasts `lifetime` seconds after the last close or reopen, and any other
+/// key press ends it, because after the user types, ⌘Z must undo the typing.
+/// ⇧⌘T has neither limit.
+///
+/// It reopens through ClosedItemStore, the same stack ⇧⌘T uses, and only
+/// while that stack's newest item for this profile is a tab closed in this
+/// window. A private window records nothing there, so the offer never fires.
+private final class UndoCloseTab: TabLifecycleObserver {
+    static let lifetime: TimeInterval = 10
+
+    weak var window: BrowserWindow?
+    /// When each tab closed in this window was closed, newest last.
+    private var closeTimes: [Date] = []
+    private var offeredAt: Date?
+
+    static func isUndoChord(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection(NSEvent.ModifierFlags.deviceIndependentFlagsMask.subtracting(.capsLock)) == [.command]
+            && event.charactersIgnoringModifiers == "z"
+    }
+
+    func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+        guard event == .closed, let window, controller.window === window else { return }
+        let now = Date()
+        closeTimes.append(now)
+        if closeTimes.count > 50 { closeTimes.removeFirst(closeTimes.count - 50) }
+        offeredAt = now
+    }
+
+    func cancel() {
+        offeredAt = nil
+    }
+
+    func reopenIfRecent(in controller: BrowserWindowController) -> Bool {
+        guard let offeredAt, Date().timeIntervalSince(offeredAt) <= Self.lifetime,
+              case .tab(let closed)? = ClosedItemStore.shared
+                .recentItems(profileId: controller.profile.id, limit: 1).first,
+              closeTimes.contains(where: { abs($0.timeIntervalSince(closed.closedAt)) < 1 })
+        else {
+            cancel()
+            return false
+        }
+        controller.reopenLastClosedItem(nil)
+        self.offeredAt = Date()
+        return true
+    }
 }
