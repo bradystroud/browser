@@ -578,6 +578,14 @@ final class TabButtonView: NSView {
         dragDelegate?.tabButton(self, didBeginDragWith: event)
     }
 
+    override func otherMouseDown(with event: NSEvent) {
+        guard event.buttonNumber == 2 else {
+            super.otherMouseDown(with: event)
+            return
+        }
+        onClose?()
+    }
+
     /// Belt and braces with TabStripView's event monitor: whichever of the two
     /// delivers a given event first wins, and the second is a no-op. The
     /// monitor alone was the original design and shipped not working; rather
