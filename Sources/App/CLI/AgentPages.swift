@@ -121,6 +121,7 @@ enum AgentPages {
                 return completion(.failure("No agent page \(id). `browser page list` shows the open ones; only pages opened with `browser page open` can be controlled."))
             }
             let completion = reporting(page, completion)
+            page.controller?.agentIndicator?.update(activity: activityDescription(request))
             switch request.command {
             case "page-close": close(page, completion: completion)
             case "page-show", "page-hide":
@@ -148,6 +149,26 @@ enum AgentPages {
     }
 
     // MARK: - Pages
+
+    /// What the agent window's strip shows for a command: its name and
+    /// target, never typed text or a script, which may be private.
+    private static func activityDescription(_ request: CLIRequest) -> String {
+        let name = request.command.hasPrefix("page-") ? String(request.command.dropFirst(5)) : request.command
+        let args = request.args
+        switch request.command {
+        case "page-click", "page-hover", "page-type", "page-select", "page-upload":
+            let target = [args["ref"], args["selector"], args["text-target"].map { "\"\($0.prefix(40))\"" }]
+                .compactMap { $0 }.first { !$0.isEmpty }
+            return [name, target].compactMap { $0 }.joined(separator: " ")
+        case "page-press":
+            return [name, args["key"]].compactMap { $0 }.joined(separator: " ")
+        case "page-navigate":
+            let host = args["url"].flatMap { URL(string: $0)?.host }
+            return [name, host].compactMap { $0 }.joined(separator: " ")
+        default:
+            return name.replacingOccurrences(of: "-", with: " ")
+        }
+    }
 
     /// Adds what the page did on its own during the command to its result.
     private static func reporting(_ page: AgentPage, _ completion: @escaping Completion) -> Completion {
@@ -216,6 +237,7 @@ enum AgentPages {
 
         let page = AgentPage(id: "p\(nextNumber)", controller: controller)
         nextNumber += 1
+        controller.agentIndicator?.update(pageId: page.id)
         page.showsCursor = args["cursor"] == "true"
         page.acceptsDialogs = args["dialogs"] == "accept"
         pages[page.id] = page
@@ -782,6 +804,7 @@ enum AgentPages {
                 if case .failure(let error) = result { return completion(.failure(error.message)) }
                 page.recorder = recorder
                 recorder.automation = automation
+                page.controller?.agentIndicator?.isRecording = true
                 completion(CLIResponse(ok: true, message: "Recording \(page.id) into \(directory).", path: directory))
             }
         }
@@ -790,6 +813,7 @@ enum AgentPages {
     private static func stopRecording(_ page: AgentPage, completion: @escaping Completion) {
         guard let recorder = page.recorder else { return completion(.failure("\(page.id) is not recording")) }
         page.recorder = nil
+        page.controller?.agentIndicator?.isRecording = false
         recorder.automation?.stopScreencast()
         recorder.finish { result in
             switch result {

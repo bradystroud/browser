@@ -250,6 +250,7 @@ set(BROWSER_SWIFT_SRCS
   TabSleep/BrowserWindowController+TabSleep.swift
   CLI/CLIServer.swift
   CLI/AgentPages.swift
+  CLI/AgentWindowIndicator.swift
   CLI/AgentPageScript.swift
   Update/UpdateCoordinator.swift
   )
