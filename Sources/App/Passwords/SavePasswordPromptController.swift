@@ -4,6 +4,7 @@ private final class SavePasswordPromptViewController: NSViewController {
     private static let contentSize = NSSize(width: 340, height: 92)
 
     private let messageText: String
+    private var saveButton: NSButton?
     private let onSave: () -> Void
     private let onNever: () -> Void
     private let onNotNow: () -> Void
@@ -37,6 +38,7 @@ private final class SavePasswordPromptViewController: NSViewController {
         saveButton.keyEquivalent = "\r"
         saveButton.frame = NSRect(x: size.width - margin - 70, y: margin, width: 70, height: buttonHeight)
         container.addSubview(saveButton)
+        self.saveButton = saveButton
 
         let notNowButton = NSButton(title: "Not Now", target: self, action: #selector(notNowTapped))
         notNowButton.bezelStyle = .rounded
@@ -49,6 +51,16 @@ private final class SavePasswordPromptViewController: NSViewController {
         container.addSubview(neverButton)
 
         view = container
+    }
+
+    /// Keyboard focus starts on Save, the default: AppKit otherwise hands
+    /// it to the leading button in the key loop, which is Never -- and a
+    /// Space meant to confirm then blocked the site for good.
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if let saveButton {
+            view.window?.makeFirstResponder(saveButton)
+        }
     }
 
     @objc private func saveTapped() { onSave() }
@@ -74,16 +86,14 @@ private final class SavePasswordPromptViewController: NSViewController {
 /// submitted successfully by the time this shows, nothing is pending on
 /// CEF's side waiting for this decision).
 final class SavePasswordPromptController: NSObject, NSPopoverDelegate {
-    private let popover = NSPopover()
+    /// A fresh popover per prompt, never one reused: popoverDidClose is
+    /// delivered after the close animation, so a prompt shown right after
+    /// dismiss() would otherwise have its state cleared by the *previous*
+    /// popover's close, and its Save button then did nothing.
+    private var popover: NSPopover?
     private var isPending = false
 
-    override init() {
-        super.init()
-        popover.behavior = .semitransient
-        popover.delegate = self
-    }
-
-    var isShowing: Bool { popover.isShown }
+    var isShowing: Bool { popover?.isShown ?? false }
 
     func show(origin: String, anchorView: NSView, onSave: @escaping () -> Void, onNever: @escaping () -> Void) {
         dismiss()
@@ -96,8 +106,12 @@ final class SavePasswordPromptController: NSObject, NSPopoverDelegate {
             onNever: { [weak self] in self?.complete { onNever() } },
             onNotNow: { [weak self] in self?.complete {} }
         )
+        let popover = NSPopover()
+        popover.behavior = .semitransient
+        popover.delegate = self
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
+        self.popover = popover
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
     }
 
@@ -106,15 +120,17 @@ final class SavePasswordPromptController: NSObject, NSPopoverDelegate {
     /// tab switching away) rather than the user actually answering it.
     func dismiss() {
         isPending = false
-        if popover.isShown {
-            popover.performClose(nil)
+        let closing = popover
+        popover = nil
+        if let closing, closing.isShown {
+            closing.performClose(nil)
         }
     }
 
     private func complete(_ action: () -> Void) {
         guard isPending else { return }
         isPending = false
-        popover.performClose(nil)
+        popover?.performClose(nil)
         action()
     }
 
@@ -123,6 +139,9 @@ final class SavePasswordPromptController: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         // An outside click / Esc closes the popover without going through
         // complete(_:) -- treat that exactly like "Not Now" (do nothing).
+        // A close of a popover already let go of is not this prompt's.
+        guard (notification.object as? NSPopover) === popover else { return }
         isPending = false
+        popover = nil
     }
 }

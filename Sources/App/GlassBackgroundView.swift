@@ -16,11 +16,10 @@ extension NSButton {
     func applyChromeAppearance(_ appearance: ChromeButtonAppearance) {
         isBordered = true
         imageScaling = .scaleProportionallyDown
-        // A rounded rectangle, never a capsule: the glass bezel's own
-        // rounded-rectangle radius is what ChromeMetrics.controlCornerRadius
-        // matches (see its doc comment).
+        // A capsule, like every other control on the toolbar row (see
+        // ChromeMetrics.toolbarCornerRadius).
         if #available(macOS 26.0, *) {
-            borderShape = .roundedRectangle
+            borderShape = .capsule
         }
         contentTintColor = .secondaryLabelColor
 
@@ -165,6 +164,29 @@ final class GlassBackgroundView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         applyShadow()
+    }
+
+    /// One line of geometry for the `--chrome-frames-report` log: this
+    /// view's own frame, the material's, the content container's, and the
+    /// constraints the material carries. All in this view's superview's
+    /// coordinates except the container, which is in the material's.
+    var geometryReport: String {
+        func f(_ r: NSRect) -> String {
+            String(format: "x=%.1f w=%.1f y=%.1f h=%.1f", r.minX, r.width, r.minY, r.height)
+        }
+        let material = modernGlassView ?? legacyEffectView ?? solidView
+        var parts = ["self{\(f(frame))}"]
+        if let material {
+            parts.append("material{\(f(material.frame)) constraints=\(material.constraints.count) translates=\(material.translatesAutoresizingMaskIntoConstraints)}")
+        } else {
+            parts.append("material=nil")
+        }
+        let container = contentContainer.superview === material ? "material" : (contentContainer.superview === self ? "self" : "other")
+        parts.append("content{\(f(contentContainer.frame)) super=\(container) translates=\(contentContainer.translatesAutoresizingMaskIntoConstraints)}")
+        if let presentation = layer?.presentation() {
+            parts.append("layerPresented{\(f(presentation.frame))} layerAnims=\(layer?.animationKeys()?.count ?? 0)")
+        }
+        return parts.joined(separator: " ")
     }
 
     @objc private func rebuild() {

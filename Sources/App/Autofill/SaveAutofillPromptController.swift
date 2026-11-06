@@ -58,16 +58,12 @@ private final class SaveAutofillPromptViewController: NSViewController {
 /// both cards and addresses (never more than one prompt showing at a
 /// time, same as those).
 final class SaveAutofillPromptController: NSObject, NSPopoverDelegate {
-    private let popover = NSPopover()
+    /// A fresh popover per prompt -- see SavePasswordPromptController for
+    /// why a reused one cleared the next prompt's state.
+    private var popover: NSPopover?
     private var isPending = false
 
-    override init() {
-        super.init()
-        popover.behavior = .semitransient
-        popover.delegate = self
-    }
-
-    var isShowing: Bool { popover.isShown }
+    var isShowing: Bool { popover?.isShown ?? false }
 
     func show(message: String, anchorView: NSView, onSave: @escaping () -> Void) {
         dismiss()
@@ -78,26 +74,34 @@ final class SaveAutofillPromptController: NSObject, NSPopoverDelegate {
             onSave: { [weak self] in self?.complete { onSave() } },
             onNotNow: { [weak self] in self?.complete {} }
         )
+        let popover = NSPopover()
+        popover.behavior = .semitransient
+        popover.delegate = self
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
+        self.popover = popover
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
     }
 
     func dismiss() {
         isPending = false
-        if popover.isShown {
-            popover.performClose(nil)
+        let closing = popover
+        popover = nil
+        if let closing, closing.isShown {
+            closing.performClose(nil)
         }
     }
 
     private func complete(_ action: () -> Void) {
         guard isPending else { return }
         isPending = false
-        popover.performClose(nil)
+        popover?.performClose(nil)
         action()
     }
 
     func popoverDidClose(_ notification: Notification) {
+        guard (notification.object as? NSPopover) === popover else { return }
         isPending = false
+        popover = nil
     }
 }

@@ -117,16 +117,12 @@ private final class AddBookmarkPromptViewController: NSViewController {
 /// One instance per window (owned by BrowserWindowController, same as
 /// permissionPrompt), at most one prompt showing at a time.
 final class AddBookmarkPromptController: NSObject, NSPopoverDelegate {
-    private let popover = NSPopover()
+    /// A fresh popover per prompt -- see SavePasswordPromptController for
+    /// why a reused one cleared the next prompt's state.
+    private var popover: NSPopover?
     private var isPending = false
 
-    override init() {
-        super.init()
-        popover.behavior = .semitransient
-        popover.delegate = self
-    }
-
-    var isShowing: Bool { popover.isShown }
+    var isShowing: Bool { popover?.isShown ?? false }
 
     /// `bookmarks` is read synchronously here (BookmarkStore's SQLite calls
     /// are all synchronous, same as every other call site in this file) to
@@ -158,8 +154,12 @@ final class AddBookmarkPromptController: NSObject, NSPopoverDelegate {
             onAdd: { [weak self] name, folderId in self?.complete { onAdd(name, folderId) } },
             onCancel: { [weak self] in self?.complete {} }
         )
+        let popover = NSPopover()
+        popover.behavior = .semitransient
+        popover.delegate = self
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
+        self.popover = popover
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
     }
 
@@ -168,15 +168,17 @@ final class AddBookmarkPromptController: NSObject, NSPopoverDelegate {
     /// switching away) rather than the user actually answering it.
     func dismiss() {
         isPending = false
-        if popover.isShown {
-            popover.performClose(nil)
+        let closing = popover
+        popover = nil
+        if let closing, closing.isShown {
+            closing.performClose(nil)
         }
     }
 
     private func complete(_ action: () -> Void) {
         guard isPending else { return }
         isPending = false
-        popover.performClose(nil)
+        popover?.performClose(nil)
         action()
     }
 
@@ -185,6 +187,8 @@ final class AddBookmarkPromptController: NSObject, NSPopoverDelegate {
     func popoverDidClose(_ notification: Notification) {
         // An outside click / Esc closes the popover without going through
         // complete(_:) -- treat that like Cancel (do nothing).
+        guard (notification.object as? NSPopover) === popover else { return }
         isPending = false
+        popover = nil
     }
 }
