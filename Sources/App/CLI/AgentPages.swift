@@ -35,13 +35,39 @@ final class AgentPage {
     /// What the page did on its own since the last command reported it:
     /// dialogs answered and file choosers opened.
     var events: [String] = []
+    /// Where the page was when a command last saw it, so a page that closed
+    /// on its own can still say where it had got to.
+    var lastSeenURL = ""
+    /// When the window closed, if it has; set by the window itself, so a
+    /// close the agent never asked for is still explained.
+    private(set) var closedAt: Date?
+    private var closeObserver: NSObjectProtocol?
 
     init(id: String, controller: BrowserWindowController) {
         self.id = id
         self.controller = controller
+        if let window = controller.window {
+            closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                if let url = self.controller?.activeTab?.urlString, !url.isEmpty { self.lastSeenURL = url }
+                self.closedAt = Date()
+            }
+        }
+    }
+
+    deinit {
+        if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
     }
 
     var tab: Tab? { controller?.activeTab }
+
+    /// Why a command on this page can no longer run, once its window is gone.
+    var closedExplanation: String {
+        let seconds = closedAt.map { Int(Date().timeIntervalSince($0)) }
+        let when = seconds.map { $0 < 2 ? "just now" : "\($0) s ago" } ?? "earlier"
+        let at = lastSeenURL.isEmpty ? "" : " while at \(lastSeenURL)"
+        return "\(id) closed \(when)\(at): its window was closed by the page (window.close()), by its last tab closing, or by the user. Open a new page with `browser page open`."
+    }
 
     /// The visible tab's automation, set to answer the page's dialogs here
     /// rather than show them: a dialog left open blocks the page, and every
@@ -86,7 +112,13 @@ final class AgentPage {
 /// once.
 enum AgentPages {
     private static var pages: [String: AgentPage] = [:]
+    /// Pages whose window has gone, kept so the next command on one says
+    /// what happened instead of "no such page".
+    private static var closedPages: [String: AgentPage] = [:]
     private static var nextNumber = 1
+    /// How long a page counts as settled for `--wait-idle`: no request in
+    /// flight and no DOM change for this long.
+    private static let idleQuietInterval: TimeInterval = 0.5
 
     private static let defaultOpenTimeout: TimeInterval = 30
     private static let defaultWaitTimeout: TimeInterval = 15
@@ -118,16 +150,26 @@ enum AgentPages {
         default:
             guard let id = args["id"], !id.isEmpty else { return completion(.failure("\(request.command) requires a page id")) }
             guard let page = pages[id], page.controller != nil else {
+                if let closed = closedPages[id] { return completion(.failure(closed.closedExplanation)) }
                 return completion(.failure("No agent page \(id). `browser page list` shows the open ones; only pages opened with `browser page open` can be controlled."))
             }
             let completion = reporting(page, completion)
+            page.controller?.agentIndicator?.update(activity: activityDescription(request))
             switch request.command {
             case "page-close": close(page, completion: completion)
             case "page-show", "page-hide":
                 let headless = request.command == "page-hide"
                 page.controller?.present(headless ? .headless : .headed)
-                completion(CLIResponse(ok: true, message: headless ? "\(page.id) is headless." : "\(page.id) is on screen. It did not take focus.", page: info(page)))
+                if !headless, args["focus"] == "true" {
+                    // The one time an agent window may take the keyboard: the
+                    // agent asked for the user, who has to act in it now.
+                    page.controller?.window?.makeKeyAndOrderFront(nil)
+                    AppActivation.activate()
+                    return completion(CLIResponse(ok: true, message: "\(page.id) is on screen and has focus.", page: info(page)))
+                }
+                completion(CLIResponse(ok: true, message: headless ? "\(page.id) is headless." : "\(page.id) is on screen. It did not take focus; `--focus` gives it the keyboard.", page: info(page)))
             case "page-navigate": navigate(page, args, completion: completion)
+            case "page-reload": reload(page, args, completion: completion)
             case "page-wait": wait(page, args, defaultTimeout: defaultWaitTimeout, completion: completion)
             case "page-snapshot": snapshot(page, args, completion: completion)
             case "page-click": click(page, args, completion: completion)
@@ -149,9 +191,30 @@ enum AgentPages {
 
     // MARK: - Pages
 
+    /// What the agent window's strip shows for a command: its name and
+    /// target, never typed text or a script, which may be private.
+    private static func activityDescription(_ request: CLIRequest) -> String {
+        let name = request.command.hasPrefix("page-") ? String(request.command.dropFirst(5)) : request.command
+        let args = request.args
+        switch request.command {
+        case "page-click", "page-hover", "page-type", "page-select", "page-upload":
+            let target = [args["ref"], args["selector"], args["text-target"].map { "\"\($0.prefix(40))\"" }]
+                .compactMap { $0 }.first { !$0.isEmpty }
+            return [name, target].compactMap { $0 }.joined(separator: " ")
+        case "page-press":
+            return [name, args["key"].map { keyDescription($0, args["modifiers"]) }].compactMap { $0 }.joined(separator: " ")
+        case "page-navigate":
+            let host = args["url"].flatMap { URL(string: $0)?.host }
+            return [name, host].compactMap { $0 }.joined(separator: " ")
+        default:
+            return name.replacingOccurrences(of: "-", with: " ")
+        }
+    }
+
     /// Adds what the page did on its own during the command to its result.
     private static func reporting(_ page: AgentPage, _ completion: @escaping Completion) -> Completion {
         { response in
+            if let url = page.tab?.urlString, !url.isEmpty { page.lastSeenURL = url }
             guard !page.events.isEmpty else { return completion(response) }
             var response = response
             response.pageEvents = page.events
@@ -171,6 +234,7 @@ enum AgentPages {
             guard let controller = page.controller, WindowManager.shared.windowControllers.contains(where: { $0 === controller }) else {
                 page.recorder?.cancel()
                 pages[id] = nil
+                closedPages[id] = page
                 continue
             }
         }
@@ -216,6 +280,7 @@ enum AgentPages {
 
         let page = AgentPage(id: "p\(nextNumber)", controller: controller)
         nextNumber += 1
+        controller.agentIndicator?.update(pageId: page.id)
         page.showsCursor = args["cursor"] == "true"
         page.acceptsDialogs = args["dialogs"] == "accept"
         pages[page.id] = page
@@ -239,6 +304,15 @@ enum AgentPages {
         pages[page.id] = nil
         page.controller?.window?.close()
         completion(CLIResponse(ok: true, message: "Closed \(page.id)."))
+    }
+
+    private static func reload(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
+        guard let tab = page.tab else { return completion(.failure("\(page.id) has no tab")) }
+        tab.reload()
+        guard args["no-wait"] != "true" else { return completion(CLIResponse(ok: true, message: "Reloading \(info(page).url).", page: info(page))) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            wait(page, args, defaultTimeout: defaultOpenTimeout, completion: completion)
+        }
     }
 
     private static func navigate(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
@@ -305,8 +379,9 @@ enum AgentPages {
         let ref = args["ref"].flatMap { $0.isEmpty ? nil : $0 }
         let selector = args["selector"].flatMap { $0.isEmpty ? nil : $0 }
         let text = args["text-target"].flatMap { $0.isEmpty ? nil : $0 }
+        let role = args["role"].flatMap { $0.isEmpty ? nil : $0 }
         guard ref != nil || selector != nil || text != nil else { return nil }
-        return AgentPageScript.target(ref: ref, selector: selector, text: text)
+        return AgentPageScript.target(ref: ref, selector: selector, text: text, role: role)
     }
 
     private struct TargetPoint: Decodable {
@@ -315,6 +390,11 @@ enum AgentPages {
         let obscured: Bool
         let password: Bool
         let element: CLIPageElement
+        /// How many elements the target matched; this is the best-ranked.
+        let matches: Int
+
+        /// " (1 of 3 matches)" when the target was ambiguous.
+        var matchesNote: String { matches > 1 ? " (1 of \(matches) matches)" : "" }
     }
 
     /// Scrolls the target into view and finds where to click it.
@@ -324,7 +404,7 @@ enum AgentPages {
         completion: @escaping Completion,
         then: @escaping (TargetPoint) -> Void
     ) {
-        run(automation, "return A.point(A.resolve(\(target)));", completion: completion) { value in
+        run(automation, "const r = A.resolveInfo(\(target)); const p = A.point(r.el); p.matches = r.matches; return p;", completion: completion) { value in
             guard let point = decode(TargetPoint.self, value) else { return completion(.failure("could not locate the target")) }
             then(point)
         }
@@ -371,7 +451,7 @@ enum AgentPages {
     private static func evaluate(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let expression = args["expression"], !expression.isEmpty else { return completion(.failure("eval requires an expression")) }
         automation(page, completion: completion) { automation in
-            automation.evaluate(jsonSafe(expression)) { result in
+            let finish = { (result: Result<Any?, EngineAutomationError>) in
                 switch result {
                 case .failure(let error): completion(.failure(pageError(error)))
                 case .success(let value):
@@ -379,18 +459,31 @@ enum AgentPages {
                     completion(CLIResponse(ok: true, message: render(json), value: json))
                 }
             }
+            // An expression first; statements (`a(); return b`) do not parse
+            // as one, so they are run again as the body of a function.
+            automation.evaluate(jsonSafe(expression, asStatements: false)) { result in
+                if case .failure(let error) = result, error.message.contains("SyntaxError") {
+                    return automation.evaluate(jsonSafe(expression, asStatements: true)) { retry in
+                        if case .failure = retry { return finish(result) }
+                        finish(retry)
+                    }
+                }
+                finish(result)
+            }
         }
     }
 
     /// `expression`, with a value JSON cannot carry made into one it can:
     /// an element becomes its HTML (cut short), a function its source, and
-    /// a cycle "[Circular]".
-    private static func jsonSafe(_ expression: String) -> String {
-        """
+    /// a cycle "[Circular]". A returned promise is awaited. As statements,
+    /// the code is a function body and its `return` is the value.
+    private static func jsonSafe(_ expression: String, asStatements: Bool) -> String {
+        let evaluation = asStatements
+            ? "await (async () => {\n\(expression)\n})()"
+            : "await (\n\(expression)\n)"
+        return """
         (async () => {
-          const value = await (
-        \(expression)
-          );
+          const value = \(evaluation);
           const seen = new WeakSet();
           const node = (n) => {
             const html = n.outerHTML ?? n.textContent ?? n.nodeName;
@@ -413,7 +506,9 @@ enum AgentPages {
     }
 
     private static func render(_ value: CLIJSONValue) -> String {
-        guard let data = try? JSONEncoder().encode(value) else { return "null" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
+        guard let data = try? encoder.encode(value) else { return "null" }
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -425,6 +520,8 @@ enum AgentPages {
         case text(String, gone: Bool)
         case script(String)
         case urlContains(String)
+        /// No request in flight and no DOM change for the interval.
+        case idle(TimeInterval)
     }
 
     /// Waits for the page to finish loading, then for every condition in
@@ -437,11 +534,12 @@ enum AgentPages {
         if let text = args["wait-text"], !text.isEmpty { conditions.append(.text(text, gone: gone)) }
         if let script = args["wait-js"], !script.isEmpty { conditions.append(.script(script)) }
         if let url = args["wait-url"], !url.isEmpty { conditions.append(.urlContains(url)) }
+        if args["wait-idle"] == "true" { conditions.append(.idle(idleQuietInterval)) }
         let timeout = args["timeout"].flatMap(Double.init).map { $0 / 1000 } ?? defaultTimeout
         let deadline = Date().addingTimeInterval(timeout)
 
         func poll() {
-            guard page.controller != nil else { return completion(.failure("\(page.id) closed")) }
+            guard page.controller != nil else { return completion(.failure(page.closedExplanation)) }
             check(page, conditions[...]) { met in
                 if met {
                     return completion(CLIResponse(ok: true, message: "Ready: \(info(page).url)", page: info(page)))
@@ -463,6 +561,30 @@ enum AgentPages {
         case .text(let text, let gone): return "text \"\(text)\" \(gone ? "to go" : "to show")"
         case .script(let script): return "\(script) to be true"
         case .urlContains(let fragment): return "a URL with \(fragment)"
+        case .idle(let interval): return "the page to be idle for \(Int(interval * 1000)) ms"
+        }
+    }
+
+    /// Runs `body`, then with `--wait-idle` waits for the page to settle
+    /// before reporting, so the result describes the page after the action.
+    private static func thenSettle(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion, _ body: @escaping (@escaping Completion) -> Void) {
+        guard args["wait-idle"] == "true" else { return body(completion) }
+        body { response in
+            guard response.ok else { return completion(response) }
+            let started = Date()
+            var waitArgs = args
+            for key in ["wait-selector", "wait-text", "wait-js", "wait-url"] { waitArgs[key] = nil }
+            wait(page, waitArgs, defaultTimeout: defaultWaitTimeout) { settled in
+                var response = response
+                response.page = info(page)
+                let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
+                if settled.ok {
+                    response.message = [response.message, "Settled after \(elapsed) s at \(info(page).url)."].compactMap { $0 }.joined(separator: " ")
+                    completion(response)
+                } else {
+                    completion(CLIResponse(ok: false, error: [response.message, settled.error].compactMap { $0 }.joined(separator: " "), page: info(page), element: response.element))
+                }
+            }
         }
     }
 
@@ -495,6 +617,8 @@ enum AgentPages {
             ask("return !!(await (async () => (\(script)))());")
         case .urlContains(let fragment):
             next(tab.urlString.contains(fragment))
+        case .idle(let interval):
+            ask("return A.idle(\(Int(interval * 1000))).idle;")
         }
     }
 
@@ -502,14 +626,16 @@ enum AgentPages {
 
     private static func click(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let target = targetLiteral(args) else { return completion(.failure("click requires a ref, --selector or --text")) }
-        automation(page, completion: completion) { automation in
-            locate(automation, target, completion: completion) { point in
-                moveCursor(page, automation, to: point) {
-                    pressCursor(page, automation, at: point)
-                    automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: args["double"] == "true" ? 2 : 1) { result in
-                        if case .failure(let error) = result { return completion(.failure(error.message)) }
-                        let note = point.obscured ? " (another element covers its centre, which got the click)" : ""
-                        completion(CLIResponse(ok: true, message: "Clicked \(describe(point.element))\(note).", element: point.element))
+        thenSettle(page, args, completion: completion) { completion in
+            automation(page, completion: completion) { automation in
+                locate(automation, target, completion: completion) { point in
+                    moveCursor(page, automation, to: point) {
+                        pressCursor(page, automation, at: point)
+                        automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: args["double"] == "true" ? 2 : 1) { result in
+                            if case .failure(let error) = result { return completion(.failure(error.message)) }
+                            let note = point.obscured ? " (another element covers its centre, which got the click)" : ""
+                            completion(CLIResponse(ok: true, message: "Clicked \(describe(point.element))\(point.matchesNote)\(note).", element: point.element, matches: point.matches))
+                        }
                     }
                 }
             }
@@ -523,7 +649,14 @@ enum AgentPages {
                 moveCursor(page, automation, to: point) {
                     automation.mouseMove(to: CGPoint(x: point.x, y: point.y)) { result in
                         if case .failure(let error) = result { return completion(.failure(error.message)) }
-                        completion(CLIResponse(ok: true, message: "Hovering \(describe(point.element)).", element: point.element))
+                        // The tooltip the hover would show is drawn outside
+                        // the page, so it is reported here instead.
+                        var notes: [String] = []
+                        if let title = point.element.title { notes.append("title: \"\(title)\"") }
+                        if let description = point.element.description { notes.append("described as: \"\(description)\"") }
+                        if let shortcut = point.element.shortcut { notes.append("shortcut: \(shortcut)") }
+                        let detail = notes.isEmpty ? "" : " (\(notes.joined(separator: "; ")))"
+                        completion(CLIResponse(ok: true, message: "Hovering \(describe(point.element))\(point.matchesNote)\(detail).", element: point.element, matches: point.matches))
                     }
                 }
             }
@@ -550,39 +683,41 @@ enum AgentPages {
     private static func type(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let text = args["text"] else { return completion(.failure("type requires text")) }
         let delay = (args["delay"].flatMap(Double.init) ?? 0) / 1000
-        automation(page, completion: completion) { automation in
-            let typeIntoFocus = {
-                focusState(automation, completion: completion) { state in
-                    guard !state.password else { return completion(.failure(passwordRefusal)) }
-                    let afterClear = {
-                        insert(text, into: automation, delay: delay) { result in
-                            if case .failure(let error) = result { return completion(.failure(error.message)) }
-                            let done = {
-                                completion(CLIResponse(ok: true, message: "Typed \(text.count) character(s)\(state.element.map { " into \(describe($0))" } ?? "").", element: state.element))
+        thenSettle(page, args, completion: completion) { completion in
+            automation(page, completion: completion) { automation in
+                let typeIntoFocus = {
+                    focusState(automation, completion: completion) { state in
+                        guard !state.password else { return completion(.failure(passwordRefusal)) }
+                        let afterClear = {
+                            insert(text, into: automation, delay: delay) { result in
+                                if case .failure(let error) = result { return completion(.failure(error.message)) }
+                                let done = {
+                                    completion(CLIResponse(ok: true, message: "Typed \(text.count) character(s)\(state.element.map { " into \(describe($0))" } ?? "").", element: state.element))
+                                }
+                                guard args["submit"] == "true", let enter = EngineAutomationKey(name: "Enter") else { return done() }
+                                automation.pressKey(enter, modifiers: []) { _ in done() }
                             }
-                            guard args["submit"] == "true", let enter = EngineAutomationKey(name: "Enter") else { return done() }
-                            automation.pressKey(enter, modifiers: []) { _ in done() }
+                        }
+                        guard args["clear"] == "true" else { return afterClear() }
+                        run(automation, """
+                            const el = A.deepActive();
+                            if (el && typeof el.select === 'function') el.select(); else (el ? el.ownerDocument : document).execCommand('selectAll');
+                            return true;
+                            """, completion: completion) { _ in
+                            guard text.isEmpty, let backspace = EngineAutomationKey(name: "Backspace") else { return afterClear() }
+                            automation.pressKey(backspace, modifiers: []) { _ in afterClear() }
                         }
                     }
-                    guard args["clear"] == "true" else { return afterClear() }
-                    run(automation, """
-                        const el = A.deepActive();
-                        if (el && typeof el.select === 'function') el.select(); else (el ? el.ownerDocument : document).execCommand('selectAll');
-                        return true;
-                        """, completion: completion) { _ in
-                        guard text.isEmpty, let backspace = EngineAutomationKey(name: "Backspace") else { return afterClear() }
-                        automation.pressKey(backspace, modifiers: []) { _ in afterClear() }
-                    }
                 }
-            }
-            guard let target = targetLiteral(args) else { return typeIntoFocus() }
-            locate(automation, target, completion: completion) { point in
-                guard !point.password else { return completion(.failure(passwordRefusal)) }
-                moveCursor(page, automation, to: point) {
-                    pressCursor(page, automation, at: point)
-                    automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: 1) { result in
-                        if case .failure(let error) = result { return completion(.failure(error.message)) }
-                        typeIntoFocus()
+                guard let target = targetLiteral(args) else { return typeIntoFocus() }
+                locate(automation, target, completion: completion) { point in
+                    guard !point.password else { return completion(.failure(passwordRefusal)) }
+                    moveCursor(page, automation, to: point) {
+                        pressCursor(page, automation, at: point)
+                        automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: 1) { result in
+                            if case .failure(let error) = result { return completion(.failure(error.message)) }
+                            typeIntoFocus()
+                        }
                     }
                 }
             }
@@ -626,16 +761,31 @@ enum AgentPages {
             default: return completion(.failure("unknown modifier '\(part)'"))
             }
         }
-        automation(page, completion: completion) { automation in
-            focusState(automation, completion: completion) { state in
-                // Named keys only move or submit; a character would type.
-                guard !(state.password && key.text != nil && key.key != "Enter") else { return completion(.failure(passwordRefusal)) }
-                automation.pressKey(key, modifiers: modifiers) { result in
-                    if case .failure(let error) = result { return completion(.failure(error.message)) }
-                    completion(CLIResponse(ok: true, message: "Pressed \(name)."))
+        thenSettle(page, args, completion: completion) { completion in
+            automation(page, completion: completion) { automation in
+                focusState(automation, completion: completion) { state in
+                    // Named keys only move or submit; a character would type.
+                    guard !(state.password && key.text != nil && key.key != "Enter") else { return completion(.failure(passwordRefusal)) }
+                    automation.pressKey(key, modifiers: modifiers) { result in
+                        if case .failure(let error) = result { return completion(.failure(error.message)) }
+                        completion(CLIResponse(ok: true, message: "Pressed \(keyDescription(name, args["modifiers"]))."))
+                    }
                 }
             }
         }
+    }
+
+    /// "Ctrl+Alt+Shift+Cmd+K": the key with the modifiers that were sent,
+    /// so a log of commands shows the whole chord.
+    private static func keyDescription(_ key: String, _ modifiers: String?) -> String {
+        let parts = Set((modifiers ?? "").lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+        var names: [String] = []
+        if !parts.isDisjoint(with: ["ctrl", "control"]) { names.append("Ctrl") }
+        if !parts.isDisjoint(with: ["alt", "option", "opt"]) { names.append("Alt") }
+        if parts.contains("shift") { names.append("Shift") }
+        if !parts.isDisjoint(with: ["cmd", "command", "meta"]) { names.append("Cmd") }
+        names.append(key == " " ? "Space" : key)
+        return names.joined(separator: "+")
     }
 
     private static func setDialogs(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
@@ -782,6 +932,7 @@ enum AgentPages {
                 if case .failure(let error) = result { return completion(.failure(error.message)) }
                 page.recorder = recorder
                 recorder.automation = automation
+                page.controller?.agentIndicator?.isRecording = true
                 completion(CLIResponse(ok: true, message: "Recording \(page.id) into \(directory).", path: directory))
             }
         }
@@ -790,6 +941,7 @@ enum AgentPages {
     private static func stopRecording(_ page: AgentPage, completion: @escaping Completion) {
         guard let recorder = page.recorder else { return completion(.failure("\(page.id) is not recording")) }
         page.recorder = nil
+        page.controller?.agentIndicator?.isRecording = false
         recorder.automation?.stopScreencast()
         recorder.finish { result in
             switch result {

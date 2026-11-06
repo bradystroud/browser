@@ -424,9 +424,11 @@ final class LittleWindowController: NSWindowController, NSWindowDelegate, TabDel
             return
         }
         pendingPermissionPromptId = promptId
-        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: hostLabel) { [weak self] allow in
+        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: hostLabel) { [weak self] allow, chosen in
             self?.pendingPermissionPromptId = nil
-            store.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            if chosen {
+                store.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            }
             decision(allow)
         }
     }

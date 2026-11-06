@@ -95,6 +95,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/BrowserEngine.swift
   Engine/CEFEngineAdapter.swift
   Engine/DevToolsProtocolAutomation.swift
+  Engine/MacKeyboardLayout.swift
   Engine/Engines.swift
   Engine/WebKitEngineAdapter.swift
   Engine/WebKitAutomation.swift
@@ -114,6 +115,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/SiteStyleSheetScript.swift
   Engine/WebKitSiteStyleSheets.swift
   Engine/WebKitLinkPeekMenu.swift
+  Engine/WebKitGeolocation.swift
   LinkPeek/LinkPeekPreference.swift
   LinkPeek/LinkPeekGesture.swift
   LinkPeek/LinkPeekOverlayView.swift
@@ -122,6 +124,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitExtensions.swift
   Engine/WebKitExtensionAdapters.swift
   Engine/WebKitExtensionInstaller.swift
+  Engine/WebKitNativeMessaging.swift
   Routing/RoutingRulesStore.swift
   EngineRules/EngineRulesStore.swift
   EngineRules/EngineRulesPaneController.swift
@@ -129,7 +132,6 @@ set(BROWSER_SWIFT_SRCS
   Routing/RoutingCoordinator.swift
   Routing/SourceAppResolver.swift
   Routing/URLEventHandler.swift
-  Engine/WebKitNativeMessaging.swift
   Routing/SettingsPaneScrollView.swift
   Routing/SettingsForm.swift
   Routing/SettingsWindowController.swift
@@ -249,6 +251,7 @@ set(BROWSER_SWIFT_SRCS
   TabSleep/BrowserWindowController+TabSleep.swift
   CLI/CLIServer.swift
   CLI/AgentPages.swift
+  CLI/AgentWindowIndicator.swift
   CLI/AgentPageScript.swift
   Update/UpdateCoordinator.swift
   )
@@ -284,13 +287,13 @@ source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Database.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/JSONFile.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NativeMessaging.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ProfilesRootResolver.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/KeychainNamespace.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Migrations.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/HistoryStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/BookmarkStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/DownloadStore.swift
-  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NativeMessaging.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ReadingListStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/TrackerReportStore.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NetscapeBookmarkParser.swift

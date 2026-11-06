@@ -56,22 +56,22 @@ private final class PermissionPromptViewController: NSViewController {
 /// prompt. One instance per BrowserWindowController; at most one request
 /// showing at a time.
 final class PermissionPromptController: NSObject, NSPopoverDelegate {
-    private let popover = NSPopover()
-    private var pendingDecision: ((Bool) -> Void)?
+    /// A fresh popover per request, never one reused: popoverDidClose is
+    /// delivered after the close animation, so a request shown right after
+    /// dismiss(invokingDecision:) would otherwise be denied by the
+    /// *previous* popover's close. (SavePasswordPromptController has the
+    /// same shape for the same reason.)
+    private var popover: NSPopover?
+    private var pendingDecision: ((Bool, Bool) -> Void)?
 
-    override init() {
-        super.init()
-        // Closes on an outside click like a real popover (unlike
-        // .applicationDefined, which would require us to close it
-        // ourselves) -- popoverDidClose below treats that as "Don't Allow"
-        // rather than leaving the underlying request unanswered forever.
-        popover.behavior = .semitransient
-        popover.delegate = self
-    }
+    var isShowing: Bool { popover?.isShown ?? false }
 
-    var isShowing: Bool { popover.isShown }
-
-    func show(kinds: EnginePermissionKind, origin: String, anchorView: NSView, decision: @escaping (Bool) -> Void) {
+    /// `decision` gets `(allow, chosen)`. `chosen` is true only when the user
+    /// clicked Allow or Don't Allow. Every other close (outside click, Esc,
+    /// tab switch, a newer prompt) denies this one request but is not a
+    /// choice, so callers must not remember it, or the site is blocked for
+    /// good without the user ever having said no.
+    func show(kinds: EnginePermissionKind, origin: String, anchorView: NSView, decision: @escaping (_ allow: Bool, _ chosen: Bool) -> Void) {
         // At most one prompt at a time -- deny whatever was pending before
         // showing the new one, same as any other app-initiated dismissal.
         dismiss(invokingDecision: true)
@@ -82,8 +82,16 @@ final class PermissionPromptController: NSObject, NSPopoverDelegate {
             onAllow: { [weak self] in self?.complete(allow: true) },
             onDontAllow: { [weak self] in self?.complete(allow: false) }
         )
+        let popover = NSPopover()
+        // Closes on an outside click like a real popover (unlike
+        // .applicationDefined, which would require us to close it
+        // ourselves) -- popoverDidClose below denies the request rather than
+        // leaving it unanswered forever, without recording it as a choice.
+        popover.behavior = .semitransient
+        popover.delegate = self
         popover.contentViewController = content
         popover.contentSize = content.preferredContentSize
+        self.popover = popover
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
     }
 
@@ -100,19 +108,21 @@ final class PermissionPromptController: NSObject, NSPopoverDelegate {
     func dismiss(invokingDecision: Bool) {
         let decision = pendingDecision
         pendingDecision = nil
-        if popover.isShown {
-            popover.performClose(nil)
+        let closing = popover
+        popover = nil
+        if let closing, closing.isShown {
+            closing.performClose(nil)
         }
         if invokingDecision {
-            decision?(false)
+            decision?(false, false)
         }
     }
 
     private func complete(allow: Bool) {
         guard let decision = pendingDecision else { return }
         pendingDecision = nil
-        popover.performClose(nil)
-        decision(allow)
+        popover?.performClose(nil)
+        decision(allow, true)
     }
 
     private static func message(kinds: EnginePermissionKind, origin: String) -> String {
@@ -134,10 +144,12 @@ final class PermissionPromptController: NSObject, NSPopoverDelegate {
         // Fires for every close, including ones this controller triggered
         // itself via performClose(nil) in dismiss(invokingDecision:)/
         // complete(allow:) -- both already nil pendingDecision first, so
-        // this is a no-op in those cases and only actually denies on an
-        // outside click / Esc the user triggered directly.
-        guard let decision = pendingDecision else { return }
+        // this is a no-op in those cases and only denies (without a choice)
+        // on an outside click / Esc the user triggered directly. A close of a
+        // popover already let go of belongs to an earlier request.
+        guard (notification.object as? NSPopover) === popover, let decision = pendingDecision else { return }
+        popover = nil
         pendingDecision = nil
-        decision(false)
+        decision(false, false)
     }
 }
