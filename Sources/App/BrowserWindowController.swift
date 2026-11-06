@@ -125,8 +125,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         solidFallbackColor: .controlBackgroundColor,
         cornerRadius: ChromeMetrics.toolbarCornerRadius
     )
-    /// Safari's sidebar button, first on the row after the traffic lights:
-    /// shows or hides the vertical tab sidebar.
+    /// Shows or hides the vertical tab sidebar. No layout places it on the
+    /// row any more (the View menu and the sidebar's own hide button do the
+    /// job), so it stays hidden: left visible at its zero frame, the glass
+    /// capsule bezel draws a dot at the toolbar's bottom-left corner.
     private let sidebarToggleButton: NSButton = {
         let button = NSButton()
         button.title = ""
@@ -134,6 +136,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         button.imagePosition = .imageOnly
         button.applyChromeAppearance(.glass)
         button.toolTip = "Show or Hide Tab Sidebar"
+        button.isHidden = true
         return button
     }()
     private static let sidebarToggleWidth: CGFloat = 40
