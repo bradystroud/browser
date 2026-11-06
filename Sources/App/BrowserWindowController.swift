@@ -1304,10 +1304,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         layoutLeadingToolbarControls()
     }
 
-    /// Sizes/positions the pill to fit its current content, right after
-    /// forwardButton (already laid out by the time this runs -- see
-    /// setUpToolbarContents). Also re-run whenever the content changes
-    /// (a rename can change the button's fitted width).
+    /// Sizes/positions the pill to fit its current content: first in the
+    /// toolbar row, before back/forward (layoutLeadingToolbarControls places
+    /// those after it), or in the sidebar layout's footer. Re-run whenever
+    /// the content changes, since a rename changes the fitted width.
     private func layoutProfilePill() {
         guard let profilePillButton else { return }
         profilePillButton.sizeToFit()
@@ -1318,7 +1318,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
         let toolbarHeight = toolbarView.bounds.height
         profilePillButton.frame = NSRect(
-            x: navigationGroup.frame.maxX + ChromeMetrics.groupSpacing,
+            x: trafficLightReservedWidth,
             y: ((toolbarHeight - Self.profilePillHeight) / 2).rounded(),
             width: pillWidth,
             height: Self.profilePillHeight
@@ -3174,10 +3174,15 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func layoutLeadingToolbarControls() {
         let height = ChromeMetrics.controlHeight
         let segment = ChromeMetrics.navigationSegmentWidth
+        var navigationX = trafficLightReservedWidth
+        if tabStripOrientation != .sidebar, let profilePillButton {
+            layoutProfilePill()
+            navigationX = profilePillButton.frame.maxX + ChromeMetrics.groupSpacing
+        }
         navigationGroup.frame = tabStripOrientation == .sidebar
             ? sidebarChrome.navigationGroupFrame(width: segment * 2)
             : NSRect(
-                x: trafficLightReservedWidth,
+                x: navigationX,
                 y: ((toolbarView.bounds.height - height) / 2).rounded(),
                 width: segment * 2, height: height
             )
