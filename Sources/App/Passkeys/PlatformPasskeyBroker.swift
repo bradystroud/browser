@@ -63,6 +63,16 @@ final class PlatformPasskeyBroker: NSObject {
         PageMessageDispatcher.shared.register(types: ["webauthnGet", "webauthnCreate", "webauthnCancel"]) { [weak self] (message: PageMessage) in
             self?.handle(message)
         }
+        // AuthenticationServicesAgent lets an app that is not a registered
+        // web browser (no com.apple.developer.web-browser entitlement) hold
+        // one passkey request at a time, keyed by its app ID. A request the
+        // app never ends stays registered after the app is gone, and the
+        // agent then refuses every later request from this app ID -- WebKit
+        // tabs included -- until the agent restarts. So end ours on quit.
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { [weak self] _ in
+            guard let self, let pending = self.pending else { return }
+            self.finish(pending, .failure(.abort("The browser is quitting.")))
+        }
     }
 
     private func handle(_ message: PageMessage) {
