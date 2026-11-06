@@ -21,11 +21,13 @@ enum AgentPageScript {
         return String(array.dropFirst().dropLast())
     }
 
-    /// `{ref}`, `{selector}` or `{text}` as a JS object literal.
-    static func target(ref: String?, selector: String?, text: String?) -> String {
+    /// `{ref}`, `{selector}` or `{text}` as a JS object literal. `role`
+    /// narrows a selector or text match to elements of that role.
+    static func target(ref: String?, selector: String?, text: String?, role: String? = nil) -> String {
+        let roleField = role.map { ", role: \(literal($0))" } ?? ""
         if let ref { return "{ref: \(literal(ref))}" }
-        if let selector { return "{selector: \(literal(selector))}" }
-        if let text { return "{text: \(literal(text))}" }
+        if let selector { return "{selector: \(literal(selector))\(roleField)}" }
+        if let text { return "{text: \(literal(text))\(roleField)}" }
         return "null"
     }
 
@@ -35,6 +37,50 @@ enum AgentPageScript {
       const elementToRef = new WeakMap();
       let nextRef = 1;
       const CURSOR_ATTR = 'data-brw-agent-cursor';
+
+      // Activity the page is still busy with, for `--wait-idle`: requests
+      // in flight (fetch and XMLHttpRequest, counted here because the page
+      // has no other way to see a pending one) and the time of the last DOM
+      // change or request completion. Installed once per document, before
+      // any command acts, so the activity a click starts is counted.
+      let inflight = 0;
+      let lastActivity = performance.now();
+      const touch = () => { lastActivity = performance.now(); };
+      const settled = () => { inflight = Math.max(0, inflight - 1); touch(); };
+      if (typeof window.fetch === 'function') {
+        const nativeFetch = window.fetch;
+        window.fetch = function (...args) {
+          inflight++; touch();
+          let result;
+          try { result = nativeFetch.apply(this, args); } catch (e) { settled(); throw e; }
+          return Promise.resolve(result).then((r) => { settled(); return r; }, (e) => { settled(); throw e; });
+        };
+      }
+      if (window.XMLHttpRequest) {
+        const nativeSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function (...args) {
+          inflight++; touch();
+          this.addEventListener('loadend', settled, {once: true});
+          return nativeSend.apply(this, args);
+        };
+      }
+      // The drawn cursor's own moves are not the page's activity.
+      const isCursorNode = (n) => !!(n && (n.nodeType === 1 ? n : n.parentElement)?.closest?.('[' + CURSOR_ATTR + ']'));
+      const cursorOnly = (r) => {
+        if (isCursorNode(r.target)) return true;
+        const nodes = [...r.addedNodes, ...r.removedNodes];
+        return r.type === 'childList' && nodes.length > 0 && nodes.every(isCursorNode);
+      };
+      new MutationObserver((records) => {
+        if (records.some(r => !cursorOnly(r))) touch();
+      }).observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+
+      // Whether nothing has happened for `quietMs`: no request in flight,
+      // and no DOM change or request completion in that time.
+      const idle = (quietMs) => {
+        const since = performance.now() - lastActivity;
+        return {idle: inflight === 0 && since >= quietMs && document.readyState === 'complete', inflight, since: Math.round(since)};
+      };
 
       const refFor = (el) => {
         let ref = elementToRef.get(el);
@@ -217,6 +263,17 @@ enum AgentPageScript {
         const ariaChecked = el.getAttribute('aria-checked');
         if (ariaChecked) out.checked = ariaChecked === 'true';
         if (el.disabled || el.getAttribute('aria-disabled') === 'true') out.disabled = true;
+        // What a hover would show as a native tooltip, which the engine
+        // draws outside the page and no screenshot captures.
+        const title = el.title || el.closest('[title]')?.title;
+        if (title && clean(title) !== out.name) out.title = clean(title, 300);
+        const describedBy = el.getAttribute('aria-describedby');
+        if (describedBy) {
+          const text = describedBy.split(/\s+/).map(id => el.ownerDocument.getElementById(id)?.innerText || '').join(' ');
+          if (text.trim()) out.description = clean(text, 300);
+        }
+        const shortcut = el.getAttribute('aria-keyshortcuts');
+        if (shortcut) out.shortcut = clean(shortcut);
         return out;
       };
 
@@ -237,37 +294,55 @@ enum AgentPageScript {
         return out;
       };
 
-      const resolve = (target) => {
+      // How likely an element with matching text is what an agent means to
+      // click: a real control first, then anything clickable the page built
+      // from plain elements, then a heading, which often repeats a control's
+      // text (a page titled after the menu item that opened it).
+      const rank = (el) => {
+        const r = role(el);
+        if (r === 'heading') return 2;
+        if (r === 'generic' || r === 'cell' || r === 'row' || r === 'gridcell') return 1;
+        return 0;
+      };
+      const roleMatches = (el, wanted) => !wanted || role(el) === wanted;
+
+      // The element a target means, with how many elements matched it: a
+      // ref matches one; a selector or text can match several, and the
+      // best-ranked one is taken.
+      const resolveInfo = (target) => {
         if (!target) throw new Error('no target given');
         if (target.ref) {
           const el = refToElement.get(target.ref)?.deref();
           if (!el || !el.isConnected) throw new Error('no element ' + target.ref + ' on this page any more; take a new snapshot');
-          return el;
+          return {el, matches: 1};
         }
+        const forRole = target.role ? ' with role ' + target.role : '';
         if (target.selector) {
-          const matches = queryAll(target.selector);
+          const matches = queryAll(target.selector).filter(el => roleMatches(el, target.role));
           const el = matches.find(visible) || matches[0];
-          if (!el) throw new Error('nothing matches selector ' + target.selector);
-          return el;
+          if (!el) throw new Error('nothing matches selector ' + target.selector + forRole);
+          return {el, matches: matches.length};
         }
         const wanted = target.text.toLowerCase();
-        // A heading often repeats a control's text (a page titled after the
-        // menu item that opened it); the control is what an agent means.
-        const all = actionable();
-        const candidates = all.filter(el => role(el) !== 'heading').concat(all.filter(el => role(el) === 'heading'));
-        const exact = candidates.find(el => name(el).toLowerCase() === wanted);
-        if (exact) return exact;
-        const partial = candidates.find(el => name(el).toLowerCase().includes(wanted));
-        if (partial) return partial;
+        const candidates = actionable().filter(el => roleMatches(el, target.role));
+        const byRank = (list) => list.sort((a, b) => rank(a) - rank(b));
+        const exact = byRank(candidates.filter(el => name(el).toLowerCase() === wanted));
+        if (exact.length) return {el: exact[0], matches: exact.length};
+        const partial = byRank(candidates.filter(el => name(el).toLowerCase().includes(wanted)));
+        if (partial.length) return {el: partial[0], matches: partial.length};
         // Any visible element whose own text is exactly that, smallest first.
         let best = null;
+        let count = 0;
         for (const el of allElements()) {
-          if (!visible(el) || clean(el.innerText, 10000).toLowerCase() !== wanted) continue;
+          if (!visible(el) || !roleMatches(el, target.role) || clean(el.innerText, 10000).toLowerCase() !== wanted) continue;
           if (!best || best.contains(el)) best = el;
+          count++;
         }
-        if (!best) throw new Error('no visible element with text "' + target.text + '"');
-        return best;
+        if (!best) throw new Error('no visible element with text "' + target.text + '"' + forRole);
+        return {el: best, matches: count};
       };
+
+      const resolve = (target) => resolveInfo(target).el;
 
       // Scrolls `el` into the middle of the viewport and returns where to
       // click it, in CSS pixels from the viewport's top-left.
@@ -347,7 +422,7 @@ enum AgentPageScript {
         return pageText().includes(text);
       };
 
-      return {resolve, point, describe, deepActive, isPassword, cursor, snapshot, has, visible};
+      return {resolve, resolveInfo, point, describe, deepActive, isPassword, cursor, snapshot, has, visible, idle};
     })())
     """#
 }

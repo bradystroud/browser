@@ -50,11 +50,23 @@ final class WindowManager {
     }
 
     /// A window whose only tab is an engine-created popup (window.open() with
-    /// a size, or a ⇧-click), already loading and linked to its opener.
+    /// a size, or a ⇧-click), already loading and linked to its opener. A
+    /// popup from an agent's window is the agent's too (a sign-in it
+    /// started, say), so it is presented the same way and never activates
+    /// the app or takes the user's screen.
     @discardableResult
-    func openNewWindow(profile: Profile, adoptingPopup popup: Tab, isPrivate: Bool) -> BrowserWindowController {
+    func openNewWindow(
+        profile: Profile,
+        adoptingPopup popup: Tab,
+        isPrivate: Bool,
+        agentPresentation: BrowserWindowController.AgentPresentation? = nil
+    ) -> BrowserWindowController {
         let controller = BrowserWindowController(profile: profile, adoptingPopup: popup, isPrivate: isPrivate)
-        registerAndShow(controller)
+        if let agentPresentation {
+            markAgentOwned(controller)
+            controller.agentPresentation = agentPresentation
+        }
+        registerAndShow(controller, activateApp: agentPresentation == nil)
         return controller
     }
 

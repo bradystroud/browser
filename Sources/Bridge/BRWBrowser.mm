@@ -261,6 +261,12 @@ bool IsCertStatusError(cef_cert_status_t status) {
   }
 }
 
+- (void)stopLoad {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->StopLoad();
+  }
+}
+
 - (void)close {
   if (_automation) {
     _automation->Close();

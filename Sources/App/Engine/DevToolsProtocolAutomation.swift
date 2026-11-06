@@ -112,7 +112,10 @@ final class DevToolsProtocolAutomation: EngineTabAutomation {
             "modifiers": modifiers.rawValue,
         ]
         if let text = key.text, modifiers.isDisjoint(with: [.command, .control]) {
-            down["text"] = text
+            // What the chord types in the user's layout: Option+2 is "™".
+            down["text"] = text.count == 1
+                ? MacKeyboardLayout.typedText(for: text.first!, shift: modifiers.contains(.shift), option: modifiers.contains(.alt))
+                : text
             down["unmodifiedText"] = text
         }
         var up = down

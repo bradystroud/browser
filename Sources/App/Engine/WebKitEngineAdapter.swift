@@ -483,6 +483,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
     func reload() {
         if !retryFailedNavigationIfShowingErrorPage() { webView.reload() }
     }
+    func stopLoading() { webView.stopLoading() }
     func close() {
         observations.forEach { $0.invalidate() }
         observations.removeAll()

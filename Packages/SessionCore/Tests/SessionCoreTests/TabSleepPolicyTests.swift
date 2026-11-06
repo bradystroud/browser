@@ -86,6 +86,23 @@ struct TabSleepPolicyTests {
         #expect(TabSleepPolicy.sweepInterval(forIdleInterval: 40) == 10)
         #expect(TabSleepPolicy.sweepInterval(forIdleInterval: 4) == 5)
     }
+
+    @Test("with no awake-tab limit, every idle tab sleeps")
+    func noLimitSleepsAll() {
+        #expect(TabSleepPolicy.sleepCount(awake: 3, eligible: 2, awakeLimit: nil) == 2)
+    }
+
+    @Test("at or under the awake-tab limit, nothing sleeps")
+    func underLimitSleepsNothing() {
+        #expect(TabSleepPolicy.sleepCount(awake: 20, eligible: 15, awakeLimit: 20) == 0)
+        #expect(TabSleepPolicy.sleepCount(awake: 5, eligible: 4, awakeLimit: 20) == 0)
+    }
+
+    @Test("over the awake-tab limit, only the excess sleeps")
+    func overLimitSleepsExcess() {
+        #expect(TabSleepPolicy.sleepCount(awake: 23, eligible: 10, awakeLimit: 20) == 3)
+        #expect(TabSleepPolicy.sleepCount(awake: 40, eligible: 4, awakeLimit: 20) == 4)
+    }
 }
 
 @Suite("Reading the page's sleep marker")
@@ -145,4 +162,5 @@ struct TabSleepPageScriptTests {
     func scriptUsesMarker() {
         #expect(TabSleepPageScript.source.contains(TabSleepPageScript.markerAttribute))
     }
+
 }

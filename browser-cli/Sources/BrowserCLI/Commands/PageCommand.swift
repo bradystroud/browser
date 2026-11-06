@@ -14,26 +14,36 @@ import BrowserCLIProtocol
 public enum PageCommand {
     static let usage = """
         browser page open [<url>] [--profile <name> | --private] [--width W --height H] [--cursor] [--headless] [--dialogs accept|dismiss]
-                          [--wait-selector S] [--wait-text T] [--wait-js EXPR] [--wait-url U] [--timeout MS] [--no-wait]
+                          [--wait-selector S] [--wait-text T] [--wait-js EXPR] [--wait-url U] [--wait-idle] [--timeout MS] [--no-wait]
         browser page list
-        browser page show <id>          (bring a headless page on screen; it does not take focus)
-        browser page hide <id>          (make it headless again)
+        browser page show <id> [--focus]   (bring a headless page on screen; only --focus gives it the keyboard)
+        browser page hide <id>             (make it headless again)
         browser page navigate <id> <url> [--wait-... flags as for open]
-        browser page wait <id> [--selector S] [--text T] [--js EXPR] [--url U] [--gone] [--timeout MS]
+        browser page reload <id> [--wait-... flags as for open]
+        browser page wait <id> [--selector S] [--text T] [--js EXPR] [--url U] [--idle] [--gone] [--timeout MS]
         browser page snapshot <id> [--max-text N] [--max-elements N]
-        browser page click <id> [<ref>] [--selector S | --text T] [--double]
-        browser page hover <id> [<ref>] [--selector S | --text T]
-        browser page type <id> <text> [--ref R | --selector S | --text T] [--clear] [--delay MS] [--submit]
-        browser page press <id> <key> [--modifiers cmd,shift,alt,ctrl]
-        browser page select <id> <value> [--ref R | --selector S | --text T]
+        browser page click <id> [<ref>] [--selector S | --text T] [--role ROLE] [--double] [--wait-idle]
+        browser page hover <id> [<ref>] [--selector S | --text T] [--role ROLE]
+        browser page type <id> <text> [--ref R | --selector S | --text T] [--role ROLE] [--clear] [--delay MS] [--submit] [--wait-idle]
+        browser page press <id> <key> [--modifiers cmd,shift,alt,ctrl] [--wait-idle]
+        browser page select <id> <value> [--ref R | --selector S | --text T] [--role ROLE]
         browser page upload <id> <file>... [--ref R | --selector S | --text T]
         browser page dialogs <id> accept|dismiss [--prompt-text T]
         browser page scroll <id> [--dy N] [--dx N] [--ref R | --selector S | --text T]
-        browser page eval <id> <expression>
+        browser page eval <id> <code> [--raw]
         browser page screenshot <id> [--out <file.png>] [--full-page]
         browser page record start <id> [--out <dir>] [--quality N] [--cursor]
         browser page record stop <id>
         browser page close <id>
+
+        Targets: a ref from the last snapshot (e12), --selector (CSS), or --text (an element's name, matched
+          case-insensitively; a link or button wins over plain text, a heading comes last). --role link|button|...
+          narrows a selector or text match. The result says "(1 of N matches)" when the target was ambiguous.
+        Waiting: --wait-idle (on open/navigate/reload/click/type/press) and wait --idle return once no request is in
+          flight and the DOM has not changed for 500 ms; --timeout MS caps every wait.
+        eval: <code> is an expression, or statements ending in `return`; a returned promise is awaited. --raw prints a
+          string result as plain text; everything else is JSON.
+        screenshot --full-page: on WebKit the page is scrolled and stitched, so content fixed to the viewport repeats.
         """
 
     public static func run(argv: [String]) -> Bool {
@@ -63,10 +73,12 @@ public enum PageCommand {
             copy("ref")
             copy("selector")
             copy("text", as: "text-target")
+            copy("role")
         }
         func waitFlags() {
             for name in ["wait-selector", "wait-text", "wait-js", "wait-url", "timeout"] { copy(name) }
             bool("no-wait")
+            bool("wait-idle")
         }
         func takeId() -> Bool {
             guard !positionals.isEmpty else { return false }
@@ -89,6 +101,7 @@ public enum PageCommand {
             break
         case "show", "hide":
             guard takeId() else { return usageError(json) }
+            bool("focus")
         case "close", "snapshot", "record-stop":
             guard takeId() else { return usageError(json) }
             copy("max-text")
@@ -96,6 +109,9 @@ public enum PageCommand {
         case "navigate":
             guard takeId(), let url = positionals.first else { return usageError(json) }
             args["url"] = url
+            waitFlags()
+        case "reload":
+            guard takeId() else { return usageError(json) }
             waitFlags()
         case "wait":
             guard takeId() else { return usageError(json) }
@@ -105,11 +121,13 @@ public enum PageCommand {
             copy("url", as: "wait-url")
             copy("timeout")
             bool("gone")
+            if flags["idle"] != nil { args["wait-idle"] = "true" }
         case "click", "hover":
             guard takeId() else { return usageError(json) }
             if let ref = positionals.first { args["ref"] = ref }
             target()
             bool("double")
+            bool("wait-idle")
         case "type":
             guard takeId(), let text = positionals.first else { return usageError(json) }
             args["text"] = text
@@ -117,10 +135,12 @@ public enum PageCommand {
             copy("delay")
             bool("clear")
             bool("submit")
+            bool("wait-idle")
         case "press":
             guard takeId(), let key = positionals.first else { return usageError(json) }
             args["key"] = key
             copy("modifiers")
+            bool("wait-idle")
         case "select":
             guard takeId(), let value = positionals.first else { return usageError(json) }
             args["value"] = value
@@ -161,6 +181,10 @@ public enum PageCommand {
                 if json { return Output.emitError(response.error ?? "page \(sub) failed", json: true) }
                 return Output.emitError(response.error ?? "page \(sub) failed", json: false)
             }
+            if sub == "eval", !json, flags["raw"] != nil, case .string(let text)? = response.value {
+                print(text)
+                return true
+            }
             return Output.emit(response, json: json, text: render)
         } catch {
             return Output.emitError("\(error)", json: json)
@@ -190,6 +214,8 @@ public enum PageCommand {
                 var line = "  \(element.ref) \(element.role)"
                 if !element.name.isEmpty { line += " \"\(element.name)\"" }
                 if let value = element.value, !value.isEmpty { line += " value=\"\(value)\"" }
+                if let title = element.title { line += " title=\"\(title)\"" }
+                if let shortcut = element.shortcut { line += " shortcut=\"\(shortcut)\"" }
                 if element.type == "password" { line += " [password]" }
                 if let checked = element.checked { line += checked ? " [checked]" : " [unchecked]" }
                 if element.disabled == true { line += " [disabled]" }

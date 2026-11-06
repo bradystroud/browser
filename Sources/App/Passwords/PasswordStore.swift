@@ -178,9 +178,14 @@ enum PasswordStore {
             kSecValueData as String: Data(password.utf8),
             kSecAttrLabel as String: "\(profileName): \(origin.host)",
         ]
-        let saved = SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        let status = SecItemAdd(addQuery as CFDictionary, nil)
+        let saved = status == errSecSuccess
         if saved {
             postDidChange()
+        } else {
+            // The one trace a failed save leaves. Host and status only --
+            // never the account or the secret.
+            NSLog("[passwords] SecItemAdd failed for %@: %d", origin.host, status)
         }
         return saved
     }

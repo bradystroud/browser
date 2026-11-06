@@ -822,6 +822,7 @@ final class Tab: NSObject, EngineTabDelegate {
     func goBack() { browser?.goBack() }
     func goForward() { browser?.goForward() }
     func reload() { browser?.reload() }
+    func stopLoading() { browser?.stopLoading() }
 
 
     /// Responsive Design Mode (browser-6hi.2) -- see EngineTab's own doc

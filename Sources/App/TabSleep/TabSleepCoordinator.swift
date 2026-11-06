@@ -2,7 +2,9 @@ import Foundation
 
 /// Puts background tabs to sleep: a tab left unselected for
 /// TabSleepPreferences.idleInterval (half an hour by default) gives back its
-/// engine tab, and with it the page's process memory, timers and sockets.
+/// engine tab, and with it the page's process memory, timers and sockets --
+/// but only while more tabs are awake than TabSleepPreferences.awakeTabLimit,
+/// and then only the longest-unused ones, enough to get back under it.
 /// Selecting it again loads the same URL in a fresh engine tab and scrolls
 /// back to where it was (Tab.sleep(scrollY:)). Which tabs may sleep is
 /// TabSleepPolicy's call; this class gathers what it needs and acts on it.
@@ -10,7 +12,7 @@ import Foundation
 /// A Timer, like TabAudioCoordinator's: idleness is the absence of events,
 /// so there is nothing to observe. When macOS reports memory pressure the
 /// interval shrinks for one sweep -- to five minutes on a warning, to
-/// nothing on a critical one.
+/// nothing on a critical one -- and the awake-tab limit is ignored.
 final class TabSleepCoordinator: TabLifecycleObserver {
     static let shared = TabSleepCoordinator()
 
@@ -66,13 +68,29 @@ final class TabSleepCoordinator: TabLifecycleObserver {
         guard TabSleepPreferences.isEnabled else { return }
         let idle = TabSleepPolicy.idleInterval(configured: TabSleepPreferences.idleInterval, pressure: pressure)
         let reason: TabMemoryDiagnostics.SleepReason = pressure == .normal ? .idle : .pressure
+        var awake = 0
+        var eligible: [(tab: Tab, controller: BrowserWindowController)] = []
         for controller in WindowManager.shared.windowControllers {
             // The visible tab is in use for as long as it stays visible, so
             // its clock starts when it stops being the visible one.
             controller.activeTab?.markUsed()
-            for tab in controller.tabs {
-                sleep(tab, in: controller, trigger: .automatic, idleInterval: idle, reason: reason)
+            for tab in controller.tabs where !tab.isAsleep {
+                awake += 1
+                if blocker(for: tab, in: controller, trigger: .automatic, idleInterval: idle) == nil {
+                    eligible.append((tab, controller))
+                }
             }
+        }
+        let count = TabSleepPolicy.sleepCount(
+            awake: awake,
+            eligible: eligible.count,
+            awakeLimit: pressure == .normal ? TabSleepPreferences.awakeTabLimit : nil
+        )
+        // Tabs still waiting on their page's answer stay at the front of
+        // this order, so the next sweep picks them again (and skips them)
+        // rather than putting extra tabs to sleep in their place.
+        for (tab, controller) in eligible.sorted(by: { $0.tab.lastUsed < $1.tab.lastUsed }).prefix(count) {
+            sleep(tab, in: controller, trigger: .automatic, idleInterval: idle, reason: reason)
         }
     }
 

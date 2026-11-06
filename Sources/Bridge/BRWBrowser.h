@@ -373,6 +373,7 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 - (void)goBack;
 - (void)goForward;
 - (void)reload;
+- (void)stopLoad;
 
 /// Requests that the browser and its underlying CEF resources close. Safe to
 /// call multiple times.

@@ -152,6 +152,7 @@ final class TabButtonView: NSView {
             // only if the mouse happens to already be hovering (mouseEntered
             // won't refire just because isPinned changed under the cursor).
             closeButton.isHidden = isPinned || !isMouseInside
+            updateIconState()
             needsLayout = true
         }
     }
@@ -168,6 +169,7 @@ final class TabButtonView: NSView {
             guard oldValue != isVerticalLayout else { return }
             titleLabel.alignment = isVerticalLayout ? .left : .center
             updateSelectionAppearance()
+            updateIconState()
             needsLayout = true
         }
     }
@@ -412,12 +414,6 @@ final class TabButtonView: NSView {
         }
 
         let faviconLeading: CGFloat = 8
-        closeButton.frame = NSRect(
-            x: bounds.width - closeSize - 5,
-            y: (bounds.height - closeSize) / 2,
-            width: closeSize,
-            height: closeSize
-        )
         let iconFrame = NSRect(
             x: faviconLeading,
             y: (bounds.height - faviconSize) / 2,
@@ -425,15 +421,36 @@ final class TabButtonView: NSView {
             height: faviconSize
         )
         faviconView.frame = iconFrame
-        audioButton.frame = iconFrame
         loadingSpinner.frame = iconFrame
+        if closesFromLeadingEdge {
+            // Safari's strip: the close button takes the favicon's place on
+            // hover, and the speaker sits at the trailing edge, mirroring
+            // the favicon, so the two never share a slot.
+            closeButton.frame = NSRect(
+                x: iconFrame.midX - closeSize / 2, y: (bounds.height - closeSize) / 2,
+                width: closeSize, height: closeSize
+            )
+            audioButton.frame = NSRect(
+                x: bounds.width - faviconLeading - faviconSize, y: iconFrame.minY,
+                width: faviconSize, height: faviconSize
+            )
+        } else {
+            closeButton.frame = NSRect(
+                x: bounds.width - closeSize - 5,
+                y: (bounds.height - closeSize) / 2,
+                width: closeSize,
+                height: closeSize
+            )
+            audioButton.frame = iconFrame
+        }
         // Horizontally: the same inset on both sides, so the label's centre
         // is the *pill's* centre and a short title reads as centred in the
         // tab rather than centred in some off-centre gap. The inset is the
         // favicon's own trailing edge, which is the wider of the two things
-        // the text must clear (the close button needs less), and it stays
-        // constant whether or not the close button is currently showing --
-        // otherwise a centred title would visibly shift sideways on hover.
+        // the text must clear (the speaker at the trailing edge needs no
+        // more), and it stays constant whether or not the close button is
+        // currently showing -- otherwise a centred title would visibly shift
+        // sideways on hover.
         //
         // Vertically centered as its own row alongside the favicon above
         // (browser-0y1, Brady's ask) -- a plain NSTextField label renders
@@ -481,13 +498,19 @@ final class TabButtonView: NSView {
         updateSelectionAppearance()
         guard !isPinned else { return }
         closeButton.isHidden = false
+        updateIconState()
     }
 
     override func mouseExited(with event: NSEvent) {
         isMouseInside = false
         updateSelectionAppearance()
         closeButton.isHidden = true
+        updateIconState()
     }
+
+    /// The horizontal strip closes from the leading edge, as Safari's does;
+    /// a sidebar row keeps its close button at the trailing end.
+    private var closesFromLeadingEdge: Bool { !isVerticalLayout }
 
     /// Makes the whole pill one mouse target, apart from its two real buttons.
     ///
@@ -648,9 +671,9 @@ final class TabButtonView: NSView {
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
-    /// Picks exactly one of audioButton / loadingSpinner / faviconView to
-    /// show in the shared icon slot, precedence audio > spinner > favicon
-    /// (browser-7z5, Brady's ask, documented explicitly since it wasn't
+    /// Picks what shows in the icon slot. In the sidebar and on a pinned
+    /// tab, exactly one of audioButton / loadingSpinner / faviconView,
+    /// precedence audio > spinner > favicon (browser-7z5, Brady's ask, documented explicitly since it wasn't
     /// obvious which should win when more than one applies at once): a
     /// muted/audible tab keeps showing that state even while also loading
     /// (matching browser-rhi.4's own established "isMuted takes precedence
@@ -659,22 +682,37 @@ final class TabButtonView: NSView {
     /// loading spinner), and a merely-loading tab shows the spinner in
     /// place of its favicon (which would otherwise just look frozen/stale
     /// for however long the load takes, especially for a background tab).
+    /// In the horizontal strip the speaker has its own trailing slot, and
+    /// the close button covers the icon slot while the pointer is over the
+    /// tab.
     private func updateIconState() {
         audioButton.isHidden = true
         loadingSpinner.isHidden = true
         loadingSpinner.stopAnimation(nil)
         faviconView.isHidden = false
 
+        // With the close button in the favicon's slot, the slot shows only
+        // the close button while it is up.
+        let closeCoversIconSlot = closesFromLeadingEdge && !closeButton.isHidden
+        // The speaker has its own trailing slot in the strip, so there it
+        // sits beside the favicon or spinner instead of replacing them. A
+        // pinned tab has room for one glyph only.
+        let audioSharesIconSlot = !closesFromLeadingEdge || isPinned
         if isMuted || isAudible {
             audioButton.image = NSImage(
                 systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
                 accessibilityDescription: isMuted ? "Muted -- click to unmute" : "Playing audio -- click to mute"
             )
             audioButton.isHidden = false
+        }
+        if isMuted || isAudible, audioSharesIconSlot {
             faviconView.isHidden = true
-        } else if isLoading {
+        } else if isLoading, !closeCoversIconSlot {
             loadingSpinner.isHidden = false
             loadingSpinner.startAnimation(nil)
+            faviconView.isHidden = true
+        }
+        if closeCoversIconSlot {
             faviconView.isHidden = true
         }
     }
