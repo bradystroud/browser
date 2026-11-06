@@ -12,6 +12,9 @@ extension Notification.Name {
 enum TabSleepPreferences {
     private static let enabledKey = "BrowserTabSleepEnabled"
     private static let idleSecondsKey = "BrowserTabSleepIdleSeconds"
+    private static let awakeTabLimitKey = "BrowserTabSleepAwakeTabLimit"
+
+    static let defaultAwakeTabLimit = 20
 
     /// The shortest interval a stored value is taken at. Anything shorter
     /// would put a tab to sleep while the user is still flicking between tabs.
@@ -32,6 +35,22 @@ enum TabSleepPreferences {
         }
         set {
             AppPreferencesStore.current.set(max(newValue, minimumIdleInterval), forKey: idleSecondsKey)
+            NotificationCenter.default.post(name: .tabSleepPreferencesDidChange, object: nil)
+        }
+    }
+
+    /// Idle tabs sleep only while more than this many tabs are awake; nil
+    /// means idle tabs always sleep. Stored as 0 for nil, so a missing key
+    /// can still mean the default.
+    static var awakeTabLimit: Int? {
+        get {
+            guard let stored = AppPreferencesStore.current.object(forKey: awakeTabLimitKey) as? Int else {
+                return defaultAwakeTabLimit
+            }
+            return stored > 0 ? stored : nil
+        }
+        set {
+            AppPreferencesStore.current.set(max(newValue ?? 0, 0), forKey: awakeTabLimitKey)
             NotificationCenter.default.post(name: .tabSleepPreferencesDidChange, object: nil)
         }
     }

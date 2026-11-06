@@ -256,6 +256,7 @@ protocol EngineTab: AnyObject {
     func goBack()
     func goForward()
     func reload()
+    func stopLoading()
     func close()
 
     /// Opens (or brings forward) this tab's developer tools on `panel`, or

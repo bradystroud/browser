@@ -116,6 +116,17 @@ enum TabSleepPolicy {
         }
     }
 
+    /// How many idle tabs to put to sleep in one sweep. With no limit, all
+    /// of them. With one, only enough to bring the awake tabs, across every
+    /// window, back down to it: idle time alone says nothing about whether
+    /// the Mac needs the memory back, and a Mac with plenty to spare should
+    /// not reload a tab only because it went unread for a while. Tabs that
+    /// can never sleep (selected, pinned, private) count toward the total.
+    static func sleepCount(awake: Int, eligible: Int, awakeLimit: Int?) -> Int {
+        guard let awakeLimit else { return eligible }
+        return min(eligible, max(0, awake - awakeLimit))
+    }
+
     /// How often to look for idle tabs: a quarter of the interval, between
     /// five seconds and a minute, so a tab sleeps within about a quarter of
     /// its interval of becoming eligible.

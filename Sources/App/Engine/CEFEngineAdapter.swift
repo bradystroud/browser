@@ -127,6 +127,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     func goBack() { browser.goBack() }
     func goForward() { browser.goForward() }
     func reload() { browser.reload() }
+    func stopLoading() { browser.stopLoad() }
     func close() { browser.close() }
 
     /// Where docked tools currently live, so the picker and inspect-at-point

@@ -77,10 +77,17 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let tabSleepCheckbox = NSButton()
     private let tabSleepAfterLabel = NSTextField(labelWithString: "after")
     private let tabSleepAfterPopup = NSPopUpButton()
+    private let tabSleepWhenLabel = NSTextField(labelWithString: "when")
+    private let tabSleepWhenPopup = NSPopUpButton()
     private let tabSleepHelpLabel = SettingsForm.footnote()
     private static let tabSleepIntervals: [(title: String, seconds: TimeInterval)] = [
         ("5 minutes", 5 * 60), ("15 minutes", 15 * 60), ("30 minutes", 30 * 60),
         ("1 hour", 60 * 60), ("2 hours", 2 * 60 * 60),
+    ]
+    private static let tabSleepAwakeLimits: [(title: String, limit: Int?)] = [
+        ("any number of tabs are open", nil),
+        ("more than 10 tabs are open", 10), ("more than 20 tabs are open", 20),
+        ("more than 30 tabs are open", 30), ("more than 50 tabs are open", 50),
     ]
 
     override init() {
@@ -262,6 +269,17 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let tabSleepRow = form.addRow(nil, [tabSleepCheckbox, tabSleepAfterLabel, tabSleepAfterPopup])
         tabSleepRow.topPadding = SettingsForm.rowSpacing
         (tabSleepRow.cell(at: 1).contentView as? NSStackView)?.spacing = 4
+        // "... when [more than 20 tabs are open]", under the checkbox's title.
+        for limit in Self.tabSleepAwakeLimits {
+            tabSleepWhenPopup.menu?.addItem(NSMenuItem(title: limit.title, action: nil, keyEquivalent: ""))
+        }
+        tabSleepWhenPopup.target = self
+        tabSleepWhenPopup.action = #selector(tabSleepAwakeLimitChanged)
+        let indent = NSView()
+        indent.translatesAutoresizingMaskIntoConstraints = false
+        indent.widthAnchor.constraint(equalToConstant: SettingsForm.checkboxTitleIndent - 4).isActive = true
+        let tabSleepWhenRow = form.addRow(nil, [indent, tabSleepWhenLabel, tabSleepWhenPopup])
+        (tabSleepWhenRow.cell(at: 1).contentView as? NSStackView)?.spacing = 4
         form.addFootnote(tabSleepHelpLabel, indented: true)
 
         form.beginSection()
@@ -546,6 +564,13 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         updateTabSleepRow()
     }
 
+    @objc private func tabSleepAwakeLimitChanged() {
+        let index = tabSleepWhenPopup.indexOfSelectedItem
+        guard Self.tabSleepAwakeLimits.indices.contains(index) else { return }
+        TabSleepPreferences.awakeTabLimit = Self.tabSleepAwakeLimits[index].limit
+        updateTabSleepRow()
+    }
+
     /// An interval stored outside the menu's choices (set by hand for
     /// testing) selects the nearest one rather than showing nothing.
     private func updateTabSleepRow() {
@@ -558,8 +583,25 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         tabSleepAfterPopup.selectItem(at: nearest)
         tabSleepAfterPopup.isEnabled = enabled
         tabSleepAfterLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
-        tabSleepHelpLabel.stringValue = "A sleeping tab lets go of its page and reloads when you select it. Pinned and private tabs, and tabs playing sound, downloading or holding something you\u{2019}ve typed, stay awake."
+        // A limit stored outside the menu (set by hand) selects the nearest
+        // one; "any number" only matches no limit at all.
+        let limit = TabSleepPreferences.awakeTabLimit
+        let nearestLimit = Self.tabSleepAwakeLimits.indices.min {
+            Self.distance(Self.tabSleepAwakeLimits[$0].limit, limit) < Self.distance(Self.tabSleepAwakeLimits[$1].limit, limit)
+        } ?? 0
+        tabSleepWhenPopup.selectItem(at: nearestLimit)
+        tabSleepWhenPopup.isEnabled = enabled
+        tabSleepWhenLabel.textColor = enabled ? .labelColor : .disabledControlTextColor
+        tabSleepHelpLabel.stringValue = "A sleeping tab lets go of its page and reloads when you select it. With a tab count set, only the tabs you used longest ago sleep, enough to get back under it, unless your Mac runs low on memory. Pinned and private tabs, and tabs playing sound, downloading or holding something you\u{2019}ve typed, stay awake."
         helpTextDidChange()
+    }
+
+    private static func distance(_ a: Int?, _ b: Int?) -> Int {
+        switch (a, b) {
+        case (nil, nil): return 0
+        case let (a?, b?): return abs(a - b)
+        default: return .max
+        }
     }
 
     // MARK: - New windows / homepage (browser-m0x)
