@@ -48,10 +48,34 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// move engine (see holdsTabEngines).
     var agentPresentation: AgentPresentation? {
         didSet {
-            guard agentPresentation != nil, tabStripOrientation != .horizontal else { return }
+            guard agentPresentation != nil else { return }
+            if agentIndicator == nil { installAgentIndicator() }
+            guard tabStripOrientation != .horizontal else { return }
             tabStripOrientation = .horizontal
             applyChromeLayout()
         }
+    }
+
+    /// The strip that marks an agent's window; nil for every other window.
+    private(set) var agentIndicator: AgentWindowIndicatorView?
+
+    /// How far the window's chrome starts below the top of contentView: the
+    /// dev-build strip, then the agent strip.
+    private var chromeTopInset: CGFloat {
+        DevBuildIndicator.topInset + (agentIndicator == nil ? 0 : AgentWindowIndicatorView.height)
+    }
+
+    private func installAgentIndicator() {
+        guard let window, let contentView = window.contentView else { return }
+        let height = AgentWindowIndicatorView.height
+        let indicator = AgentWindowIndicatorView(frame: NSRect(
+            x: 0, y: contentView.bounds.height - DevBuildIndicator.topInset - height,
+            width: contentView.bounds.width, height: height))
+        indicator.autoresizingMask = [.width, .minYMargin]
+        contentView.addSubview(indicator)
+        agentIndicator = indicator
+        (window as? BrowserWindow)?.trafficLightCenterFromTop = chromeTopInset + Self.toolbarHeight / 2
+        applyChromeLayout()
     }
 
     /// Moves an agent's window on or off screen without making it key or
@@ -607,7 +631,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         window.titleVisibility = .hidden
         window.styleMask.insert(.fullSizeContentView)
         (window as? BrowserWindow)?.trafficLightCenterFromTop =
-            DevBuildIndicator.topInset + Self.toolbarHeight / 2
+            chromeTopInset + Self.toolbarHeight / 2
 
         // Added back to front. Every frame here is provisional; the real
         // geometry is applyChromeLayout()'s, which also runs on every later
@@ -698,7 +722,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func applyChromeLayout() {
         guard let contentView = window?.contentView else { return }
         let width = contentView.bounds.width
-        let height = contentView.bounds.height - DevBuildIndicator.topInset
+        let height = contentView.bounds.height - chromeTopInset
         let toolbarHeight = Self.toolbarHeight
         let hairline: CGFloat = 0.5
 
@@ -792,7 +816,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             var parts: [String] = [
                 "orientation=\(self.tabStripOrientation.rawValue)",
                 "windowW=\(f(contentView.bounds.width))",
-                "bannerInset=\(f(DevBuildIndicator.topInset))",
+                "bannerInset=\(f(self.chromeTopInset))",
                 "toolbarMidFromTop=\(f(top - self.toolbarView.frame.midY))",
             ]
             let lights: [(String, NSWindow.ButtonType)] = [("close", .closeButton), ("minimize", .miniaturizeButton), ("zoom", .zoomButton)]
@@ -2692,9 +2716,11 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
 
         pendingPermissionRequest = (tab, promptId)
-        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: popoverAnchor(for: omniboxField)) { [weak self] allow in
+        permissionPrompt.show(kinds: kinds, origin: requestingOrigin, anchorView: popoverAnchor(for: omniboxField)) { [weak self] allow, chosen in
             self?.pendingPermissionRequest = nil
-            store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            if chosen {
+                store?.setDecision(allow, for: requestingOrigin, kinds: kinds)
+            }
             decision(allow)
         }
     }
@@ -3086,7 +3112,7 @@ extension BrowserWindowController {
     /// rounded corners; the page itself only ever sits beside the column,
     /// never under it.
     fileprivate func applySidebarLayout(in bounds: NSRect) {
-        let frames = sidebarChrome.frames(in: bounds, topInset: DevBuildIndicator.topInset)
+        let frames = sidebarChrome.frames(in: bounds, topInset: chromeTopInset)
         let shown = sidebarChrome.isShown
         let column = SidebarChrome.columnMask(for: sidebarChrome.edge)
 
