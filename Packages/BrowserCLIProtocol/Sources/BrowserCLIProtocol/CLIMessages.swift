@@ -59,6 +59,9 @@ public struct CLIResponse: Codable {
     /// What an agent page did on its own during a `page` command: dialogs
     /// answered and file choosers opened.
     public var pageEvents: [String]?
+    /// How many elements a `page click`/`hover`/`type`/`select` target
+    /// matched; the best-ranked one was used.
+    public var matches: Int?
 
     public init(
         ok: Bool,
@@ -74,7 +77,8 @@ public struct CLIResponse: Codable {
         element: CLIPageElement? = nil,
         path: String? = nil,
         frameCount: Int? = nil,
-        pageEvents: [String]? = nil
+        pageEvents: [String]? = nil,
+        matches: Int? = nil
     ) {
         self.ok = ok
         self.error = error
@@ -90,6 +94,7 @@ public struct CLIResponse: Codable {
         self.path = path
         self.frameCount = frameCount
         self.pageEvents = pageEvents
+        self.matches = matches
     }
 
     public static func failure(_ error: String) -> CLIResponse {
@@ -254,6 +259,13 @@ public struct CLIPageElement: Codable {
     public let y: Double
     public let width: Double
     public let height: Double
+    /// The element's `title` (or its nearest ancestor's): what a hover
+    /// shows as a native tooltip, which no screenshot captures.
+    public let title: String?
+    /// The text of the elements `aria-describedby` points at.
+    public let description: String?
+    /// Its `aria-keyshortcuts`.
+    public let shortcut: String?
 }
 
 /// Any JSON value, so `page eval` can hand back exactly what the page

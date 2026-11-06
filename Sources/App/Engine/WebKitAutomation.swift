@@ -13,7 +13,10 @@ import WebKit
 /// beforeinput/input events typing does.
 ///
 /// Screenshots are `takeSnapshot`, and a screencast is snapshots taken on a
-/// timer, since WebKit has no repaint-driven frame stream.
+/// timer, since WebKit has no repaint-driven frame stream. A full-page
+/// screenshot is the page scrolled a viewport at a time and the snapshots
+/// stitched, since `takeSnapshot` only ever sees the viewport: content the
+/// page fixes to the viewport appears once per strip.
 final class WebKitAutomation: EngineTabAutomation {
     private weak var webView: WKWebView?
     private var screencastTimer: Timer?
@@ -198,7 +201,7 @@ final class WebKitAutomation: EngineTabAutomation {
         guard let webView, let window = webView.window else {
             return completion(.failure(EngineAutomationError("the page has no window")))
         }
-        guard let native = Self.nativeKey(for: key) else {
+        guard let native = Self.nativeKey(for: key, modifiers: modifiers) else {
             return completion(.failure(EngineAutomationError("no Mac key for \(key.key)")))
         }
         var flags: NSEvent.ModifierFlags = native.shift ? [.shift] : []
@@ -269,8 +272,10 @@ final class WebKitAutomation: EngineTabAutomation {
 
     /// Mac virtual key codes (US layout) and the characters AppKit reports
     /// for them. A character with no key of its own is sent with the
-    /// characters alone, which is what an input method does.
-    private static func nativeKey(for key: EngineAutomationKey) -> NativeKey? {
+    /// characters alone, which is what an input method does. With Shift or
+    /// Option held, the characters are what the user's layout types for
+    /// that chord (Option+2 is "™"), as a real press would deliver.
+    private static func nativeKey(for key: EngineAutomationKey, modifiers: EngineAutomationModifiers) -> NativeKey? {
         let named: [String: (UInt16, Int)] = [
             "Enter": (36, 0x0D), "Tab": (48, 0x09), "Escape": (53, 0x1B), "Backspace": (51, 0x7F),
             "Delete": (117, 0xF728), " ": (49, 0x20),
@@ -280,38 +285,130 @@ final class WebKitAutomation: EngineTabAutomation {
         if let (code, scalar) = named[key.key], let character = Unicode.Scalar(scalar).map(String.init) {
             return NativeKey(keyCode: code, characters: character, charactersIgnoringModifiers: character, shift: false)
         }
-        guard let text = key.text, text.count == 1 else { return nil }
+        guard let text = key.text, text.count == 1, let character = text.first else { return nil }
         let lower = text.lowercased()
-        let shift = lower != text
-        let codes: [Character: UInt16] = [
-            "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
-            "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23,
-            "=": 24, "9": 25, "7": 26, "-": 27, "8": 28, "0": 29, "]": 30, "o": 31, "u": 32, "[": 33, "i": 34,
-            "p": 35, "l": 37, "j": 38, "'": 39, "k": 40, ";": 41, "\\": 42, ",": 43, "/": 44, "n": 45, "m": 46,
-            ".": 47, "`": 50,
-        ]
+        let shift = lower != text || modifiers.contains(.shift)
         // 0x7F has no key on any Mac keyboard, so the page sees no key code.
-        let code = lower.first.flatMap { codes[$0] } ?? 0x7F
-        return NativeKey(keyCode: code, characters: text, charactersIgnoringModifiers: lower, shift: shift)
+        let code = MacKeyboardLayout.virtualKeyCode(for: character) ?? 0x7F
+        // Command and Control chords keep the plain character, as AppKit
+        // reports it for a shortcut.
+        let typed = modifiers.isDisjoint(with: [.command, .control])
+            ? MacKeyboardLayout.typedText(for: character, shift: shift, option: modifiers.contains(.alt))
+            : text
+        return NativeKey(keyCode: code, characters: typed, charactersIgnoringModifiers: lower, shift: shift)
     }
 
     // MARK: - Capture
 
     func screenshot(fullPage: Bool, completion: @escaping (Result<Data, EngineAutomationError>) -> Void) {
-        guard !fullPage else {
-            return completion(.failure(EngineAutomationError("full-page screenshots need the CEF engine; WebKit captures the visible page only")))
-        }
-        snapshot { [encodeQueue] result in
+        guard !fullPage else { return fullPageScreenshot(completion: completion) }
+        snapshot { [weak self] result in
             switch result {
-            case .failure(let error):
-                completion(.failure(error))
-            case .success(let image):
-                encodeQueue.async {
-                    let png = Self.encode(image, as: .png, quality: 1)
-                    DispatchQueue.main.async {
-                        png.map { completion(.success($0)) } ?? completion(.failure(EngineAutomationError("could not encode the screenshot")))
+            case .failure(let error): completion(.failure(error))
+            case .success(let image): self?.encodePNG(image, completion: completion)
+            }
+        }
+    }
+
+    private func encodePNG(_ image: CGImage, completion: @escaping (Result<Data, EngineAutomationError>) -> Void) {
+        encodeQueue.async {
+            let png = Self.encode(image, as: .png, quality: 1)
+            DispatchQueue.main.async {
+                png.map { completion(.success($0)) } ?? completion(.failure(EngineAutomationError("could not encode the screenshot")))
+            }
+        }
+    }
+
+    /// The most viewports a full-page screenshot stitches; a page that
+    /// scrolls for ever still gets a bounded image.
+    static let maxFullPageViewports = 20
+
+    private struct PageMetrics: Decodable {
+        let width: Double
+        let height: Double
+        let viewportHeight: Double
+        let scrollX: Double
+        let scrollY: Double
+    }
+
+    /// Scrolls the window down one viewport at a time, snapshots each
+    /// position and composes the strips at the scroll offsets the page
+    /// really took, then puts the scroll position back. Stops early when the
+    /// page will not scroll further, so a page whose scrolling happens in an
+    /// inner element gives the viewport alone rather than twenty copies.
+    private func fullPageScreenshot(completion: @escaping (Result<Data, EngineAutomationError>) -> Void) {
+        call("""
+            const doc = document.documentElement, body = document.body;
+            return {width: innerWidth, viewportHeight: innerHeight,
+                    height: Math.max(doc.scrollHeight, body ? body.scrollHeight : 0, innerHeight),
+                    scrollX: scrollX, scrollY: scrollY};
+            """) { [weak self] result in
+            guard let self else { return completion(.failure(EngineAutomationError("the page closed"))) }
+            guard case .success(let value) = result, let value, JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value),
+                  let metrics = try? JSONDecoder().decode(PageMetrics.self, from: data),
+                  metrics.width > 0, metrics.viewportHeight > 0 else {
+                return completion(.failure(EngineAutomationError("could not measure the page")))
+            }
+            let height = min(metrics.height, metrics.viewportHeight * Double(Self.maxFullPageViewports))
+            var strips: [(scrollY: Double, image: CGImage)] = []
+            let restore = { (then: @escaping () -> Void) in
+                self.call("scrollTo(x, y);", ["x": metrics.scrollX, "y": metrics.scrollY]) { _ in then() }
+            }
+            func capture(at offset: Double) {
+                // A moment after the scroll, so lazily drawn content has
+                // painted. A timer, not requestAnimationFrame: a view that
+                // is not drawing (hidden, or in a test) never gets a frame.
+                self.call("scrollTo(x, y); await new Promise(r => setTimeout(r, 80)); return scrollY;",
+                          ["x": metrics.scrollX, "y": offset]) { [weak self] result in
+                    guard let self else { return completion(.failure(EngineAutomationError("the page closed"))) }
+                    let actual = (try? result.get()) as? Double ?? offset
+                    if let last = strips.last, actual <= last.scrollY {
+                        return restore { self.compose(strips, metrics: metrics, completion: completion) }
+                    }
+                    self.snapshot { [weak self] result in
+                        guard let self else { return completion(.failure(EngineAutomationError("the page closed"))) }
+                        guard case .success(let image) = result else {
+                            return restore { completion(.failure(EngineAutomationError("the engine returned no image"))) }
+                        }
+                        strips.append((actual, image))
+                        let next = offset + metrics.viewportHeight
+                        guard next < height else { return restore { self.compose(strips, metrics: metrics, completion: completion) } }
+                        capture(at: next)
                     }
                 }
+            }
+            capture(at: 0)
+        }
+    }
+
+    /// One image of the strips at their scroll offsets, scaled as the
+    /// snapshots were (the screen's pixel density).
+    private func compose(_ strips: [(scrollY: Double, image: CGImage)], metrics: PageMetrics, completion: @escaping (Result<Data, EngineAutomationError>) -> Void) {
+        guard let first = strips.first else { return completion(.failure(EngineAutomationError("the engine returned no image"))) }
+        guard strips.count > 1 else { return encodePNG(first.image, completion: completion) }
+        let scale = Double(first.image.width) / metrics.width
+        guard let last = strips.last else { return encodePNG(first.image, completion: completion) }
+        let totalHeight = Int((last.scrollY * scale).rounded()) + last.image.height
+        encodeQueue.async {
+            guard let context = CGContext(
+                data: nil, width: first.image.width, height: totalHeight, bitsPerComponent: 8, bytesPerRow: 0,
+                space: first.image.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+                return DispatchQueue.main.async { completion(.failure(EngineAutomationError("could not compose the screenshot"))) }
+            }
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: first.image.width, height: totalHeight))
+            for strip in strips {
+                let top = Int((strip.scrollY * scale).rounded())
+                // Core Graphics draws from the bottom; the strip's top is
+                // `top` pixels down from the page's top.
+                let rect = CGRect(x: 0, y: totalHeight - top - strip.image.height, width: strip.image.width, height: strip.image.height)
+                context.draw(strip.image, in: rect)
+            }
+            let png = context.makeImage().flatMap { Self.encode($0, as: .png, quality: 1) }
+            DispatchQueue.main.async {
+                png.map { completion(.success($0)) } ?? completion(.failure(EngineAutomationError("could not encode the screenshot")))
             }
         }
     }

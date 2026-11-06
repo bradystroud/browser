@@ -26,6 +26,11 @@ final class AutomationTests: WebKitTabTestCase {
             "/inner": .html("""
                 <!DOCTYPE html><style>body{margin:0}</style><input id="inner" style="width:200px;height:30px">
                 """),
+            "/tall": .html("""
+                <!DOCTYPE html><title>Tall</title>
+                <style>body{margin:0} div{height:400px} #top{background:#f00} #mid{background:#0f0} #end{background:#00f}</style>
+                <div id="top"></div><div id="mid"></div><div id="end"></div>
+                """),
         ]
     }
 
@@ -154,6 +159,39 @@ final class AutomationTests: WebKitTabTestCase {
         let image = try XCTUnwrap(NSBitmapImageRep(data: png))
         XCTAssertGreaterThanOrEqual(image.pixelsWide, Int(tab.webView.bounds.width))
         XCTAssertEqual(png.prefix(4), Data([0x89, 0x50, 0x4E, 0x47]))
+    }
+
+    func testFullPageScreenshotStitchesTheWholeDocumentAndRestoresScroll() throws {
+        loadAndWaitForCommit(server.url("/tall"))
+        waitUntil("tall ready") { (try? callJS("return document.title")) as? String == "Tall" }
+        automation = try XCTUnwrap(tab.automation)
+        _ = try callJS("scrollTo(0, 100)")
+        let visible = try XCTUnwrap(perform("visible") { automation.screenshot(fullPage: false, completion: $0) })
+        let full = try XCTUnwrap(perform("full page") { automation.screenshot(fullPage: true, completion: $0) })
+        let visibleImage = try XCTUnwrap(NSBitmapImageRep(data: visible))
+        let fullImage = try XCTUnwrap(NSBitmapImageRep(data: full))
+        let scale = Double(visibleImage.pixelsWide) / tab.webView.bounds.width
+        XCTAssertEqual(fullImage.pixelsWide, visibleImage.pixelsWide)
+        XCTAssertEqual(Double(fullImage.pixelsHigh), 1200 * scale, accuracy: 2 * scale)
+        // The last strip is blue, the first red, so the page was really scrolled.
+        let bottom = try XCTUnwrap(fullImage.colorAt(x: fullImage.pixelsWide / 2, y: fullImage.pixelsHigh - 2))
+        let top = try XCTUnwrap(fullImage.colorAt(x: fullImage.pixelsWide / 2, y: 2))
+        XCTAssertGreaterThan(bottom.blueComponent, 0.9)
+        XCTAssertLessThan(bottom.redComponent, 0.1)
+        XCTAssertGreaterThan(top.redComponent, 0.9)
+        XCTAssertEqual(try callJS("return scrollY") as? Int, 100)
+    }
+
+    func testOptionChordTypesTheLayoutsCharacter() throws {
+        perform("click field") { automation.click(at: CGPoint(x: 60, y: 95), clickCount: 1, completion: $0) }
+        let two = try XCTUnwrap(EngineAutomationKey(name: "2"))
+        perform("alt-2") { automation.pressKey(two, modifiers: [.alt], completion: $0) }
+        let expected = MacKeyboardLayout.typedText(for: "2", shift: false, option: true)
+        XCTAssertEqual(try callJS("return document.getElementById('q').value") as? String, expected)
+        // A US or Australian layout types the trademark sign there.
+        if MacKeyboardLayout.characters(keyCode: 19, shift: false, option: false) == "2", expected != "2" {
+            XCTAssertEqual(expected, "™")
+        }
     }
 
     func testScreencastDeliversFramesUntilStopped() {
