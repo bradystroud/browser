@@ -61,7 +61,7 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// the Engines pane.
     private let enginePopup = NSPopUpButton()
     private let engineHelpLabel = SettingsForm.footnote()
-    private static let engineOrder: [EngineChoice] = [.cef, .webkit]
+    private static let engineOrder: [EngineChoice] = [.webkit, .cef]
 
     private let backgroundTabsSlider: NSSlider = {
         let slider = NSSlider(value: 1, minValue: 0, maxValue: Double(BackgroundTabPolicy.allCases.count - 1), target: nil, action: nil)
