@@ -222,6 +222,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// real profile identity to indicate.
     private let profilePillButton: NSButton?
     private static let profilePillHeight = ChromeMetrics.controlHeight
+    /// Space between the pill's capsule ends and its name/chevron. The
+    /// button is borderless, so sizeToFit() measures the content alone.
+    private static let profilePillHorizontalPadding: CGFloat = 12
     private static let trailingToolbarControlSize = ChromeMetrics.controlHeight
     private static let trailingToolbarControlGap = ChromeMetrics.controlSpacing
     /// Share, New Tab and Tab Overview as one glass capsule at the trailing
@@ -1311,7 +1314,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private func layoutProfilePill() {
         guard let profilePillButton else { return }
         profilePillButton.sizeToFit()
-        let pillWidth = max(44, profilePillButton.frame.width).rounded()
+        let pillWidth = max(44, profilePillButton.frame.width + 2 * Self.profilePillHorizontalPadding).rounded()
         if tabStripOrientation == .sidebar {
             layoutSidebarIdentityControl(profilePillButton, fittedWidth: pillWidth)
             return
