@@ -71,6 +71,8 @@ extension WebKitTab: WKUIDelegate {
     @available(macOS 27.0, *)
     @objc(webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
     func webView(_ webView: WKWebView, requestGeolocationPermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        // A grant alone yields no position: WebKit needs a provider to ask.
+        WebKitGeolocation.shared.install(on: webView.configuration.processPool)
         let promptId = UInt64.random(in: .min ... .max)
         delegate?.engineTabDidRequestPermission(.geolocation, promptId: promptId, requestingOrigin: Self.permissionOrigin(origin), decision: { allow in
             decisionHandler(allow ? .grant : .deny)
