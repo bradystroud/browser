@@ -23,6 +23,9 @@ final class PlatformPasskeyBroker: NSObject {
     private var started = false
     private lazy var suffixes: PublicSuffixList? = Self.loadSuffixList()
     private var pending: Pending?
+    /// True while macOS asks the user whether this app may use their
+    /// passkeys. Holds off a second request, as `pending` does.
+    private var awaitingPermission = false
 
     private final class Pending {
         let token: String?
@@ -117,11 +120,52 @@ final class PlatformPasskeyBroker: NSObject {
         guard let window = tab.hostView.window, window.isKeyWindow, !tab.hostView.isHiddenOrHasHiddenAncestor else {
             return reject(tab, message.requestId, .notAllowed("Passkeys can only be used from the tab in the active window."))
         }
-        guard pending == nil else {
+        guard pending == nil, !awaitingPermission else {
             return reject(tab, message.requestId, .notAllowed("A passkey request is already in progress."))
         }
+        let requestId = message.requestId
+        let start = { [weak self, weak tab] (permitted: Bool) in
+            guard let self, let tab else { return }
+            let allowed = permitted ? requests : requests.filter { !Self.isPlatformRequest($0) }
+            guard !allowed.isEmpty else { return self.reply(tab, requestId, fallback: true) }
+            self.perform(allowed, tab: tab, window: window, requestId: requestId, token: token,
+                         timeout: timeout, isCreate: isCreate, wantsCredProps: wantsCredProps)
+        }
+        // macOS refuses every iCloud Keychain request, with no sheet, until
+        // the user has let this app use their passkeys
+        // (kTCCServiceWebBrowserPublicKeyCredential). WebKit tabs do not
+        // need it, so a WebKit sign-in says nothing about this.
+        let manager = ASAuthorizationWebBrowserPublicKeyCredentialManager()
+        switch manager.authorizationStateForPlatformCredentials {
+        case .authorized:
+            start(true)
+        case .denied:
+            start(false)
+        case .notDetermined:
+            awaitingPermission = true
+            manager.requestAuthorizationForPublicKeyCredentials { state in
+                withExtendedLifetime(manager) {}
+                DispatchQueue.main.async { [weak self] in
+                    self?.awaitingPermission = false
+                    start(state == .authorized)
+                }
+            }
+        @unknown default:
+            start(false)
+        }
+    }
+
+    @available(macOS 13.5, *)
+    private static func isPlatformRequest(_ request: ASAuthorizationRequest) -> Bool {
+        request is ASAuthorizationPlatformPublicKeyCredentialAssertionRequest
+            || request is ASAuthorizationPlatformPublicKeyCredentialRegistrationRequest
+    }
+
+    @available(macOS 13.5, *)
+    private func perform(_ requests: [ASAuthorizationRequest], tab: Tab, window: NSWindow, requestId: Int64, token: String?,
+                         timeout: TimeInterval, isCreate: Bool, wantsCredProps: Bool) {
         let controller = ASAuthorizationController(authorizationRequests: requests)
-        let entry = Pending(token: token, requestId: message.requestId, tab: tab, window: window,
+        let entry = Pending(token: token, requestId: requestId, tab: tab, window: window,
                             controller: controller, isCreate: isCreate, wantsCredProps: wantsCredProps)
         pending = entry
         controller.delegate = self
