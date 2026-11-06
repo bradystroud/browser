@@ -576,6 +576,10 @@ struct EngineCapabilities {
     var webExtensions: Bool = false
     /// Tabs offer `automation`, so the `browser page` CLI commands work.
     var agentControl: Bool = false
+    /// The engine shows the system passkey sheet (Touch ID, iCloud
+    /// Keychain) by itself. When false, `PasskeyPageScript` and
+    /// `PlatformPasskeyBroker` provide it.
+    var systemPasskeys: Bool = false
 }
 
 /// How hard the engine works to save memory in tabs the user can't see.

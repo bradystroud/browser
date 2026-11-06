@@ -14,7 +14,9 @@ enum EnginePreference {
             // AppPreferencesStore.current, not .standard directly (browser-
             // xrq) -- so an agent's scratch launch can flip engines without
             // changing which engine Brady's real app uses.
-            EngineChoice(rawValue: AppPreferencesStore.current.string(forKey: key) ?? "") ?? .cef
+            // WebKit, because only WebKit gets Touch ID / iCloud Keychain
+            // passkeys (see the Passkeys note in AGENTS.md).
+            EngineChoice(rawValue: AppPreferencesStore.current.string(forKey: key) ?? "") ?? .webkit
         }
         set {
             AppPreferencesStore.current.set(newValue.rawValue, forKey: key)

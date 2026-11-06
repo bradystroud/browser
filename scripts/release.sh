@@ -274,6 +274,37 @@ fi
 # ---------------------------------------------------------------------------
 # Phase: notarize
 # ---------------------------------------------------------------------------
+# Submits one file and waits. `notarytool submit --wait` exits 0 even when
+# Apple rejects the submission (status Invalid) -- it only reports the
+# outcome in its output. Trusting the exit code is exactly what let two
+# Invalid submissions sail on to stapling and die with "Record not found"
+# while the script still reported success (beads browser-rkn). So the status
+# is parsed, anything but Accepted fails hard, and the notary log is dumped
+# so the reason is visible without a second `notarytool log` round-trip.
+notarize_file() {
+  local path="$1" log_file submission_id status
+  local auth
+  if [[ -n "${NOTARY_API_KEY_PATH:-}" && -n "${NOTARY_API_KEY_ID:-}" && -n "${NOTARY_API_ISSUER:-}" ]]; then
+    auth=(--key "${NOTARY_API_KEY_PATH}" --key-id "${NOTARY_API_KEY_ID}" --issuer "${NOTARY_API_ISSUER}")
+  else
+    auth=(--keychain-profile "${NOTARY_PROFILE}")
+  fi
+  log_file="$(mktemp)"
+  xcrun notarytool submit "${path}" "${auth[@]}" --wait | tee "${log_file}"
+  submission_id="$(grep -m1 '^\s*id:' "${log_file}" | awk '{print $2}')"
+  status="$(grep '^\s*status:' "${log_file}" | tail -1 | awk '{print $2}')"
+  rm -f "${log_file}"
+  echo "Submission ID: ${submission_id:-<unknown>}"
+  echo "Status: ${status:-<unknown>}"
+  if [[ "${status}" != "Accepted" ]]; then
+    echo "error: notarization of ${path} did not succeed (status: ${status:-<unknown>}). Full log:" >&2
+    if [[ -n "${submission_id:-}" ]]; then
+      xcrun notarytool log "${submission_id}" "${auth[@]}" >&2 || true
+    fi
+    exit 1
+  fi
+}
+
 if [[ "${DO_NOTARIZE}" -eq 1 ]]; then
   log "Notarizing (keychain profile: ${NOTARY_PROFILE})"
   SUBMIT_PATH="${SUBMIT_ZIP}"
@@ -292,28 +323,7 @@ if [[ "${DO_NOTARIZE}" -eq 1 ]]; then
   # (beads browser-rkn). Parse the actual status and fail hard on anything
   # but Accepted, dumping the notary log so the rejection reason is visible
   # without a second manual `notarytool log` round-trip.
-  if [[ -n "${NOTARY_API_KEY_PATH:-}" && -n "${NOTARY_API_KEY_ID:-}" && -n "${NOTARY_API_ISSUER:-}" ]]; then
-    NOTARY_AUTH=(--key "${NOTARY_API_KEY_PATH}" --key-id "${NOTARY_API_KEY_ID}" --issuer "${NOTARY_API_ISSUER}")
-  else
-    NOTARY_AUTH=(--keychain-profile "${NOTARY_PROFILE}")
-  fi
-
-  NOTARIZE_LOG="$(mktemp)"
-  xcrun notarytool submit "${SUBMIT_PATH}" "${NOTARY_AUTH[@]}" --wait | tee "${NOTARIZE_LOG}"
-  SUBMISSION_ID="$(grep -m1 '^\s*id:' "${NOTARIZE_LOG}" | awk '{print $2}')"
-  NOTARIZE_STATUS="$(grep '^\s*status:' "${NOTARIZE_LOG}" | tail -1 | awk '{print $2}')"
-  rm -f "${NOTARIZE_LOG}"
-
-  echo "Submission ID: ${SUBMISSION_ID:-<unknown>}"
-  echo "Status: ${NOTARIZE_STATUS:-<unknown>}"
-
-  if [[ "${NOTARIZE_STATUS}" != "Accepted" ]]; then
-    echo "error: notarization did not succeed (status: ${NOTARIZE_STATUS:-<unknown>}). Full log:" >&2
-    if [[ -n "${SUBMISSION_ID:-}" ]]; then
-      xcrun notarytool log "${SUBMISSION_ID}" "${NOTARY_AUTH[@]}" >&2 || true
-    fi
-    exit 1
-  fi
+  notarize_file "${SUBMIT_PATH}"
 else
   log "Skipping notarize (--skip-notarize)"
 fi
@@ -338,6 +348,9 @@ if [[ "${DO_STAPLE}" -eq 1 ]]; then
       ln -s /Applications "${STAGING_DIR}/Applications"
       hdiutil create -volname "Browser" -srcfolder "${STAGING_DIR}" -ov -format UDZO "${DMG_PATH}"
       rm -rf "${STAGING_DIR}"
+      # A new dmg is a new file Apple has no ticket for, so it is submitted
+      # again before stapling (stapling it unsubmitted fails with error 65).
+      notarize_file "${DMG_PATH}"
       xcrun stapler staple "${DMG_PATH}"
       echo "Distributable: ${DMG_PATH}"
     else

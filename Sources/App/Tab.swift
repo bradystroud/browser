@@ -1159,6 +1159,9 @@ final class Tab: NSObject, EngineTabDelegate {
         // arbitrates registrations by message type, unlike earlier this
         // session).
         executeJavaScript(NotificationOverrideScript.source)
+        if !capabilities.systemPasskeys, PlatformPasskeyBroker.shared.isAvailable {
+            executeJavaScript(PasskeyPageScript.source)
+        }
         if SwipeScrollProbeScript.isNeeded(for: capabilities) {
             SwipeNavigationController.shared.documentDidStart(in: self)
             executeJavaScript(SwipeScrollProbeScript.source)

@@ -120,8 +120,8 @@ enum CommandLineArgs {
 
     /// The engine a tab uses when no site rule decides: an explicit
     /// `--engine cef|webkit` launch argument if given (browser-n50),
-    /// otherwise the Settings preference (browser-2a7), otherwise cef. Any
-    /// unrecognized value falls back to cef, matching this codebase's
+    /// otherwise the Settings preference (browser-2a7), otherwise webkit. Any
+    /// unrecognized value falls back to webkit, matching this codebase's
     /// existing "invalid input is the safe default" convention (see
     /// RuleMatcher/BlockingSettings). Both engines always run; this only
     /// picks the default (see Engines and EngineRulesStore).
@@ -134,7 +134,7 @@ enum CommandLineArgs {
         guard let index = args.firstIndex(of: "--engine"), index + 1 < args.count else {
             return EnginePreference.current
         }
-        return EngineChoice(rawValue: args[index + 1]) ?? .cef
+        return EngineChoice(rawValue: args[index + 1]) ?? .webkit
     }
 
     /// Whether `--engine` pinned the default for this launch, so Settings
