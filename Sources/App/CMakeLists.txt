@@ -238,6 +238,8 @@ set(BROWSER_SWIFT_SRCS
   ImageCopy/ImageDownloadController.swift
   PictureInPicture/PictureInPictureScript.swift
   Notifications/NotificationOverrideScript.swift
+  Passkeys/PasskeyPageScript.swift
+  Passkeys/PlatformPasskeyBroker.swift
   Notifications/WebPushCoordinator.swift
   Audio/AudioStateScript.swift
   Gestures/AutoScrollPreference.swift
@@ -379,6 +381,9 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebOrigin.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PageMessagePolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PopupTargetPolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PublicSuffixList.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebAuthnAttestation.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebAuthnRequest.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CredentialScope.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExternalSchemePolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionPackage.swift
@@ -592,6 +597,19 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy
           "${CMAKE_SOURCE_DIR}/Sources/App/Reader/Readability-readerable.js"
           "${CEF_APP}/Contents/Resources/Reader/Readability-readerable.js"
+  VERBATIM
+  )
+
+# The Public Suffix List PlatformPasskeyBroker checks relying-party IDs
+# against (loaded from Contents/Resources/Passkeys at runtime). Update it
+# with scripts/update-public-suffix-list.sh.
+add_custom_command(
+  TARGET ${CEF_TARGET}
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CEF_APP}/Contents/Resources/Passkeys"
+  COMMAND ${CMAKE_COMMAND} -E copy
+          "${CMAKE_SOURCE_DIR}/Sources/App/Passkeys/public_suffix_list.dat"
+          "${CEF_APP}/Contents/Resources/Passkeys/public_suffix_list.dat"
   VERBATIM
   )
 

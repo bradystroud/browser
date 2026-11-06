@@ -83,6 +83,9 @@ public enum PageMessagePolicy {
         "elementHiderPicked": .mainFrame,
         "elementHiderEnded": .mainFrame,
         "swipeScrollState": .mainFrame,
+        "webauthnGet": .mainFrame,
+        "webauthnCreate": .mainFrame,
+        "webauthnCancel": .mainFrame,
         "openStartPageSettings": .startPage,
     ]
 

@@ -62,7 +62,8 @@ enum WebKitEngine: BrowserEngine {
             backgroundTabPolicy: WebKitBackgroundTabPolicy.isAvailable,
             nativeSwipeNavigation: true,
             webExtensions: extensionsAvailable,
-            agentControl: true)
+            agentControl: true,
+            systemPasskeys: true)
     }
 
     /// WKWebExtension is macOS 15.4+.
