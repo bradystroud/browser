@@ -7,6 +7,7 @@ description: Build the browser and update the local /Applications/Browser.app in
 
 Update Brady's local installation at /Applications/Browser.app from the current working tree.
 
+0. **Pull first.** `but pull` before building, never after. A build from a tree behind origin/main removes whatever already landed from Brady's installed app (this is how the profile pill and Touch ID passkeys vanished after a ship). `scripts/install.sh` refuses such a build; never pass `BRW_ALLOW_STALE_SHIP=1` to get around it. If the pull leaves conflicts, stop and resolve them (or ask) before building.
 1. **Build.** `./scripts/build.sh` from the repo root. On failure: stop, show the last ~20 lines of build output, do not touch the installed app.
 2. **Install.** `./scripts/install.sh` — this quits any running Browser instance first (required: two instances must never share `root_cache_path`), copies the built app to /Applications with `ditto`, and re-registers it with Launch Services (keeps default-browser eligibility).
 3. **Relaunch.** `open /Applications/Browser.app`, then confirm the process is up (`pgrep -f Applications/Browser.app`). Profiles/settings/history are safe — all state lives in `~/Library/Application Support/Browser/`, which install never touches.
