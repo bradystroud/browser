@@ -154,6 +154,7 @@ enum AgentPages {
                 return completion(.failure("No agent page \(id). `browser page list` shows the open ones; only pages opened with `browser page open` can be controlled."))
             }
             let completion = reporting(page, completion)
+            applyIdentity(args, to: page.controller)
             page.controller?.agentIndicator?.update(activity: activityDescription(request))
             switch request.command {
             case "page-close": close(page, completion: completion)
@@ -187,6 +188,13 @@ enum AgentPages {
             default: completion(.failure("unknown command: \(request.command)"))
             }
         }
+    }
+
+    /// The agent's tool, session name and model, which the CLI sends with
+    /// every command (`AgentIdentity` in browser-cli).
+    private static func applyIdentity(_ args: [String: String], to controller: BrowserWindowController?) {
+        controller?.agentIndicator?.update(
+            agentTool: args["agent-tool"], name: args["agent-name"], model: args["agent-model"])
     }
 
     // MARK: - Pages
@@ -281,6 +289,7 @@ enum AgentPages {
         let page = AgentPage(id: "p\(nextNumber)", controller: controller)
         nextNumber += 1
         controller.agentIndicator?.update(pageId: page.id)
+        applyIdentity(args, to: controller)
         page.showsCursor = args["cursor"] == "true"
         page.acceptsDialogs = args["dialogs"] == "accept"
         pages[page.id] = page

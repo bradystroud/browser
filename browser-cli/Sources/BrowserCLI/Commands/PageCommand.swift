@@ -44,6 +44,8 @@ public enum PageCommand {
         eval: <code> is an expression, or statements ending in `return`; a returned promise is awaited. --raw prints a
           string result as plain text; everything else is JSON.
         screenshot --full-page: on WebKit the page is scrolled and stitched, so content fixed to the viewport repeats.
+        Agent strip: the window names the agent tool, its session name and model, found from Claude Code's or Codex's
+          own session files. --agent NAME and --model ID (or BROWSER_AGENT_NAME / BROWSER_AGENT_MODEL) override them.
         """
 
     public static func run(argv: [String]) -> Bool {
@@ -172,6 +174,10 @@ public enum PageCommand {
             bool("cursor")
         default:
             return usageError(json)
+        }
+
+        if sub != "list" {
+            args.merge(AgentIdentity.detect(flags: flags).requestArgs) { current, _ in current }
         }
 
         let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
