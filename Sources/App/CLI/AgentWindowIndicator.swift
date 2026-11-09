@@ -2,8 +2,9 @@ import AppKit
 
 /// A violet strip across the top of every window an agent opened with
 /// `browser page open`, so the user can always tell an agent's window from
-/// their own: which page id the agent knows it by, what it did last, and
-/// whether it is recording.
+/// their own: which agent it is (its tool, session name and model, as the
+/// CLI found them), which page id it knows the window by, what it did last,
+/// and whether it is recording.
 ///
 /// It sits inside contentView like the dev-build strip (directly below it
 /// when both show), because that is the only place NSGlassEffectView
@@ -21,6 +22,9 @@ final class AgentWindowIndicatorView: NSView {
 
     private var pageId: String?
     private var activity: String?
+    private var agentTool: String?
+    private var agentName: String?
+    private var agentModel: String?
 
     var isRecording = false {
         didSet {
@@ -35,7 +39,6 @@ final class AgentWindowIndicatorView: NSView {
         // Fixed, not dynamic: the same in light and dark mode, and unlike the
         // amber dev-build strip and any system chrome.
         layer?.backgroundColor = NSColor(srgbRed: 0.42, green: 0.30, blue: 0.93, alpha: 1).cgColor
-        toolTip = "An agent controls this window through the browser command-line tool. It never takes your keyboard, and it cannot reach your other windows."
 
         label.font = .systemFont(ofSize: 11, weight: .semibold)
         label.textColor = .white
@@ -63,6 +66,16 @@ final class AgentWindowIndicatorView: NSView {
         refresh()
     }
 
+    /// Fields the CLI could not find stay as they were, so a command run
+    /// from somewhere without them never blanks what an earlier one set.
+    func update(agentTool: String?, name: String?, model: String?) {
+        guard agentTool != nil || name != nil || model != nil else { return }
+        if let agentTool { self.agentTool = agentTool }
+        if let name { agentName = name }
+        if let model { agentModel = model }
+        refresh()
+    }
+
     /// What the agent is doing or last did, e.g. "click e15".
     func update(activity: String) {
         self.activity = activity
@@ -71,9 +84,14 @@ final class AgentWindowIndicatorView: NSView {
 
     private func refresh() {
         var parts = ["AGENT"]
+        let who = [agentTool, agentName.map { "\u{201C}\($0)\u{201D}" }].compactMap { $0 }.joined(separator: " ")
+        if !who.isEmpty { parts.append(who) }
+        if let agentModel { parts.append(agentModel) }
         if let pageId { parts.append(pageId) }
         parts.append(activity ?? "controlled by the browser CLI")
         label.stringValue = parts.joined(separator: " · ")
+        // The label truncates in a narrow window, so the tooltip repeats it whole.
+        toolTip = label.stringValue + "\n\nAn agent controls this window through the browser command-line tool. It never takes your keyboard, and it cannot reach your other windows."
         setAccessibilityLabel("Agent window: " + label.stringValue + (isRecording ? ", recording" : ""))
         layoutLabels()
     }
