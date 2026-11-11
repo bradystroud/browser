@@ -34,6 +34,9 @@ struct BrowserCLIEntry {
         } catch {
             return Output.emitError("\(error)", json: ArgParser.parse(argv).jsonOutput)
         }
+        if parsed.flags["version"] != nil {
+            return VersionCommand.run(json: parsed.jsonOutput)
+        }
         if parsed.flags["help"] != nil {
             if parsed.positionals.first == "page" { print(PageCommand.usage) }
             else { printUsage() }
@@ -91,6 +94,8 @@ struct BrowserCLIEntry {
         case "help", "--help", "-h":
             printUsage()
             return true
+        case "-v", "version":
+            return VersionCommand.run(json: parsed.jsonOutput)
         default:
             FileHandle.standardError.write(Data("Unknown command: \(commandWord)\n\n".utf8))
             printUsage()
@@ -114,6 +119,7 @@ struct BrowserCLIEntry {
           browser history search <query> [--limit N] [--profile <name>]
           browser bookmarks list [--folder <path>] [--profile <name>]
           browser page <subcommand> ...   (agent control; `browser page help`)
+          browser --version               (the app version and the commit it was built from)
 
         Socket commands accept --socket <absolute-path> before or after the command.
         BROWSER_CLI_SOCKET supplies a default explicit socket.

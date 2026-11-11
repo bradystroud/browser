@@ -34,6 +34,18 @@ final class WebKitAutomation: EngineTabAutomation {
         self.webView = webView
     }
 
+    /// WebKit's popup blocker reads the preferences, which a tab shares only
+    /// with the popups it opens. An extension's page shares them with every
+    /// page of that extension, so it is never changed there.
+    var allowsPopupsWithoutGesture: Bool {
+        get { webView?.configuration.preferences.javaScriptCanOpenWindowsAutomatically ?? false }
+        set {
+            // WebKitExtensionManager.pageScheme, which needs macOS 15.4.
+            guard let webView, webView.url?.scheme != "chrome-extension" else { return }
+            webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = newValue
+        }
+    }
+
     deinit {
         screencastTimer?.invalidate()
     }

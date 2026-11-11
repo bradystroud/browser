@@ -249,6 +249,10 @@ protocol EngineTab: AnyObject {
     var delegate: EngineTabDelegate? { get set }
     /// Agent control for this tab's page, or nil when the engine has none.
     var automation: EngineTabAutomation? { get }
+    /// How the last main-frame document load ended: its HTTP status, or why
+    /// it never arrived. Lets an agent command say that a page it opened is
+    /// a server's error, not the page it asked for.
+    var mainDocumentLoad: EngineMainDocumentLoad? { get }
     /// The process rendering this tab's page, for memory diagnostics. Nil
     /// when the engine can't say (CEF), or the tab has no process yet.
     var contentProcessIdentifier: pid_t? { get }
@@ -401,6 +405,49 @@ extension EngineTab {
     var automation: EngineTabAutomation? { nil }
 }
 
+/// The end of one main-frame document load. `sequence` grows with every
+/// load in the process, so a caller can tell whether a load ended since it
+/// last looked.
+struct EngineMainDocumentLoad: Equatable {
+    let sequence: Int
+    let url: String
+    /// The response's status; nil for a document that came with no HTTP
+    /// response (about:, data:, file:) or never arrived.
+    let httpStatus: Int?
+    /// Why the document never arrived (DNS, refused connection, TLS), in
+    /// the engine's words. nil when a response arrived, whatever its status.
+    let error: String?
+
+    private static var lastSequence = 0
+
+    init(url: String, httpStatus: Int?, error: String? = nil) {
+        Self.lastSequence += 1
+        sequence = Self.lastSequence
+        self.url = url
+        self.httpStatus = httpStatus
+        self.error = error
+    }
+
+    /// "HTTP 431 Request Header Fields Too Large", or the load error, when
+    /// the page is not what was asked for; nil for a page that loaded.
+    var problem: String? {
+        if let error { return "the page did not load: \(error)" }
+        guard let httpStatus, httpStatus >= 400 else { return nil }
+        return "the server answered HTTP \(httpStatus) \(Self.reason(httpStatus))"
+    }
+
+    /// Foundation names these only "client error".
+    private static let newerReasons = [
+        421: "Misdirected Request", 422: "Unprocessable Content", 425: "Too Early",
+        426: "Upgrade Required", 428: "Precondition Required", 429: "Too Many Requests",
+        431: "Request Header Fields Too Large", 451: "Unavailable For Legal Reasons",
+    ]
+
+    static func reason(_ status: Int) -> String {
+        newerReasons[status] ?? HTTPURLResponse.localizedString(forStatusCode: status).capitalized
+    }
+}
+
 /// Drives one tab's page the way a user would, from inside the engine:
 /// synthetic input reaches the page itself, never the OS, so it never moves
 /// the real pointer, takes keyboard focus or activates the app. Reaches only
@@ -439,6 +486,11 @@ protocol EngineTabAutomation: AnyObject {
     /// the user, so none is shown and none blocks the page. nil shows them
     /// as usual. An engine that cannot intercept them ignores it.
     var dialogHandler: ((EngineAutomationDialog) -> EngineAutomationDialogAnswer)? { get set }
+    /// Lets the page open new tabs with no user gesture: from script, a
+    /// timer, or several from one click. The popup scheme checks still
+    /// apply. Reads back what the engine applied, which can stay false
+    /// where it cannot be scoped to this tab alone.
+    var allowsPopupsWithoutGesture: Bool { get set }
 }
 
 extension EngineTabAutomation {

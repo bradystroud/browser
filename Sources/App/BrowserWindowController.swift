@@ -72,6 +72,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             x: 0, y: contentView.bounds.height - DevBuildIndicator.topInset - height,
             width: contentView.bounds.width, height: height))
         indicator.autoresizingMask = [.width, .minYMargin]
+        indicator.onStopChange = { [weak self] stopped in
+            guard let self else { return }
+            AgentPages.setStoppedByUser(stopped, in: self)
+        }
         contentView.addSubview(indicator)
         agentIndicator = indicator
         (window as? BrowserWindow)?.trafficLightCenterFromTop = chromeTopInset + Self.toolbarHeight / 2
@@ -2185,6 +2189,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func tabHoldsEngine(_ tab: Tab) -> Bool {
         agentPresentation != nil
+    }
+
+    func tabShowsStartPage(_ tab: Tab) -> Bool {
+        agentPresentation == nil
     }
 
     func tabDidChangeDisplayState(_ tab: Tab) {

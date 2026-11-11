@@ -17,12 +17,17 @@ enum AgentControlPreference {
     }
 }
 
-/// One window an agent opened with `browser page open`. Commands act on its
-/// visible tab, so a page that opens a link in a new tab of the same window
-/// is followed there.
+/// One tab an agent controls: the first tab of a window `browser page open`
+/// created, or a tab a page in that window opened (a popup, a target=name or
+/// _blank link), which gets its own id. Commands act on the page's own tab,
+/// never on whichever tab happens to be in front, so a page keeps its handle
+/// after it opens another.
 final class AgentPage {
     let id: String
     weak var controller: BrowserWindowController?
+    private weak var pinnedTab: Tab?
+    /// The page that opened this one, for a page that is a popup.
+    let openedBy: String?
     /// Draw a pointer where synthetic clicks land, for recordings: the
     /// engine's own input has no visible pointer.
     var showsCursor = false
@@ -32,6 +37,10 @@ final class AgentPage {
     weak var viewportAutomation: EngineTabAutomation?
     /// How a confirm() or prompt() is answered. An alert has only OK.
     var acceptsDialogs = false
+    /// Whether the page may open tabs with no user gesture
+    /// (`--allow-popups`). The pages of one window always agree: on WebKit a
+    /// popup shares its opener's preferences.
+    var allowsPopups = false
     var promptText: String?
     /// Files the next file chooser gets, set by `page upload`.
     var uploadFiles: [URL] = []
@@ -45,31 +54,66 @@ final class AgentPage {
     /// close the agent never asked for is still explained.
     private(set) var closedAt: Date?
     private var closeObserver: NSObjectProtocol?
+    /// Set only by the user, with the Stop button on the window's agent
+    /// strip; no command can change it. While it is set every command on
+    /// this page is refused, and a command already running ends at its next
+    /// step instead of acting.
+    var isStoppedByUser = false
+    /// Where a recording the Stop button ended was saved.
+    var recordingSavedByStop: String?
 
-    init(id: String, controller: BrowserWindowController) {
+    init(id: String, controller: BrowserWindowController, tab: Tab?, openedBy: String? = nil) {
         self.id = id
         self.controller = controller
+        self.pinnedTab = tab
+        self.openedBy = openedBy
         if let window = controller.window {
             closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
-                guard let self else { return }
-                if let url = self.controller?.activeTab?.urlString, !url.isEmpty { self.lastSeenURL = url }
-                self.closedAt = Date()
+                self?.markClosed()
             }
         }
     }
+
+    /// Its tab closed, or its whole window did.
+    func markClosed() {
+        guard closedAt == nil else { return }
+        if let url = pinnedTab?.urlString, !url.isEmpty { lastSeenURL = url }
+        closedAt = Date()
+    }
+
+    var isClosed: Bool { closedAt != nil || tab == nil }
+
+    func owns(_ tab: Tab) -> Bool { pinnedTab === tab }
 
     deinit {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver) }
     }
 
-    var tab: Tab? { controller?.activeTab }
+    var tab: Tab? {
+        guard closedAt == nil, let tab = pinnedTab, controller?.tabs.contains(where: { $0 === tab }) == true else { return nil }
+        return tab
+    }
+
+    /// Brings the page's tab to the front of its window before a command:
+    /// screenshots, recordings and WebKit's input all act on the visible tab.
+    func bringToFront() {
+        guard let controller, let tab, controller.activeTab !== tab,
+              let index = controller.tabs.firstIndex(where: { $0 === tab }) else { return }
+        controller.selectTab(at: index)
+    }
+
+    /// The answer to every command while the user has stopped this page.
+    var stoppedExplanation: String {
+        let recording = recordingSavedByStop.map { " The recording was stopped and its frames saved in \($0)." } ?? ""
+        return "The user stopped the agent in \(id) with the Stop button in its window. Do not retry or try to work around it: ask the user what they want. Only they can resume it.\(recording)"
+    }
 
     /// Why a command on this page can no longer run, once its window is gone.
     var closedExplanation: String {
         let seconds = closedAt.map { Int(Date().timeIntervalSince($0)) }
         let when = seconds.map { $0 < 2 ? "just now" : "\($0) s ago" } ?? "earlier"
-        let at = lastSeenURL.isEmpty ? "" : " while at \(lastSeenURL)"
-        return "\(id) closed \(when)\(at): its window was closed by the page (window.close()), by its last tab closing, or by the user. Open a new page with `browser page open`."
+        let at = lastSeenURL.isEmpty ? "" : " while at \(AgentPages.shown(lastSeenURL))"
+        return "\(id) closed \(when)\(at): its tab or window was closed by the page (window.close()), by `browser page close`, or by the user. Open a new page with `browser page open`."
     }
 
     /// The visible tab's automation, set to answer the page's dialogs here
@@ -79,6 +123,9 @@ final class AgentPage {
         guard let automation = tab?.browser?.automation else { return nil }
         if automation.dialogHandler == nil {
             automation.dialogHandler = { [weak self] dialog in self?.answer(dialog) ?? .dismiss }
+        }
+        if automation.allowsPopupsWithoutGesture != allowsPopups {
+            automation.allowsPopupsWithoutGesture = allowsPopups
         }
         return automation
     }
@@ -137,6 +184,37 @@ enum AgentPages {
 
     typealias Completion = (CLIResponse) -> Void
 
+    /// How long a command may run when it sets no --timeout of its own. A
+    /// command that waits gets its wait's timeout plus `commandGrace`, so
+    /// the wait's own, clearer error comes first.
+    private static let defaultCommandLimit: TimeInterval = 60
+    private static let commandGrace: TimeInterval = 5
+
+    /// Answers once: with the command's result, or with an error when it has
+    /// run past its limit. Nothing in the engine promises a callback (a page
+    /// busy in a modal loop never answers a snapshot), and an agent left
+    /// waiting on the socket can do nothing at all.
+    private static func limited(_ command: String, _ args: [String: String], _ completion: @escaping Completion) -> Completion {
+        let timeout = args["timeout"].flatMap(Double.init).map { $0 / 1000 }
+        // `type --delay` takes as long as it was asked to.
+        let typing = (args["delay"].flatMap(Double.init) ?? 0) / 1000 * Double(args["text"]?.count ?? 0)
+        let limit = (timeout.map { $0 + commandGrace } ?? defaultCommandLimit) + typing
+        var answered = false
+        let once: Completion = { response in
+            guard !answered else { return }
+            answered = true
+            completion(response)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit) {
+            let name = command.hasPrefix("page-") ? String(command.dropFirst(5)) : command
+            once(.failure("\(name) gave no answer in \(Int(limit)) s, so it was stopped. The page may still be busy; pass --timeout MS to wait longer."))
+        }
+        return once
+    }
+
+    /// Ids sort by number, so p10 comes after p9.
+    private static func pageNumber(_ page: AgentPage) -> Int { Int(page.id.dropFirst()) ?? 0 }
+
     static func handle(_ request: CLIRequest, completion: @escaping Completion) {
         guard AgentControlPreference.isEnabled else {
             return completion(.failure(
@@ -147,6 +225,7 @@ enum AgentPages {
         }
         prune()
         let args = request.args
+        let completion = limited(request.command, args, completion)
         switch request.command {
         case "page-open": open(args, completion: completion)
         case "page-list": list(completion: completion)
@@ -156,8 +235,15 @@ enum AgentPages {
                 if let closed = closedPages[id] { return completion(.failure(closed.closedExplanation)) }
                 return completion(.failure("No agent page \(id). `browser page list` shows the open ones; only pages opened with `browser page open` can be controlled."))
             }
-            let completion = reporting(page, completion)
+            guard !page.isStoppedByUser else {
+                page.controller?.agentIndicator?.update(activity: activityDescription(request))
+                return completion(.failure(page.stoppedExplanation))
+            }
+            var completion = reporting(page, completion)
+            if request.command == "page-click" { completion = afterPopupGrace(completion) }
             applyIdentity(args, to: page.controller)
+            page.bringToFront()
+            page.controller?.agentIndicator?.update(pageId: page.id)
             page.controller?.agentIndicator?.update(activity: activityDescription(request))
             switch request.command {
             case "page-resize":
@@ -207,6 +293,8 @@ enum AgentPages {
             case "page-type": type(page, args, completion: completion)
             case "page-press": press(page, args, completion: completion)
             case "page-dialogs": setDialogs(page, args, completion: completion)
+            case "page-popups": setPopups(page, args, completion: completion)
+            case "page-popup": popup(from: page, args, completion: completion)
             case "page-upload": upload(page, args, completion: completion)
             case "page-select": select(page, args, completion: completion)
             case "page-scroll": scroll(page, args, completion: completion)
@@ -216,6 +304,31 @@ enum AgentPages {
             case "page-record-stop": stopRecording(page, completion: completion)
             default: completion(.failure("unknown command: \(request.command)"))
             }
+        }
+    }
+
+    /// The agent strip's Stop and Resume button. Stopping also ends a
+    /// recording, keeping the frames taken so far, because a recording is the
+    /// agent watching the page.
+    static func setStoppedByUser(_ stopped: Bool, in controller: BrowserWindowController) {
+        controller.agentIndicator?.setStopped(stopped)
+        for page in pages.values where page.controller === controller {
+            setStoppedByUser(stopped, page: page, in: controller)
+        }
+    }
+
+    private static func setStoppedByUser(_ stopped: Bool, page: AgentPage, in controller: BrowserWindowController) {
+        page.isStoppedByUser = stopped
+        guard stopped else {
+            page.recordingSavedByStop = nil
+            return
+        }
+        if let recorder = page.recorder {
+            page.recorder = nil
+            controller.agentIndicator?.isRecording = false
+            recorder.automation?.stopScreencast()
+            page.recordingSavedByStop = recorder.directory.path
+            recorder.finish { _ in }
         }
     }
 
@@ -276,7 +389,9 @@ enum AgentPages {
 
     private static func prune() {
         for (id, page) in pages {
-            guard let controller = page.controller, WindowManager.shared.windowControllers.contains(where: { $0 === controller }) else {
+            guard let controller = page.controller, WindowManager.shared.windowControllers.contains(where: { $0 === controller }),
+                  !page.isClosed else {
+                page.markClosed()
                 page.recorder?.cancel()
                 pages[id] = nil
                 closedPages[id] = page
@@ -286,7 +401,7 @@ enum AgentPages {
     }
 
     private static func list(completion: @escaping Completion) {
-        let ordered = pages.values.sorted { $0.id < $1.id }
+        let ordered = pages.values.sorted { pageNumber($0) < pageNumber($1) }
         guard !ordered.isEmpty else {
             return completion(CLIResponse(ok: true, message: "0 page(s)", pages: []))
         }
@@ -318,6 +433,14 @@ enum AgentPages {
         }
     }
 
+    /// A URL as it appears in a message. The full URL stays in the
+    /// response's `page`; a data: or long signed URL would otherwise fill
+    /// the agent's context with one line.
+    static func shown(_ url: String, limit: Int = 200) -> String {
+        guard url.count > limit else { return url }
+        return "\(url.prefix(limit))… (\(url.count) characters)"
+    }
+
     private static func info(_ page: AgentPage, viewport: CGSize? = nil) -> CLIPageInfo {
         let tab = page.tab
         let url = tab.map { $0.urlString.isEmpty ? "about:blank" : $0.urlString } ?? ""
@@ -330,12 +453,66 @@ enum AgentPages {
             isLoading: tab?.isLoading ?? false,
             isHeadless: page.controller?.agentPresentation == .headless,
             engine: tab?.engine.rawValue,
+            openedBy: page.openedBy,
             zoomFactor: tab?.zoomFactor ?? 1,
             viewportWidth: viewport.map { Double($0.width) },
             viewportHeight: viewport.map { Double($0.height) })
     }
 
+    /// Makes every tab a page opens in an agent window a page of its own.
+    private final class TabObserver: TabLifecycleObserver {
+        func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
+            switch event {
+            case .opened: AgentPages.adopt(tab, in: controller)
+            case .closed: AgentPages.tabClosed(tab)
+            default: break
+            }
+        }
+    }
+    private static let tabObserver = TabObserver()
+
+    private static func adopt(_ tab: Tab, in controller: BrowserWindowController) {
+        let inWindow = pages.values.filter { $0.controller === controller && !$0.isClosed }
+        // A window's first tab is adopted by `open` itself; `opened` can
+        // fire again for a tab already known (TabLifecycleEvent.opened).
+        guard let first = inWindow.min(by: { pageNumber($0) < pageNumber($1) }),
+              !inWindow.contains(where: { $0.owns(tab) }) else { return }
+        // A popup knows its opener. A URL-only new tab (a ⌘-click) does
+        // not, and `opened` fires before it is activated, so the tab in
+        // front is the one whose link it was.
+        let opener = inWindow.first { $0.tab?.isOpener(of: tab) == true }
+            ?? inWindow.first { $0.tab === controller.activeTab }
+            ?? first
+        let page = AgentPage(id: "p\(nextNumber)", controller: controller, tab: tab, openedBy: opener.id)
+        nextNumber += 1
+        page.showsCursor = opener.showsCursor
+        page.acceptsDialogs = opener.acceptsDialogs
+        page.promptText = opener.promptText
+        page.allowsPopups = opener.allowsPopups
+        page.isStoppedByUser = opener.isStoppedByUser
+        pages[page.id] = page
+        _ = page.automation
+        opener.events.append("opened \(page.id) as a new tab; its commands take \(page.id), and \(opener.id) stays on this page")
+    }
+
+    private static func tabClosed(_ tab: Tab) {
+        for (id, page) in pages where page.owns(tab) {
+            page.markClosed()
+            page.recorder?.cancel()
+            page.recorder = nil
+            pages[id] = nil
+            closedPages[id] = page
+        }
+    }
+
     private static func open(_ args: [String: String], completion: @escaping Completion) {
+        if let openerId = args["opener"] {
+            guard let opener = pages[openerId], !opener.isClosed else {
+                return completion(.failure(closedPages[openerId]?.closedExplanation ?? "No agent page \(openerId) to open from."))
+            }
+            guard !opener.isStoppedByUser else { return completion(.failure(opener.stoppedExplanation)) }
+            return popup(from: opener, args, completion: reporting(opener, completion))
+        }
         let size: CLIPageSize?
         do { size = try CLIPageSize.parse(args) }
         catch { return completion(.failure(error.localizedDescription)) }
@@ -365,12 +542,14 @@ enum AgentPages {
             }
         }
 
-        let page = AgentPage(id: "p\(nextNumber)", controller: controller)
+        TabLifecycleCenter.shared.addObserver(tabObserver)
+        let page = AgentPage(id: "p\(nextNumber)", controller: controller, tab: controller.activeTab)
         nextNumber += 1
         controller.agentIndicator?.update(pageId: page.id)
         applyIdentity(args, to: controller)
         page.showsCursor = args["cursor"] == "true"
         page.acceptsDialogs = args["dialogs"] == "accept"
+        page.allowsPopups = args["allow-popups"] == "true"
         pages[page.id] = page
         page.automation?.prepare { _ in }
         let completion = reporting(page, completion)
@@ -379,11 +558,12 @@ enum AgentPages {
             guard args["no-wait"] != "true" else {
                 return completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'.", page: info(page)))
             }
+            let loaded = reportingLoad(page, since: nil, completion)
             wait(page, args, defaultTimeout: defaultOpenTimeout) { response in
                 guard response.ok else {
-                    return completion(CLIResponse(ok: false, error: "Opened \(page.id), but: \(response.error ?? "the wait failed")", page: info(page)))
+                    return loaded(CLIResponse(ok: false, error: "Opened \(page.id), but: \(response.error ?? "the wait failed")", page: info(page)))
                 }
-                completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)': \(info(page).url)", page: info(page)))
+                loaded(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)': \(shown(info(page).url))", page: info(page)))
             }
         }
         let failViewport: (EngineAutomationError) -> Void = { error in
@@ -444,31 +624,66 @@ enum AgentPages {
         poll()
     }
 
+    /// Closes the page's tab, or its whole window when no other page is in it.
     private static func close(_ page: AgentPage, completion: @escaping Completion) {
         page.recorder?.cancel()
         page.recorder = nil
         pages[page.id] = nil
-        page.controller?.window?.close()
+        let others = pages.values.contains { $0.controller === page.controller && !$0.isClosed }
+        if others, let controller = page.controller, let tab = page.tab,
+           let index = controller.tabs.firstIndex(where: { $0 === tab }) {
+            controller.closeTab(at: index)
+        } else {
+            page.controller?.window?.close()
+        }
         completion(CLIResponse(ok: true, message: "Closed \(page.id)."))
     }
 
     private static func reload(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let tab = page.tab else { return completion(.failure("\(page.id) has no tab")) }
+        let before = tab.browser?.mainDocumentLoad?.sequence
         tab.reload()
-        guard args["no-wait"] != "true" else { return completion(CLIResponse(ok: true, message: "Reloading \(info(page).url).", page: info(page))) }
+        guard args["no-wait"] != "true" else { return completion(CLIResponse(ok: true, message: "Reloading \(shown(info(page).url)).", page: info(page))) }
+        let loaded = reportingLoad(page, since: before, completion)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            wait(page, args, defaultTimeout: defaultOpenTimeout, completion: completion)
+            wait(page, args, defaultTimeout: defaultOpenTimeout, completion: loaded)
         }
     }
 
     private static func navigate(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let url = args["url"], !url.isEmpty, let tab = page.tab else { return completion(.failure("navigate requires a url")) }
+        let before = tab.browser?.mainDocumentLoad?.sequence
         tab.load(url: url)
         guard args["no-wait"] != "true" else { return completion(CLIResponse(ok: true, message: "Loading \(url).", page: info(page))) }
+        let loaded = reportingLoad(page, since: before, completion)
         // The old document is still there for a moment; let the load start
         // before the first poll can see it as complete.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            wait(page, args, defaultTimeout: defaultOpenTimeout, completion: completion)
+            wait(page, args, defaultTimeout: defaultOpenTimeout, completion: loaded)
+        }
+    }
+
+    /// Adds how the main document's load ended to an open, navigate or
+    /// reload result: its HTTP status for --json, and in words when the
+    /// page is a server error or never arrived. A page that loaded empty
+    /// with HTTP 431 otherwise looks like a page that loaded, until a wait
+    /// times out. Only a load that ended after `before` counts, so an old
+    /// page's status is never reported for a new one.
+    private static func reportingLoad(_ page: AgentPage, since before: Int?, _ completion: @escaping Completion) -> Completion {
+        { response in
+            guard let load = page.tab?.browser?.mainDocumentLoad, load.sequence != before else { return completion(response) }
+            var response = response
+            response.page?.httpStatus = load.httpStatus
+            response.page?.loadError = load.error
+            if let problem = load.problem {
+                let note = "Warning: \(problem) for \(shown(load.url)), so this is not the page that was asked for."
+                if response.ok {
+                    response.message = [response.message, note].compactMap { $0 }.joined(separator: " ")
+                } else {
+                    response.error = [response.error, note].compactMap { $0 }.joined(separator: " ")
+                }
+            }
+            completion(response)
         }
     }
 
@@ -480,6 +695,7 @@ enum AgentPages {
         completion: @escaping Completion,
         then body: @escaping (EngineTabAutomation) -> Void
     ) {
+        guard !page.isStoppedByUser else { return completion(.failure(page.stoppedExplanation)) }
         guard let tab = page.tab else { return completion(.failure("\(page.id) has no tab")) }
         // Per tab: the page's engine was picked by the engine rules when it
         // opened, and an agent's tab stays in it (Tab.holdsEngine).
@@ -491,6 +707,7 @@ enum AgentPages {
                 switch result {
                 case .failure(let error): completion(.failure(error.message))
                 case .success(let automation):
+                    guard !page.isStoppedByUser else { return completion(.failure(page.stoppedExplanation)) }
                     applyRequestedViewport(page, automation: automation, completion: completion, then: body)
                 }
             }
@@ -500,6 +717,7 @@ enum AgentPages {
             }
             automation.prepare { result in
                 if case .failure(let error) = result { return completion(.failure(error.message)) }
+                guard !page.isStoppedByUser else { return completion(.failure(page.stoppedExplanation)) }
                 body(automation)
             }
         }
@@ -562,6 +780,8 @@ enum AgentPages {
         let y: Double
         let obscured: Bool
         let password: Bool
+        /// The element's document is served from this machine.
+        let loopback: Bool
         let element: CLIPageElement
         /// How many elements the target matched; this is the best-ranked.
         let matches: Int
@@ -585,15 +805,22 @@ enum AgentPages {
 
     /// Moves the drawn cursor first when the page shows one, so a recording
     /// sees the pointer travel before the click lands.
+    /// Every pointer action passes through here just before it acts, so it
+    /// is also where a Stop that came in during the locate is honoured.
     private static func moveCursor(
         _ page: AgentPage,
         _ automation: EngineTabAutomation,
         to point: TargetPoint,
+        completion: @escaping Completion,
         then: @escaping () -> Void
     ) {
-        guard page.showsCursor else { return then() }
+        let act = {
+            guard !page.isStoppedByUser else { return completion(.failure(page.stoppedExplanation)) }
+            then()
+        }
+        guard page.showsCursor else { return act() }
         automation.evaluate(AgentPageScript.call("A.cursor(\(point.x), \(point.y), false); return true;")) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + cursorMoveDelay, execute: then)
+            DispatchQueue.main.asyncAfter(deadline: .now() + cursorMoveDelay, execute: act)
         }
     }
 
@@ -636,8 +863,10 @@ enum AgentPages {
             // as one, so they are run again as the body of a function.
             automation.evaluate(jsonSafe(expression, asStatements: false)) { result in
                 if case .failure(let error) = result, error.message.contains("SyntaxError") {
+                    // The function body's own error is the real one, unless
+                    // the code is no valid JavaScript at all.
                     return automation.evaluate(jsonSafe(expression, asStatements: true)) { retry in
-                        if case .failure = retry { return finish(result) }
+                        if case .failure(let retryError) = retry, retryError.message.contains("SyntaxError") { return finish(result) }
                         finish(retry)
                     }
                 }
@@ -713,13 +942,14 @@ enum AgentPages {
 
         func poll() {
             guard page.controller != nil else { return completion(.failure(page.closedExplanation)) }
+            guard !page.isStoppedByUser else { return completion(.failure(page.stoppedExplanation)) }
             check(page, conditions[...]) { met in
                 if met {
-                    return completion(CLIResponse(ok: true, message: "Ready: \(info(page).url)", page: info(page)))
+                    return completion(CLIResponse(ok: true, message: "Ready: \(shown(info(page).url))", page: info(page)))
                 }
                 guard Date() < deadline else {
                     let waits = conditions.map(describe).joined(separator: ", ")
-                    return completion(CLIResponse(ok: false, error: "Timed out after \(Int(timeout * 1000)) ms waiting on \(page.id) for \(waits). It is at \(info(page).url).", page: info(page)))
+                    return completion(CLIResponse(ok: false, error: "Timed out after \(Int(timeout * 1000)) ms waiting on \(page.id) for \(waits). It is at \(shown(info(page).url)).", page: info(page)))
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval, execute: poll)
             }
@@ -752,7 +982,7 @@ enum AgentPages {
                 response.page = info(page)
                 let elapsed = String(format: "%.1f", Date().timeIntervalSince(started))
                 if settled.ok {
-                    response.message = [response.message, "Settled after \(elapsed) s at \(info(page).url)."].compactMap { $0 }.joined(separator: " ")
+                    response.message = [response.message, "Settled after \(elapsed) s at \(shown(info(page).url))."].compactMap { $0 }.joined(separator: " ")
                     completion(response)
                 } else {
                     completion(CLIResponse(ok: false, error: [response.message, settled.error].compactMap { $0 }.joined(separator: " "), page: info(page), element: response.element))
@@ -802,7 +1032,7 @@ enum AgentPages {
         thenSettle(page, args, completion: completion) { completion in
             automation(page, completion: completion) { automation in
                 locate(automation, target, completion: completion) { point in
-                    moveCursor(page, automation, to: point) {
+                    moveCursor(page, automation, to: point, completion: completion) {
                         pressCursor(page, automation, at: point)
                         automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: args["double"] == "true" ? 2 : 1) { result in
                             if case .failure(let error) = result { return completion(.failure(error.message)) }
@@ -819,7 +1049,7 @@ enum AgentPages {
         guard let target = targetLiteral(args) else { return completion(.failure("hover requires a ref, --selector or --text")) }
         automation(page, completion: completion) { automation in
             locate(automation, target, completion: completion) { point in
-                moveCursor(page, automation, to: point) {
+                moveCursor(page, automation, to: point, completion: completion) {
                     automation.mouseMove(to: CGPoint(x: point.x, y: point.y)) { result in
                         if case .failure(let error) = result { return completion(.failure(error.message)) }
                         // The tooltip the hover would show is drawn outside
@@ -838,15 +1068,30 @@ enum AgentPages {
 
     private struct FocusState: Decodable {
         let password: Bool
+        let loopback: Bool
         let element: CLIPageElement?
     }
 
-    private static let passwordRefusal = "Refused: the focused field is a password field. Agents never type into password fields."
+    /// Why typing into a password field is refused, or nil when it may go
+    /// ahead. `--allow-password` lets a local test password in, and only on
+    /// a page served from this machine, so no real site's password field is
+    /// ever typed into. A saved password is never what gets typed: the text
+    /// is the agent's own.
+    private static func passwordRefusal(password: Bool, loopback: Bool, _ args: [String: String]) -> String? {
+        guard password else { return nil }
+        guard args["allow-password"] == "true" else {
+            return "Refused: the focused field is a password field. Agents never type into password fields, except a test password on localhost with --allow-password."
+        }
+        guard loopback else {
+            return "Refused: --allow-password works only on a page served from this machine (localhost, *.localhost, 127.0.0.1, ::1)."
+        }
+        return nil
+    }
 
     private static func focusState(_ automation: EngineTabAutomation, completion: @escaping Completion, then: @escaping (FocusState) -> Void) {
         run(automation, """
             const el = A.deepActive();
-            return {password: A.isPassword(el), element: el && el !== document.body && el !== document.documentElement ? A.describe(el) : null};
+            return {password: A.isPassword(el), loopback: A.onLoopback(el), element: el && el !== document.body && el !== document.documentElement ? A.describe(el) : null};
             """, completion: completion) { value in
             guard let state = decode(FocusState.self, value) else { return completion(.failure("could not read the focused element")) }
             then(state)
@@ -860,9 +1105,9 @@ enum AgentPages {
             automation(page, completion: completion) { automation in
                 let typeIntoFocus = {
                     focusState(automation, completion: completion) { state in
-                        guard !state.password else { return completion(.failure(passwordRefusal)) }
+                        if let refusal = passwordRefusal(password: state.password, loopback: state.loopback, args) { return completion(.failure(refusal)) }
                         let afterClear = {
-                            insert(text, into: automation, delay: delay) { result in
+                            insert(page, text, into: automation, delay: delay) { result in
                                 if case .failure(let error) = result { return completion(.failure(error.message)) }
                                 let done = {
                                     completion(CLIResponse(ok: true, message: "Typed \(text.count) character(s)\(state.element.map { " into \(describe($0))" } ?? "").", element: state.element))
@@ -884,8 +1129,8 @@ enum AgentPages {
                 }
                 guard let target = targetLiteral(args) else { return typeIntoFocus() }
                 locate(automation, target, completion: completion) { point in
-                    guard !point.password else { return completion(.failure(passwordRefusal)) }
-                    moveCursor(page, automation, to: point) {
+                    if let refusal = passwordRefusal(password: point.password, loopback: point.loopback, args) { return completion(.failure(refusal)) }
+                    moveCursor(page, automation, to: point, completion: completion) {
                         pressCursor(page, automation, at: point)
                         automation.click(at: CGPoint(x: point.x, y: point.y), clickCount: 1) { result in
                             if case .failure(let error) = result { return completion(.failure(error.message)) }
@@ -900,6 +1145,7 @@ enum AgentPages {
     /// The whole string at once, or one character at a time `delay` apart,
     /// which is what a recording of someone typing looks like.
     private static func insert(
+        _ page: AgentPage,
         _ text: String,
         into automation: EngineTabAutomation,
         delay: TimeInterval,
@@ -911,6 +1157,7 @@ enum AgentPages {
         var remaining = Substring(text)
         func next() {
             guard let character = remaining.first else { return completion(.success(())) }
+            guard !page.isStoppedByUser else { return completion(.failure(EngineAutomationError(page.stoppedExplanation))) }
             remaining = remaining.dropFirst()
             automation.insertText(String(character)) { result in
                 if case .failure = result { return completion(result) }
@@ -938,7 +1185,10 @@ enum AgentPages {
             automation(page, completion: completion) { automation in
                 focusState(automation, completion: completion) { state in
                     // Named keys only move or submit; a character would type.
-                    guard !(state.password && key.text != nil && key.key != "Enter") else { return completion(.failure(passwordRefusal)) }
+                    if key.text != nil, key.key != "Enter",
+                       let refusal = passwordRefusal(password: state.password, loopback: state.loopback, args) {
+                        return completion(.failure(refusal))
+                    }
                     automation.pressKey(key, modifiers: modifiers) { result in
                         if case .failure(let error) = result { return completion(.failure(error.message)) }
                         completion(CLIResponse(ok: true, message: "Pressed \(keyDescription(name, args["modifiers"]))."))
@@ -959,6 +1209,81 @@ enum AgentPages {
         if !parts.isDisjoint(with: ["cmd", "command", "meta"]) { names.append("Cmd") }
         names.append(key == " " ? "Space" : key)
         return names.joined(separator: "+")
+    }
+
+    /// How long a click waits for a tab it opened to become a page: WebKit
+    /// opens one after the click itself is done.
+    private static let popupGrace: TimeInterval = 0.3
+
+    private static func afterPopupGrace(_ completion: @escaping Completion) -> Completion {
+        { response in
+            guard response.ok else { return completion(response) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + popupGrace) { completion(response) }
+        }
+    }
+
+    private static func setPopups(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
+        guard let mode = args["mode"], ["allow", "block"].contains(mode) else { return completion(.failure("popups takes allow or block")) }
+        let allow = mode == "allow"
+        let inWindow = pages.values.filter { $0.controller === page.controller && !$0.isClosed }
+        for other in inWindow {
+            other.allowsPopups = allow
+            _ = other.automation
+        }
+        let ids = inWindow.sorted { pageNumber($0) < pageNumber($1) }.map(\.id).joined(separator: ", ")
+        guard page.automation?.allowsPopupsWithoutGesture == allow else {
+            return completion(.failure("\(page.id)'s engine could not change this here (an extension's page shares its settings with every page of the extension)."))
+        }
+        completion(CLIResponse(ok: true, message: allow
+            ? "\(ids) may now open tabs with no click. Each one becomes a page of its own."
+            : "\(ids) may now open a tab only from a click."))
+    }
+
+    /// Opens a page from `page`, as its own `window.open(url, name)`, so the
+    /// new page shares its browsing-context group on WebKit. Answers with
+    /// the new page, or says which existing tab the name reused.
+    private static func popup(from page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
+        guard let url = args["url"], !url.isEmpty else { return completion(.failure("popup requires a url")) }
+        let name = args["name"] ?? "_blank"
+        let known = Set(pages.keys)
+        let allowed = page.allowsPopups
+        page.allowsPopups = true
+        func restore() {
+            page.allowsPopups = allowed
+            _ = page.automation
+            for other in pages.values where other.openedBy == page.id && !known.contains(other.id) { other.allowsPopups = allowed }
+        }
+        page.bringToFront()
+        automation(page, completion: { restore(); completion($0) }) { automation in
+            let script = "return !!window.open(\(AgentPageScript.literal(url)), \(AgentPageScript.literal(name)));"
+            run(automation, script, completion: { restore(); completion($0) }) { value in
+                let deadline = Date().addingTimeInterval(5)
+                func poll() {
+                    if let opened = pages.values.first(where: { !known.contains($0.id) && $0.openedBy == page.id }) {
+                        restore()
+                        page.events.removeAll { $0.hasPrefix("opened \(opened.id) ") }
+                        let label = name == "_blank" ? "" : " named \"\(name)\""
+                        let respond: Completion = { response in
+                            guard response.ok else {
+                                return completion(CLIResponse(ok: false, error: "Opened \(opened.id) from \(page.id), but: \(response.error ?? "the wait failed")", page: info(opened)))
+                            }
+                            completion(CLIResponse(ok: true, message: "Opened \(opened.id)\(label) from \(page.id): \(shown(info(opened).url))", page: info(opened)))
+                        }
+                        guard args["no-wait"] != "true" else { return respond(CLIResponse(ok: true)) }
+                        return wait(opened, args, defaultTimeout: defaultOpenTimeout, completion: respond)
+                    }
+                    guard Date() < deadline else {
+                        restore()
+                        if value as? Bool == true, name != "_blank" {
+                            return completion(CLIResponse(ok: true, message: "\(page.id) already had a tab named \"\(name)\" and loaded \(url) in it. `page list` shows which page it is."))
+                        }
+                        return completion(.failure("\(page.id) opened no tab: the engine refused window.open for \(url)."))
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval, execute: poll)
+                }
+                poll()
+            }
+        }
     }
 
     private static func setDialogs(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {

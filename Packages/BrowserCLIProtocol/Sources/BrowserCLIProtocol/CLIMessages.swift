@@ -205,6 +205,17 @@ public struct CLIPageInfo: Codable {
     /// The engine the page is in ("cef" or "webkit"), picked by the engine
     /// rules when it opened. An agent's page never changes engine.
     public let engine: String?
+    /// The page whose link or window.open() opened this one as a tab of the
+    /// same window. It shares that page's browsing-context group, so the two
+    /// reach each other through window.opener and named targets.
+    public let openedBy: String?
+    /// The main document's HTTP status, on the result of the `open`,
+    /// `navigate` or `reload` that loaded it. nil for a document with no
+    /// HTTP response (about:blank), and on every other command.
+    public var httpStatus: Int? = nil
+    /// Why that main document never arrived (DNS, refused connection, TLS),
+    /// in the engine's words.
+    public var loadError: String? = nil
 
     /// Page zoom factor; older apps omit it.
     public let zoomFactor: Double?
@@ -212,7 +223,7 @@ public struct CLIPageInfo: Codable {
     public let viewportWidth: Double?
     public let viewportHeight: Double?
 
-    public init(id: String, profileName: String, isPrivate: Bool, url: String, title: String, isLoading: Bool, isHeadless: Bool? = nil, engine: String? = nil, zoomFactor: Double? = nil, viewportWidth: Double? = nil, viewportHeight: Double? = nil) {
+    public init(id: String, profileName: String, isPrivate: Bool, url: String, title: String, isLoading: Bool, isHeadless: Bool? = nil, engine: String? = nil, openedBy: String? = nil, zoomFactor: Double? = nil, viewportWidth: Double? = nil, viewportHeight: Double? = nil) {
         self.id = id
         self.profileName = profileName
         self.isPrivate = isPrivate
@@ -221,6 +232,7 @@ public struct CLIPageInfo: Codable {
         self.isLoading = isLoading
         self.isHeadless = isHeadless
         self.engine = engine
+        self.openedBy = openedBy
         self.zoomFactor = zoomFactor
         self.viewportWidth = viewportWidth
         self.viewportHeight = viewportHeight

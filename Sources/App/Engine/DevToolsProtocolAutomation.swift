@@ -10,11 +10,17 @@ final class DevToolsProtocolAutomation: EngineTabAutomation {
 
     private let execute: Execute
     private let setEventHandler: SetEventHandler
+    private let setAllowsPopups: (Bool) -> Void
     private var screencastFrameHandler: ((Data, TimeInterval) -> Void)?
 
-    init(execute: @escaping Execute, setEventHandler: @escaping SetEventHandler) {
+    init(execute: @escaping Execute, setEventHandler: @escaping SetEventHandler, setAllowsPopups: @escaping (Bool) -> Void) {
         self.execute = execute
         self.setEventHandler = setEventHandler
+        self.setAllowsPopups = setAllowsPopups
+    }
+
+    var allowsPopupsWithoutGesture = false {
+        didSet { setAllowsPopups(allowsPopupsWithoutGesture) }
     }
 
     private func send(

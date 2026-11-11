@@ -21,6 +21,10 @@ final class WebKitNavigationState {
     /// retries the site instead of re-rendering the error HTML.
     var failedURL: URL?
 
+    /// The last main-frame response's status, or why the document never
+    /// came (WebKitTab.mainDocumentLoad).
+    var mainDocumentLoad: EngineMainDocumentLoad?
+
     /// When the last automatic reload after a content-process crash
     /// happened. A second crash soon after shows the crash page instead of
     /// looping.
@@ -157,6 +161,25 @@ extension WebKitTab: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame, let url = navigationResponse.response.url {
+            if let http = navigationResponse.response as? HTTPURLResponse {
+                navigationState.mainDocumentLoad = EngineMainDocumentLoad(url: url.absoluteString, httpStatus: http.statusCode)
+            } else if url.scheme != "http", url.scheme != "https" {
+                // An http(s) URL with no HTTP response is our own error page
+                // (loadHTMLString at the failed URL), which must not replace
+                // the failure it explains.
+                navigationState.mainDocumentLoad = EngineMainDocumentLoad(url: url.absoluteString, httpStatus: nil)
+            }
+        }
+        if let status = WebKitDownloadPolicy.undisplayableErrorStatus(navigationResponse),
+           let url = navigationResponse.response.url {
+            decisionHandler(.cancel)
+            // After the cancel has run, so it cannot cancel the error page too.
+            DispatchQueue.main.async { [weak self] in
+                self?.showErrorPage(WebKitErrorPage.httpError(status: status, url: url), for: url)
+            }
+            return
+        }
         decisionHandler(WebKitDownloadPolicy.shouldDownload(navigationResponse) ? .download : .allow)
     }
 
@@ -252,6 +275,9 @@ extension WebKitTab: WKNavigationDelegate {
         NSLog("Browser: WebKit load failed for %@: %@ (%@ %d)", failingURL?.absoluteString ?? "(nil)",
               error.localizedDescription, (error as NSError).domain, (error as NSError).code)
         guard !Self.isBenignNavigationError(error), let failingURL else { return }
+        navigationState.mainDocumentLoad = EngineMainDocumentLoad(
+            url: failingURL.absoluteString, httpStatus: nil,
+            error: "\(error.localizedDescription) (\((error as NSError).domain) \((error as NSError).code))")
         let page = WebKitErrorPage.loadFailure(error: error as NSError, url: failingURL)
         showErrorPage(page, for: failingURL)
     }
@@ -292,6 +318,8 @@ extension WebKitTab: WKNavigationDelegate {
 
     /// Loaded with the failing URL as its base, so the omnibox, the tab and
     /// Try Again all keep pointing at the address the user asked for.
+    var mainDocumentLoad: EngineMainDocumentLoad? { navigationState.mainDocumentLoad }
+
     private func showErrorPage(_ html: String, for url: URL) {
         navigationState.failedURL = url
         navigationState.errorPageNavigation = webView.loadHTMLString(html, baseURL: url)
@@ -586,6 +614,14 @@ enum WebKitErrorPage {
         let (heading, explanation) = describe(error, host: host)
         return render(heading: heading, explanation: explanation, url: url,
                       detail: "\(error.localizedDescription) (\(error.domain) \(error.code))")
+    }
+
+    static func httpError(status: Int, url: URL) -> String {
+        let host = url.host ?? url.absoluteString
+        let reason = EngineMainDocumentLoad.reason(status)
+        return render(heading: "This page isn\u{2019}t working",
+                      explanation: "\(host) answered with an error and sent no page to show.",
+                      url: url, detail: "HTTP \(status) \(reason)")
     }
 
     static func processCrashed(url: URL) -> String {

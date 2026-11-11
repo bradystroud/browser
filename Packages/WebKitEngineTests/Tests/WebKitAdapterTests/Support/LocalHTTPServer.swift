@@ -94,9 +94,10 @@ final class LocalHTTPServer {
         receivedPaths.append(path)
         let response = routes[path] ?? Response(status: 404, contentType: "text/plain", body: Data("not found".utf8))
 
-        var lines = ["HTTP/1.1 \(response.status) \(response.status == 200 ? "OK" : "Error")",
-                     "Content-Type: \(response.contentType)",
-                     "Content-Length: \(response.body.count)",
+        // An empty contentType sends no Content-Type header at all.
+        var lines = ["HTTP/1.1 \(response.status) \(response.status == 200 ? "OK" : "Error")"]
+        if !response.contentType.isEmpty { lines.append("Content-Type: \(response.contentType)") }
+        lines += ["Content-Length: \(response.body.count)",
                      "Cache-Control: no-store",
                      "Connection: close"]
         for (name, value) in response.headers { lines.append("\(name): \(value)") }
