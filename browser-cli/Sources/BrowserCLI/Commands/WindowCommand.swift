@@ -56,9 +56,8 @@ public enum WindowCommand {
     }
 
     private static func send(_ request: CLIRequest, args: ParsedArgs, text: @escaping (CLIResponse) -> String) -> Bool {
-        let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {
-            let response = try SocketClient.send(request, socketPath: socketPath)
+            let response = try SocketTargetResolver.send(request, args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "\(request.command) failed", json: args.jsonOutput)
             }

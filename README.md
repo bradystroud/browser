@@ -39,6 +39,27 @@ browser open https://example.com --profile Work
 browser route-test https://github.com
 ```
 
+For live commands (`open`, `profiles`, `tabs`, `windows`, `window new`, `focus`, and `page`), the CLI uses `--socket <absolute-path>` first, then `BROWSER_CLI_SOCKET`, then its usual per-user socket discovery. The flag works before or after the command, including nested subcommands:
+
+```sh
+browser --socket /path/to/browser.sock profiles
+browser page list --socket /path/to/browser.sock --json
+browser window --socket /path/to/browser.sock new
+```
+
+Explicit paths must be absolute, contain no NUL, and fit in fewer than 104 UTF-8 bytes. Invalid paths and failed connections return an error without trying another instance. Repeated `--socket` or `--profiles-root` flags are rejected. `--help` prints usage without connecting when supplied as a flag. Disk commands (`route-test`, `history search`, and `bookmarks list`) keep using `--profiles-root` for their files and reject `--socket`.
+
+`browser socket-path` prints the resolved client socket path without connecting; `--json` returns `{"socketPath":"..."}`. To pass the normal listener path into a sandboxed AI coding client, run this in an unrestricted shell before starting the client:
+
+```sh
+export BROWSER_CLI_SOCKET="$(browser socket-path)"
+# Start your AI coding client from this shell so it inherits the variable.
+```
+
+For a scratch instance, use `browser socket-path --profiles-root /path/to/scratch` in that setup command. With no socket override, `--profiles-root` selects the instance. Combining it with an inherited `BROWSER_CLI_SOCKET` returns an error: unset the variable to discover the scratch instance, or pass `--socket` explicitly to confirm the intended target. An explicit socket overrides live targeting; `--profiles-root` still selects files for disk commands.
+
+Default discovery uses the system's per-user temporary directory. If that lookup fails, the client uses `TMPDIR`, then `/tmp` when `TMPDIR` is unset or empty. The listener's directory and security checks are unchanged. A sandbox still needs permission to connect to the selected Unix socket; setting its path does not grant that permission.
+
 ### Uninstall
 
 ```sh

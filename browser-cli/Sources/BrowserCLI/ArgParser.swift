@@ -27,7 +27,7 @@ public enum ArgParser {
     /// then lose the profile entirely. Any new valueless flag must be added
     /// here.
     static let valuelessFlags: Set<String> = [
-        "new-window", "little",
+        "new-window", "little", "help",
         "private", "cursor", "no-wait", "gone", "double", "clear", "submit", "full-page", "headless",
         "wait-idle", "idle", "raw", "focus",
     ]
@@ -66,5 +66,15 @@ public enum ArgParser {
             }
         }
         return ParsedArgs(positionals: positionals, flags: flags, jsonOutput: json)
+    }
+}
+
+public extension ParsedArgs {
+    var profilesRootArguments: [String] {
+        flags["profiles-root"].map { ["--profiles-root", $0] } ?? []
+    }
+
+    func droppingPositionals(_ count: Int) -> ParsedArgs {
+        ParsedArgs(positionals: Array(positionals.dropFirst(count)), flags: flags, jsonOutput: jsonOutput)
     }
 }

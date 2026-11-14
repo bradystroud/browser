@@ -37,7 +37,7 @@ public enum CLISocketPath {
         path(inDirectory: directory, userTempDirectory: userTempDirectory())
     }
 
-    static func path(inDirectory directory: String, userTempDirectory: String) -> String {
+    public static func path(inDirectory directory: String, userTempDirectory: String) -> String {
         let base = userTempDirectory.hasSuffix("/") ? userTempDirectory : userTempDirectory + "/"
         return "\(base)browser-cli-\(shortHash(directory)).sock"
     }
@@ -48,13 +48,17 @@ public enum CLISocketPath {
     /// environment variable a caller can change, and the two processes
     /// must resolve the same path.
     static func userTempDirectory() -> String {
+        systemUserTempDirectory() ?? "/tmp/"
+    }
+
+    public static func systemUserTempDirectory() -> String? {
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         let length = confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
         guard length > 0, length <= buffer.count else {
             // Should never happen for a real login user. The server still
             // restricts the socket to its own user (0600 plus a peer uid
             // check), so this only loses the directory-level protection.
-            return "/tmp/"
+            return nil
         }
         return String(cString: buffer)
     }

@@ -32,8 +32,8 @@ public enum BookmarksCommand {
     public static func list(args: ParsedArgs) -> Bool {
         let folderPath = args.flags["folder"] ?? ""
 
-        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments)
-        let profilesRoot = DiskLocations.profilesRootPath(arguments: CommandLine.arguments)
+        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: args.profilesRootArguments)
+        let profilesRoot = DiskLocations.profilesRootPath(arguments: args.profilesRootArguments)
 
         do {
             let (profile, database) = try ProfileDatabaseResolver.resolve(

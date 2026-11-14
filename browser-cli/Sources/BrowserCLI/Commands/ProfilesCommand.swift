@@ -7,9 +7,8 @@ import BrowserCLIProtocol
 /// disk-only fallback, since "is a window open" is inherently live state.
 public enum ProfilesCommand {
     public static func run(args: ParsedArgs) -> Bool {
-        let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {
-            let response = try SocketClient.send(CLIRequest(command: "profiles"), socketPath: socketPath)
+            let response = try SocketTargetResolver.send(CLIRequest(command: "profiles"), args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "profiles failed", json: args.jsonOutput)
             }

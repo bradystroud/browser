@@ -26,9 +26,8 @@ public enum OpenCommand {
         // instead of a tab.
         if args.flags["little"] != nil { requestArgs["little"] = "true" }
 
-        let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {
-            let response = try SocketClient.send(CLIRequest(command: "open", args: requestArgs), socketPath: socketPath)
+            let response = try SocketTargetResolver.send(CLIRequest(command: "open", args: requestArgs), args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "open failed", json: args.jsonOutput)
             }

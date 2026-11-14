@@ -55,7 +55,10 @@ public enum PageCommand {
         """
 
     public static func run(argv: [String]) -> Bool {
-        let parsed = ArgParser.parse(argv)
+        run(args: ArgParser.parse(argv))
+    }
+
+    public static func run(args parsed: ParsedArgs) -> Bool {
         let json = parsed.jsonOutput
         var positionals = parsed.positionals
         guard !positionals.isEmpty else { return usageError(json) }
@@ -197,9 +200,8 @@ public enum PageCommand {
             args.merge(AgentIdentity.detect(flags: flags).requestArgs) { current, _ in current }
         }
 
-        let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {
-            let response = try SocketClient.send(CLIRequest(command: "page-" + sub, args: args), socketPath: socketPath)
+            let response = try SocketTargetResolver.send(CLIRequest(command: "page-" + sub, args: args), args: parsed)
             guard response.ok else {
                 if json { return Output.emitError(response.error ?? "page \(sub) failed", json: true) }
                 return Output.emitError(response.error ?? "page \(sub) failed", json: false)
