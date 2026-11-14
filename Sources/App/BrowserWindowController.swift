@@ -1531,7 +1531,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// to load, not a blank page waiting for a typed URL.
     @discardableResult
     func openTabForLinkClick(url: String, afterIndex openerIndex: Int, foreground: Bool) -> Tab {
-        insertTab(url: url, makeActive: foreground, at: insertionIndex(afterOpenerAt: openerIndex), focusOmnibox: false)
+        let tab = insertTab(url: url, makeActive: foreground, at: insertionIndex(afterOpenerAt: openerIndex), focusOmnibox: false)
+        if !foreground { loadInBackground(tab) }
+        return tab
+    }
+
+    /// A tab inserted inactive holds no engine tab until it is selected. A
+    /// link the user deliberately opened in the background should already
+    /// be loaded when they get to it, so its engine tab is created now.
+    /// Creation needs the host view in this window with real bounds (CEF's
+    /// SetAsChild, and CreateBrowser finishes asynchronously), so the view
+    /// waits in the container, hidden and below every other subview, until
+    /// activateTab brings it forward or the tab closes. A hidden view draws
+    /// nothing, so it never covers the visible page.
+    private func loadInBackground(_ tab: Tab) {
+        guard tab.isAsleep, tab.hostView.superview == nil else { return }
+        tab.hostView.frame = contentContainerView.bounds
+        tab.hostView.autoresizingMask = [.width, .height]
+        tab.hostView.isHidden = true
+        contentContainerView.addSubview(tab.hostView, positioned: .below, relativeTo: nil)
+        tab.createBrowserIfNeeded()
     }
 
     /// Moves in a Tab that already has a live engine browser -- a little
@@ -1641,6 +1660,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         tab.hostView.frame = contentContainerView.bounds
         tab.hostView.autoresizingMask = [.width, .height]
+        tab.hostView.isHidden = false
         contentContainerView.addSubview(tab.hostView)
 
         // Safe to call every time: a no-op once the browser already exists.
