@@ -1,16 +1,11 @@
 import Foundation
 import BrowserCore
 
-/// Where the CLI reads/writes disk state, mirroring `CommandLineArgs.swift`
-/// (`Sources/App`) exactly -- both resolve through `BrowserCore`'s real
-/// `ProfilesRootResolver` (browser-1rp), so `--profiles-root <path>` means
-/// the same thing to the CLI as it does to the app: profiles.json/
-/// routing.json/session.json/cli.sock all live at
-/// `sessionAndProfilesMetadataDirectory`, and each profile's `browser.db`
-/// lives at `profilesRootPath/<profile.name>/browser.db`. Pass
-/// `CommandLine.arguments` straight through -- `ProfilesRootResolver` only
-/// ever looks for its own `--profiles-root <path>` pair and ignores
-/// everything else, so there's no need to pre-filter.
+/// Disk locations use BrowserCore's ProfilesRootResolver, matching the app.
+/// Callers pass ParsedArgs.profilesRootArguments so values of unrelated flags
+/// cannot accidentally become a profiles-root override. Metadata lives directly
+/// in that directory; per-profile databases live under the profile's stable id.
+/// Socket naming uses the metadata directory as a hash input, not a disk location.
 public enum DiskLocations {
     public static func appSupportDirectory() -> String {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].path

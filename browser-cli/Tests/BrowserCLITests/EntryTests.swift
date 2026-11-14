@@ -32,24 +32,16 @@ final class EntryTests: XCTestCase {
         XCTAssertFalse(BrowserCLIEntry.run(["route-test"]))
     }
 
-    /// The failure mode this guard exists for retargets a "scratch" command
-    /// at the real running browser -- see
-    /// BrowserCLIEntry.malformedProfilesRootArgument.
     func testMalformedProfilesRootIsRejectedRatherThanIgnored() {
-        XCTAssertEqual(
-            BrowserCLIEntry.malformedProfilesRootArgument(in: ["profiles", "--profiles-root /tmp/scratch"]),
-            "--profiles-root /tmp/scratch"
-        )
-        XCTAssertEqual(
-            BrowserCLIEntry.malformedProfilesRootArgument(in: ["profiles", "--profiles-root=/tmp/scratch"]),
-            "--profiles-root=/tmp/scratch"
-        )
-        XCTAssertFalse(BrowserCLIEntry.run(["profiles", "--profiles-root /tmp/scratch"]))
+        for token in ["--profiles-root /tmp/scratch", "--profiles-root=/tmp/scratch"] {
+            XCTAssertThrowsError(try SocketTargetResolver.parse(["profiles", token]))
+            XCTAssertFalse(BrowserCLIEntry.run(["profiles", token]))
+        }
     }
 
     func testWellFormedProfilesRootIsAccepted() {
-        XCTAssertNil(BrowserCLIEntry.malformedProfilesRootArgument(in: ["profiles", "--profiles-root", "/tmp/scratch"]))
-        XCTAssertNil(BrowserCLIEntry.malformedProfilesRootArgument(in: ["tabs"]))
+        XCTAssertNoThrow(try SocketTargetResolver.parse(["profiles", "--profiles-root", "/tmp/scratch"]))
+        XCTAssertNoThrow(try SocketTargetResolver.parse(["tabs"]))
     }
 
     func testWindowWithoutNewSubcommandFails() {

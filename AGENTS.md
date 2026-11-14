@@ -115,6 +115,8 @@ Every command accepts `--json` for machine-readable output and `--profiles-root 
 
 Never gains a command or field that surfaces passwords/credentials, in any form, even behind `--json` -- a deliberate, permanent scope boundary, not a gap to fill in later.
 
+For sandboxed CLI clients, see README.md's command-line setup for exporting the socket path from an unrestricted shell. Socket discovery and sandbox permission to connect are separate checks. An inherited `BROWSER_CLI_SOCKET` conflicts with `--profiles-root`: unset it for scratch discovery, or confirm the intended endpoint with an explicit `--socket`.
+
 `raycast-extension/` is a Raycast extension wrapping exactly these commands (browser-4xc) -- switch to a profile, open a link or an empty window in a chosen profile, plus history/bookmark search. It is for every Browser user: anyone installs it from source (`npm install && npm run dev`, which imports it into Raycast and leaves it installed; see its README, linked from `docs/index.html#raycast`). It is prepared for the Raycast Store but **not in it yet** -- `npm run publish` opens a PR on `raycast/extensions` from Brady's own Raycast and GitHub accounts, so only he runs it. It finds the CLI inside `Browser.app` in `/Applications` or `~/Applications` with no `ln -sf`, and it can be newer than the installed app (Switch to Profile needs `browser focus`, which postdates 0.1.0), so a CLI command it starts relying on must ship in a release first.
 
 ### Agent control: `browser page`

@@ -150,6 +150,10 @@ final class CLIMessagesTests: XCTestCase {
         )
     }
 
+    func testServerTempDirectoryWrapperPreservesFallback() {
+        XCTAssertEqual(CLISocketPath.userTempDirectory(), CLISocketPath.systemUserTempDirectory() ?? "/tmp/")
+    }
+
     func testSocketPathJoinsATempDirectoryWithoutTrailingSlash() {
         XCTAssertEqual(
             CLISocketPath.path(inDirectory: "/x", userTempDirectory: "/base"),

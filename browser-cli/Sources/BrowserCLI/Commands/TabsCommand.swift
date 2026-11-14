@@ -11,9 +11,8 @@ public enum TabsCommand {
         var requestArgs: [String: String] = [:]
         if let profile = args.flags["profile"] { requestArgs["profile"] = profile }
 
-        let socketPath = CLISocketPath.path(inDirectory: DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments))
         do {
-            let response = try SocketClient.send(CLIRequest(command: "tabs", args: requestArgs), socketPath: socketPath)
+            let response = try SocketTargetResolver.send(CLIRequest(command: "tabs", args: requestArgs), args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "tabs failed", json: args.jsonOutput)
             }

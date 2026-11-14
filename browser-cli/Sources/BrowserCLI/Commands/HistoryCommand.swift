@@ -35,8 +35,8 @@ public enum HistoryCommand {
         }
         let limit = args.flags["limit"].flatMap(Int.init) ?? 20
 
-        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments)
-        let profilesRoot = DiskLocations.profilesRootPath(arguments: CommandLine.arguments)
+        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: args.profilesRootArguments)
+        let profilesRoot = DiskLocations.profilesRootPath(arguments: args.profilesRootArguments)
 
         do {
             let (profile, database) = try ProfileDatabaseResolver.resolve(

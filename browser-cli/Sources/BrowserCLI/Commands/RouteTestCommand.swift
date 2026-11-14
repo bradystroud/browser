@@ -12,7 +12,7 @@ public enum RouteTestCommand {
         }
         let fromApp = args.flags["from-app"]
 
-        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: CommandLine.arguments)
+        let directory = DiskLocations.sessionAndProfilesMetadataDirectory(arguments: args.profilesRootArguments)
         let profiles = ProfileRecordStore.load(directory: directory)
         let configuration = RoutingConfigurationStore.load(directory: directory, profiles: profiles)
 
@@ -23,7 +23,7 @@ public enum RouteTestCommand {
         // exact kind of CLI/real-behavior disagreement worth avoiding.
         // Un-shortening is deliberately not replicated (see
         // LinkHandlingPreferencesReader's own doc comment).
-        let effectiveURL = LinkHandlingPreferencesReader.stripTrackingParams(arguments: CommandLine.arguments)
+        let effectiveURL = LinkHandlingPreferencesReader.stripTrackingParams(arguments: args.profilesRootArguments)
             ? TrackingParamStripper.strip(url)
             : url
 
@@ -34,7 +34,7 @@ public enum RouteTestCommand {
                 fromApp: fromApp,
                 configuration: configuration,
                 profiles: profiles,
-                littleWindowForExternalLinks: LinkHandlingPreferencesReader.littleWindowForExternalLinks(arguments: CommandLine.arguments)
+                littleWindowForExternalLinks: LinkHandlingPreferencesReader.littleWindowForExternalLinks(arguments: args.profilesRootArguments)
             )
             return Output.emit(result, json: args.jsonOutput) { output in
                 let ruleNote = output.matchedRuleIndex.map { "rule #\($0) (\(output.matchedRuleSummary ?? ""))" } ?? "no rule matched -- the frontmost window, or this profile if no window is open"
