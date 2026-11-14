@@ -41,7 +41,11 @@ enum WebKitExtensionInstaller {
     /// well below what would fill a disk.
     static let maximumPackageBytes = 256 * 1024 * 1024
 
+    /// Stands in for the Chrome Web Store in tests; nil fetches from it.
+    static var fetchOverride: ((String) async throws -> Data)?
+
     static func fetchPackage(id: String) async throws -> Data {
+        if let fetchOverride { return try await fetchOverride(id) }
         var request = URLRequest(url: ChromeWebStore.downloadURL(for: id))
         request.timeoutInterval = 60
         let (data, response) = try await URLSession.shared.data(for: request)

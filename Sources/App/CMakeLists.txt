@@ -398,6 +398,7 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionPackage.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionCompatibility.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PreparedExtensionCopy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebExtensionsFolder.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionUpdate.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ICloudPasswordsExtension.swift

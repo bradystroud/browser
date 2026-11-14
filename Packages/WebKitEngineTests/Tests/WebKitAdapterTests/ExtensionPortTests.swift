@@ -34,7 +34,7 @@ final class ExtensionPortTests: XCTestCase {
         host = FakeHost()
         let root = root!
         manager.activate(host: host, storageDirectory: { id in
-            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("Extensions", isDirectory: true)
+            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("WebExtensions", isDirectory: true)
         })
         profileId = UUID().uuidString
         savedInterval = WebKitNativeMessaging.keepAliveInterval
@@ -56,7 +56,7 @@ final class ExtensionPortTests: XCTestCase {
     /// Installs a store-style extension with the given files and grants, and
     /// loads it.
     private func install(id: String, manifest: [String: Any], files: [String: String], grants: [String]) async throws -> WKWebExtensionContext {
-        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("Extensions", isDirectory: true)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
         let folder = extensions.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))

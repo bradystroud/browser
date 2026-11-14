@@ -257,14 +257,116 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         }
     }
 
+    /// An extension installed before this app recorded a permission it
+    /// implements itself (`privacy`) declares it but has no answer for it.
+    /// It is asked once, as the extension loads; the answer is recorded --
+    /// a refusal in `declinedGrants`, so the next load does not ask again
+    /// (a manual Reload does). Either way the extension then runs: these
+    /// permissions only gate what the app itself offers it.
+    @MainActor
+    private func askForUnaskedAppPermissions(_ found: WKWebExtension, id: String, in profile: WebKitExtensionProfile) async {
+        guard let record = profile.record(id) else { return }
+        let unasked = WebExtensionGrants.unasked(Self.grants(for: found), in: record).filter {
+            WebExtensionGrants.onlyAppImplemented([$0])
+        }
+        guard !unasked.isEmpty, profile.busy.insert(id).inserted else { return }
+        defer { profile.busy.remove(id) }
+        let name = found.displayName ?? record.name
+        let allowed = await consent(title: "“\(name)” wants more access", grants: unasked,
+                                    icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow")
+        profile.update(id) {
+            if allowed {
+                $0.grants = Array(Set($0.grants).union(unasked)).sorted()
+            } else {
+                $0.declinedGrants = Array(Set($0.declinedGrants ?? []).union(unasked)).sorted()
+            }
+        }
+        profile.save()
+    }
+
+    /// A store extension still on the list whose package folder is gone --
+    /// deleted from under the app -- is downloaded again through the same
+    /// verified path as an install, and keeps the grants on record: the user
+    /// is asked only for what the package now wants beyond them (an
+    /// app-implemented permission refused there is recorded as refused, as
+    /// at load). When that fails the record stays, the extension shows the
+    /// error, and the next launch tries again.
+    @MainActor
+    private func restorePackage(_ id: String, in profile: WebKitExtensionProfile, because state: WebExtensionsFolder.PackageState) async -> Bool {
+        guard let record = profile.record(id), profile.busy.insert(id).inserted else { return false }
+        defer { profile.busy.remove(id) }
+        var staged: URL?
+        defer { if let staged { try? FileManager.default.removeItem(at: staged) } }
+        do {
+            try profile.createDirectory()
+            let fetched = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory)
+            staged = fetched
+            let found = try await WKWebExtension(resourceBaseURL: fetched)
+            let name = found.displayName ?? record.name
+            let requested = Self.grants(for: found)
+            var declined = Set(record.declinedGrants ?? [])
+            let added = WebExtensionGrants.added(requested, beyond: record.grants + declined)
+            if !added.isEmpty,
+               !(await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow")) {
+                guard WebExtensionGrants.onlyAppImplemented(added) else {
+                    profile.noteError("Its files are \(state == .missing ? "missing" : "incomplete"), and the version that would replace them asks for access that was refused. Reload it to be asked again.", for: id)
+                    host?.extensionsDidChange(profileId: profile.profileId)
+                    return false
+                }
+                declined.formUnion(added)
+            }
+            guard profile.record(id) != nil else { return false }
+            try WebKitExtensionInstaller.replace(profile.storeFolder(for: id), with: fetched)
+            staged = nil
+            recordContents(of: id, in: profile)
+            profile.update(id) {
+                $0.name = name
+                $0.version = found.version ?? $0.version
+                $0.grants = Array(Set($0.grants).union(requested).subtracting(declined)).sorted()
+                $0.declinedGrants = declined.isEmpty ? nil : declined.sorted()
+            }
+            profile.save()
+            NSLog("Browser: downloaded extension %@ again (%@ package, version %@)", id, "\(state)", found.version ?? "?")
+            return true
+        } catch {
+            NSLog("Browser: extension %@ (%@ package) could not be downloaded again: %@", id, "\(state)", error.localizedDescription)
+            profile.noteError("Its files are \(state == .missing ? "missing" : "incomplete") and could not be downloaded again (\(error.localizedDescription)). Browser tries again at the next launch.", for: id)
+            host?.extensionsDidChange(profileId: profile.profileId)
+            return false
+        }
+    }
+
+    /// Records what a store package holds now (WebExtensionsFolder), so a
+    /// later load can tell it is still whole.
+    private func recordContents(of id: String, in profile: WebKitExtensionProfile) {
+        do {
+            try WebExtensionsFolder.recordContents(of: profile.storeFolder(for: id), id: id, in: profile.directory)
+        } catch {
+            NSLog("Browser: couldn't record the contents of extension %@: %@", id, error.localizedDescription)
+        }
+    }
+
     @MainActor @discardableResult
     private func load(_ id: String, in profile: WebKitExtensionProfile) async -> Bool {
-        guard let record = profile.record(id), profile.contexts[id] == nil else { return false }
+        guard var record = profile.record(id), profile.contexts[id] == nil else { return false }
+        // A package missing or no longer matching its record is fetched again
+        // and not loaded without it. One with no record yet (unpacked by an
+        // older version) is loaded as found and recorded then, once
+        // preparedFolder has put back anything an older layout wrote into it;
+        // nothing is downloaded for it.
+        let state = WebExtensionsFolder.packageState(of: record, packageFolder: profile.storeFolder(for: id), in: profile.directory)
+        if state == .missing || state == .damaged {
+            guard await restorePackage(id, in: profile, because: state), let restored = profile.record(id) else { return false }
+            record = restored
+        }
         do {
             let folder = await profile.preparedFolder(for: record)
+            if state == .unverified { recordContents(of: id, in: profile) }
             let found = try await WKWebExtension(resourceBaseURL: folder)
             guard profile.contexts[id] == nil, profile.record(id) != nil else { return false }
-            try start(found, record: record, in: profile)
+            await askForUnaskedAppPermissions(found, id: id, in: profile)
+            guard profile.contexts[id] == nil, let current = profile.record(id) else { return false }
+            try start(found, record: current, in: profile)
             return true
         } catch {
             profile.noteError(error.localizedDescription, for: id)
@@ -420,6 +522,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         }
         guard profile.record(id) == nil else { throw WebKitExtensionError.alreadyInstalled(name) }
         try WebKitExtensionInstaller.replace(profile.storeFolder(for: id), with: staged)
+        recordContents(of: id, in: profile)
         let record = InstalledWebExtension(id: id, source: .webStore, name: name, version: found.version ?? "0", grants: grants)
         profile.list.extensions.append(record)
         profile.save()
@@ -473,9 +576,16 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         let found = try await WKWebExtension(resourceBaseURL: folder)
         let name = found.displayName ?? record.name
         let requested = Self.grants(for: found)
+        // A Reload asks again for what was refused before.
         let added = WebExtensionGrants.added(requested, beyond: record.grants)
+        var declined = Set(record.declinedGrants ?? [])
         if !added.isEmpty {
-            guard await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow") else {
+            let allowed = await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow")
+            if allowed {
+                declined.subtract(added)
+            } else if WebExtensionGrants.onlyAppImplemented(added) {
+                declined.formUnion(added)
+            } else {
                 throw WebKitExtensionError.cancelled
             }
         }
@@ -485,7 +595,8 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         profile.update(id) {
             $0.name = name
             $0.version = found.version ?? $0.version
-            $0.grants = Array(Set($0.grants).union(requested)).sorted()
+            $0.grants = Array(Set($0.grants).union(requested).subtracting(declined)).sorted()
+            $0.declinedGrants = declined.isEmpty ? nil : declined.sorted()
         }
         profile.save()
         if let updated = profile.record(id), updated.enabled {
@@ -515,6 +626,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             if record.source == .webStore {
                 try? FileManager.default.removeItem(at: profile.storeFolder(for: id))
                 WebKitExtensionInstaller.removeWebKitCopy(id: id, in: profile.directory)
+                WebExtensionsFolder.forgetContents(id: id, in: profile.directory)
             }
             self.host?.extensionsDidChange(profileId: profileId)
         }
@@ -615,21 +727,26 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             }
             let name = found.displayName ?? record.name
             let requested = Self.grants(for: found)
-            let added = WebExtensionGrants.added(requested, beyond: record.grants)
+            // What was refused before is not asked again by an update.
+            var declined = Set(record.declinedGrants ?? [])
+            let added = WebExtensionGrants.added(requested, beyond: record.grants + declined)
             if !added.isEmpty {
                 let title = "An update to “\(name)” wants more access"
-                guard await consent(title: title, grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Update") else {
-                    return false
+                if !(await consent(title: title, grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Update")) {
+                    guard WebExtensionGrants.onlyAppImplemented(added) else { return false }
+                    declined.formUnion(added)
                 }
             }
             guard profile.record(id) != nil, profiles[profile.profileId] === profile else { return false }
             let wasLoaded = profile.contexts[id] != nil
             unload(id, in: profile)
             try WebKitExtensionInstaller.replace(profile.storeFolder(for: id), with: staged)
-            profile.update(id) {
+            recordContents(of: id, in: profile)
+                profile.update(id) {
                 $0.name = name
                 $0.version = found.version ?? offered.description
-                $0.grants = Array(Set($0.grants).union(requested)).sorted()
+                $0.grants = Array(Set($0.grants).union(requested).subtracting(declined)).sorted()
+                $0.declinedGrants = declined.isEmpty ? nil : declined.sorted()
             }
             profile.save()
             if wasLoaded || profile.record(id)?.enabled == true {
@@ -649,9 +766,12 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
 
     /// What an extension may do, as stored and compared: its API permissions
     /// and every site pattern it reaches, content-script matches included.
+    /// WebKit lists only the permissions it knows, so the ones this app
+    /// implements itself (`privacy`) are read from the manifest.
     static func grants(for found: WKWebExtension) -> [String] {
         WebExtensionGrants.make(
-            permissions: found.requestedPermissions.map(\.rawValue),
+            permissions: found.requestedPermissions.map(\.rawValue)
+                + WebExtensionGrants.appImplementedPermissions(declaredIn: found.manifest),
             matchPatterns: found.allRequestedMatchPatterns.map(\.string))
     }
 
@@ -918,15 +1038,32 @@ extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
     /// window it was pressed in, or from the extensions button.
     func webExtensionController(_ controller: WKWebExtensionController, presentActionPopup action: WKWebExtension.Action, for context: WKWebExtensionContext) async throws {
         guard let profile = profile(for: controller), let popover = action.popupPopover else { return }
-        let window = profile.actionWindow ?? host?.extensionWindows(profileId: profile.profileId).first
+        // The window of the tab WebKit opened the popup for (the toolbar
+        // press, or `action.openPopup()` for a window), not the window of
+        // the last toolbar press: an extension that opens its popup from a
+        // page must get it in that page's window.
+        let tabWindow = (action.associatedTab as? WebKitExtensionTabAdapter)?.hostTab?.extensionWindow
+        let window = tabWindow ?? profile.actionWindow ?? host?.extensionWindows(profileId: profile.profileId).first
         let anchor = window?.extensionPopupAnchor(forExtension: context.uniqueIdentifier)
         profile.shownPopover = popover
         profile.shownPopoverExtensionId = context.uniqueIdentifier
-        if let anchor, anchor.window != nil {
+        if let anchor, anchor.window?.isVisible == true {
             popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-        } else if let content = window?.extensionNSWindow?.contentView {
+        } else if let content = window?.extensionNSWindow?.contentView, content.window?.isVisible == true {
             let spot = NSRect(x: content.bounds.maxX - 40, y: content.bounds.maxY - 40, width: 1, height: 1)
             popover.show(relativeTo: spot, of: content, preferredEdge: .minY)
+        }
+        // A popup nobody can see or dismiss must not stay open: its page
+        // keeps running, and an extension waiting on it (iCloud Passwords
+        // waits for a pairing code it has already asked for) only learns the
+        // popup is gone from its port closing. Closing it closes the page.
+        if !popover.isShown {
+            NSLog("Browser: closed extension %@'s popup: no visible window to show it in", context.uniqueIdentifier)
+            action.closePopup()
+            if profile.shownPopover === popover {
+                profile.shownPopover = nil
+                profile.shownPopoverExtensionId = nil
+            }
         }
     }
 }

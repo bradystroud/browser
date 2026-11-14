@@ -33,7 +33,7 @@ final class AgentExtensionIsolationTests: XCTestCase {
         host = FakeHost()
         let root = root!
         manager.activate(host: host, storageDirectory: { id in
-            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("Extensions", isDirectory: true)
+            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("WebExtensions", isDirectory: true)
         })
         profileId = UUID().uuidString
         server = try LocalHTTPServer(routes: ["/page": .html("<!doctype html><title>site</title><p>site</p>")])
@@ -57,7 +57,7 @@ final class AgentExtensionIsolationTests: XCTestCase {
     /// A content script on every site that marks the page, and a page of
     /// its own that marks itself.
     private func installMarkerExtension() async throws {
-        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("Extensions", isDirectory: true)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
         let folder = extensions.appendingPathComponent(extensionId, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let manifest: [String: Any] = [

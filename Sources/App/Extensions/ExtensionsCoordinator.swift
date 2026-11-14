@@ -40,8 +40,12 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
         ExtensionSettingsHost.provider = ExtensionControlledSettingsCenter.shared
         manager.activate(host: self, storageDirectory: { profileId in
             guard !profileId.hasPrefix(Profile.privateIdPrefix) else { return nil }
-            return URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId), isDirectory: true)
-                .appendingPathComponent("Extensions", isDirectory: true)
+            // Never the profile's Extensions/ (see WebExtensionsFolder): what
+            // an earlier version kept there is moved out first.
+            let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId), isDirectory: true)
+            return WebExtensionsFolder.prepared(inProfile: profileDirectory) { message in
+                NSLog("Browser: extensions of profile %@: %@", profileId, message)
+            }
         })
         TabLifecycleCenter.shared.addObserver(self)
         observers.append(NotificationCenter.default.addObserver(

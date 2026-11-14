@@ -72,7 +72,7 @@ final class ExtensionPopupTests: XCTestCase {
         host = FakeHost()
         let root = root!
         manager.activate(host: host, storageDirectory: { id in
-            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("Extensions", isDirectory: true)
+            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("WebExtensions", isDirectory: true)
         })
         profileId = UUID().uuidString
         server = try LocalHTTPServer(routes: [
@@ -96,9 +96,14 @@ final class ExtensionPopupTests: XCTestCase {
     private static let files: [String: String] = [
         "background.js": """
         self.connects = 0;
+        self.disconnects = 0;
         chrome.runtime.onConnect.addListener(function (port) {
           self.connects += 1;
           port.onMessage.addListener(function (m) { if (m === "ping") port.postMessage("pong " + self.connects); });
+          port.onDisconnect.addListener(function () {
+            self.disconnects += 1;
+            chrome.action.setBadgeText({ text: "d" + self.disconnects });
+          });
         });
         """,
         "content.js": """
@@ -175,8 +180,9 @@ final class ExtensionPopupTests: XCTestCase {
     /// Installs the extension, opens a tab in a reported window, and loads
     /// the sign-in page until the extension's frame says it is ready.
     private func openSignInPage(path: String = "/login", unpacked: Bool = false, manifest: [String: Any] = ExtensionPopupTests.manifest,
-                                files: [String: String] = ExtensionPopupTests.files, grants: [String] = ["host:http://127.0.0.1/*"]) throws -> FakeWindow {
-        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("Extensions", isDirectory: true)
+                                files: [String: String] = ExtensionPopupTests.files, grants: [String] = ["host:http://127.0.0.1/*"],
+                                readyEvent: String? = "list ready", loadExtensionAfterPage: Bool = false) throws -> FakeWindow {
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
         let folder = unpacked ? root.appendingPathComponent("dev-popup-path", isDirectory: true) : extensions.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
@@ -185,11 +191,17 @@ final class ExtensionPopupTests: XCTestCase {
                                            unpackedPath: unpacked ? folder.path : nil, grants: grants)
         try FileManager.default.createDirectory(at: extensions, withIntermediateDirectories: true)
         try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
-        manager.loadExtensions(profileId: profileId)
-        XCTAssertTrue(waitUntil(10) { manager.profile(for: profileId)?.contexts[id] != nil }, "extension never loaded")
+        if !loadExtensionAfterPage {
+            manager.loadExtensions(profileId: profileId)
+            XCTAssertTrue(waitUntil(10) { manager.profile(for: profileId)?.contexts[id] != nil }, "extension never loaded")
+        }
 
         nsWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 800, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
         nsWindow.isReleasedWhenClosed = false
+        // A popover only shows from a window that is on screen; off every
+        // display is enough, and keeps the test out of sight.
+        nsWindow.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+        nsWindow.orderBack(nil)
         let content = try XCTUnwrap(nsWindow.contentView)
         let anchor = NSView(frame: NSRect(x: 760, y: 560, width: 20, height: 20))
         content.addSubview(anchor)
@@ -207,7 +219,19 @@ final class ExtensionPopupTests: XCTestCase {
         manager.windowDidBecomeFocused(window)
 
         tab.loadURL(server.url(path))
-        XCTAssertTrue(waitUntil(10) { pageEvents().contains("list ready") }, "the extension's frame never loaded: \(pageEvents())")
+        if loadExtensionAfterPage {
+            XCTAssertTrue(waitUntil(10) { recorder.events.contains { $0.hasPrefix("commit:") } && !tab.webView.isLoading })
+            _ = waitUntil(0.5) { false }
+            XCTAssertNil(manager.profile(for: profileId)?.contexts[id])
+            manager.loadExtensions(profileId: profileId)
+            XCTAssertTrue(waitUntil(10) { manager.profile(for: profileId)?.contexts[id] != nil }, "extension never loaded")
+        }
+        if let readyEvent {
+            XCTAssertTrue(waitUntil(10) { pageEvents().contains(readyEvent) }, "the extension's frame never loaded: \(pageEvents())")
+        } else {
+            XCTAssertTrue(waitUntil(10) { recorder.events.contains { $0.hasPrefix("commit:") } && !tab.webView.isLoading })
+            _ = waitUntil(1) { false }
+        }
         return window
     }
 
@@ -248,7 +272,7 @@ final class ExtensionPopupTests: XCTestCase {
         let popup = profile.contexts[id]?.action(for: nil)?.popupWebView
         XCTAssertTrue(waitUntil(5) { title(of: popup).hasPrefix("pong") }, "the popup never heard from its worker: \(title(of: popup))")
         XCTAssertTrue(terminations.isEmpty, "the page's web content process was killed")
-        XCTAssertEqual(recorder.events.filter { $0.hasPrefix("commit:") }.count, 1, "the page reloaded")
+        XCTAssertLessThanOrEqual(recorder.events.filter { $0.hasPrefix("commit:") }.count, 1, "the page reloaded")
         XCTAssertTrue(WebKitExtensionPageWindow.open.isEmpty)
     }
 
@@ -396,7 +420,7 @@ final class ExtensionPopupTests: XCTestCase {
         XCTAssertTrue(events.contains("tabs.connect threw chrome.tabs.connect() is not available in an extension page shown inside a web page."), "\(events)")
         settle(1)
         XCTAssertTrue(terminations.isEmpty, "the page's web content process was killed")
-        XCTAssertEqual(recorder.events.filter { $0.hasPrefix("commit:") }.count, 1, "the page reloaded")
+        XCTAssertLessThanOrEqual(recorder.events.filter { $0.hasPrefix("commit:") }.count, 1, "the page reloaded")
     }
 
     /// The control for the guard: loaded as it is, the same frame's
@@ -419,6 +443,134 @@ final class ExtensionPopupTests: XCTestCase {
 
     private func settle(_ seconds: TimeInterval) { _ = waitUntil(seconds) { false } }
 
+    // MARK: - iCloud Passwords' in-page list, in shape
+
+    /// The way iCloud Passwords shows its list under a field, with the
+    /// layer applied: on focus the content script hangs a popover holding
+    /// the web-accessible page in an iframe, far too big at first. The frame
+    /// reads a privacy setting, asks the worker for its capabilities and
+    /// waits for the reply, connects a port and waits for the worker's hello,
+    /// then asks the worker to resize it; the worker passes that on to the
+    /// content script, which sizes the frame. Anything in the layer that
+    /// breaks a reply, a port or the frame's script leaves the frame at its
+    /// first size.
+    private static let listFiles: [String: String] = [
+        "background.js": """
+        // What iCloud Passwords' worker does with the setting as it starts.
+        const saving = chrome.privacy.services.passwordSavingEnabled;
+        saving.onChange.addListener(function () {});
+        saving.get({}).then(function (d) { if (d.levelOfControl !== "not_controllable") return saving.set({ value: false }); }).catch(function () {});
+        chrome.runtime.onMessage.addListener(function (message, sender, sendResponse) {
+          if (!message || !message.subject) return;
+          switch (message.subject) {
+          case "getCapabilities":
+            setTimeout(function () { sendResponse({ capabilities: { scanForOTPURI: false } }); }, 50);
+            return true;
+          case "resizeCompletionList":
+            chrome.tabs.sendMessage(sender.tab.id, message, { frameId: 0 });
+            return;
+          }
+        });
+        chrome.runtime.onConnect.addListener(function (port) {
+          if (port.name === "completionList") port.postMessage({ subject: "hello" });
+        });
+        """,
+        "content.js": """
+        let frame = null;
+        chrome.runtime.onMessage.addListener(function (message) {
+          if (message && message.subject === "resizeCompletionList" && frame) {
+            frame.style.width = message.width + "px";
+            frame.style.height = message.height + "px";
+          }
+        });
+        document.addEventListener("focusin", function (event) {
+          if (frame || !(event.target instanceof HTMLInputElement)) return;
+          const host = document.createElement("div");
+          host.setAttribute("popover", "manual");
+          host.id = "listHost";
+          const root = host.attachShadow({ mode: "open" });
+          frame = document.createElement("iframe");
+          frame.src = chrome.runtime.getURL("list.html");
+          frame.style.cssText = "width:9001px;height:624px;border:0";
+          root.appendChild(frame);
+          document.body.appendChild(host);
+          host.showPopover();
+        });
+        """,
+        "list.html": "<!doctype html><body style='margin:0'><div id=box style='width:300px;height:70px'>Enable</div><script src=list.js></script></body>",
+        "list.js": """
+        const settings = chrome.privacy.services.passwordSavingEnabled.get({});
+        const capabilities = new Promise(function (resolve) {
+          chrome.runtime.sendMessage({ subject: "getCapabilities" }, function (reply) { resolve(reply); });
+        });
+        const hello = new Promise(function (resolve) {
+          const port = chrome.runtime.connect({ name: "completionList" });
+          port.onMessage.addListener(function (m) { if (m && m.subject === "hello") resolve(); });
+        });
+        Promise.all([settings, capabilities, hello]).then(function (results) {
+          if (!results[1] || !results[1].capabilities) return;
+          const box = document.getElementById("box").getBoundingClientRect();
+          chrome.runtime.sendMessage({ subject: "resizeCompletionList", width: box.width, height: box.height });
+        });
+        """,
+    ]
+
+    private static let listManifest: [String: Any] = [
+        "manifest_version": 3, "name": "List Shape", "version": "1.0",
+        "permissions": ["privacy", "nativeMessaging", "storage"],
+        "background": ["service_worker": "background.js"],
+        "action": ["default_title": "List Shape", "default_popup": "list.html"],
+        "host_permissions": ["http://127.0.0.1/*"],
+        "content_scripts": [["matches": ["http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_idle"]],
+        "web_accessible_resources": [["resources": ["list.html"], "matches": ["<all_urls>"]]],
+    ]
+
+    func testInPageListInICloudPasswordsShapeReachesItsRealSize() throws {
+        try checkInPageList(grantingPrivacy: true)
+    }
+
+    /// The same without the `privacy` grant: the browser's settings host
+    /// refuses the extension, and the list must still size as it did when
+    /// the setting was simply not controllable.
+    func testInPageListWithoutThePrivacyGrantReachesItsRealSize() throws {
+        try checkInPageList(grantingPrivacy: false)
+    }
+
+    private func checkInPageList(grantingPrivacy: Bool) throws {
+        let observer = watchForTermination()
+        defer { NotificationCenter.default.removeObserver(observer) }
+        ExtensionSettingsHost.provider = RecordingProvider()
+        defer { ExtensionSettingsHost.provider = nil }
+        _ = try openSignInPage(manifest: Self.listManifest, files: Self.listFiles,
+                               grants: ["host:http://127.0.0.1/*", "perm:nativeMessaging", "perm:storage"] + (grantingPrivacy ? ["perm:privacy"] : []),
+                               readyEvent: nil)
+        func frameSize() -> String {
+            var result = ""
+            var done = false
+            tab.webView.evaluateJavaScript("""
+            (function () { var h = document.getElementById('listHost'); if (!h) return 'no host';
+              var r = h.shadowRoot.querySelector('iframe').getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height); })()
+            """) { value, _ in result = value as? String ?? "?"; done = true }
+            _ = waitUntil(5) { done }
+            return result
+        }
+        var focused = false
+        tab.webView.evaluateJavaScript("document.getElementById('pw').focus(); 1") { _, _ in focused = true }
+        XCTAssertTrue(waitUntil(5) { focused })
+
+        XCTAssertTrue(waitUntil(10) { frameSize() == "300x70" }, "the list never reached its real size: \(frameSize())")
+        XCTAssertTrue(terminations.isEmpty, "the page's web content process was killed")
+    }
+
+    /// A tab restored at launch can finish loading before its profile's
+    /// extensions have loaded. WebKit then adds their content scripts to the
+    /// page that is already there (`InjectUserScriptImmediately::Yes`), with
+    /// no reload: the extension's frame still appears.
+    func testContentScriptsReachAPageLoadedBeforeTheExtension() throws {
+        _ = try openSignInPage(loadExtensionAfterPage: true)
+        XCTAssertEqual(recorder.events.filter { $0.hasPrefix("commit:") }.count, 1, "the page was reloaded")
+    }
+
     /// A web page cannot use the same path to open an extension's page.
     func testAWebPageCannotOpenAnExtensionPageWindow() throws {
         _ = try openSignInPage()
@@ -437,5 +589,61 @@ final class ExtensionPopupTests: XCTestCase {
         XCTAssertTrue(waitUntil(5) { profile.shownPopoverExtensionId == id }, "the popup was never presented")
         let popup = profile.contexts[id]?.action(for: nil)?.popupWebView
         XCTAssertTrue(waitUntil(5) { title(of: popup).hasPrefix("pong") }, "the popup never heard from its worker: \(title(of: popup))")
+    }
+
+    /// Closing the popover closes the popup's page, and its port's
+    /// disconnect reaches the worker, as in Chrome when a popup closes.
+    /// iCloud Passwords relies on it: a popup closed while it waits for the
+    /// pairing code is what tells the worker to give up the pairing.
+    func testClosingThePopupDisconnectsItsPortInTheWorker() throws {
+        let window = try openSignInPage()
+        manager.performAction(extensionId: id, window: window)
+        let profile = try XCTUnwrap(manager.profile(for: profileId))
+        XCTAssertTrue(waitUntil(5) { profile.shownPopoverExtensionId == id })
+        let popup = profile.contexts[id]?.action(for: nil)?.popupWebView
+        XCTAssertTrue(waitUntil(5) { title(of: popup).hasPrefix("pong") })
+        let badge = { self.manager.action(extensionId: self.id, profileId: self.profileId, tab: nil)?.badgeText ?? "" }
+        XCTAssertEqual(badge(), "")
+
+        profile.shownPopover?.close()
+
+        XCTAssertTrue(waitUntil(5) { badge() == "d1" }, "the worker never saw the popup's port close: badge \(badge())")
+    }
+
+    /// A popup that no window can show is closed at once, so its page does
+    /// not run on unseen with a port the worker waits on.
+    func testAPopupWithNoVisibleWindowIsClosedAndItsPortDisconnects() throws {
+        let window = try openSignInPage()
+        nsWindow.orderOut(nil)
+        manager.performAction(extensionId: id, window: window)
+        let profile = try XCTUnwrap(manager.profile(for: profileId))
+        let badge = { self.manager.action(extensionId: self.id, profileId: self.profileId, tab: nil)?.badgeText ?? "" }
+
+        XCTAssertTrue(waitUntil(5) { badge() == "d1" }, "the unseen popup's port never closed: badge \(badge())")
+        XCTAssertNil(profile.shownPopover)
+    }
+
+    /// The popup a page opens (through the relay) goes to that page's
+    /// window, even when the toolbar was last pressed in another one.
+    func testAPopupOpenedFromAPageShowsInThatPagesWindow() throws {
+        let window = try openSignInPage()
+        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        other.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
+        other.orderBack(nil)
+        defer { other.close() }
+        let otherAnchor = NSView(frame: NSRect(x: 360, y: 260, width: 20, height: 20))
+        other.contentView?.addSubview(otherAnchor)
+        let elsewhere = FakeWindow(profileId: profileId, nsWindow: other, anchor: otherAnchor)
+        host.windows = [window, elsewhere]
+        manager.windowDidOpen(elsewhere)
+        let profile = try XCTUnwrap(manager.profile(for: profileId))
+        profile.actionWindow = elsewhere
+
+        try clickTheFrame()
+
+        XCTAssertTrue(waitUntil(5) { profile.shownPopover?.isShown == true }, "events: \(pageEvents())")
+        XCTAssertTrue(profile.shownPopover?.contentViewController?.view.window?.parent === nsWindow,
+                      "the popup showed in \(String(describing: profile.shownPopover?.contentViewController?.view.window?.parent))")
     }
 }

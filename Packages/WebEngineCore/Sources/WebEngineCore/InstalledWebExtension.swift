@@ -1,7 +1,7 @@
 import Foundation
 
 /// One extension installed in one profile, as written to that profile's
-/// `Extensions/installed.json`.
+/// `WebExtensions/installed.json` (see WebExtensionsFolder).
 public struct InstalledWebExtension: Codable, Equatable {
     public enum Source: String, Codable {
         /// Downloaded from the Chrome Web Store and unpacked into the
@@ -24,11 +24,16 @@ public struct InstalledWebExtension: Codable, Equatable {
     /// granted since. Re-applied on every load, and compared against on
     /// every update and reload.
     public var grants: [String]
+    /// Grants the user was asked for after install and refused, so loading
+    /// does not ask again; only an explicit Reload asks once more. Absent
+    /// from a record that never refused anything.
+    public var declinedGrants: [String]?
     public var installedAt: Date
     public var lastUpdateCheck: Date?
 
     public init(id: String, source: Source, name: String, version: String, enabled: Bool = true, pinned: Bool = false,
-                unpackedPath: String? = nil, grants: [String], installedAt: Date = Date(), lastUpdateCheck: Date? = nil) {
+                unpackedPath: String? = nil, grants: [String], declinedGrants: [String]? = nil,
+                installedAt: Date = Date(), lastUpdateCheck: Date? = nil) {
         self.id = id
         self.source = source
         self.name = name
@@ -37,6 +42,7 @@ public struct InstalledWebExtension: Codable, Equatable {
         self.pinned = pinned
         self.unpackedPath = unpackedPath
         self.grants = grants
+        self.declinedGrants = declinedGrants
         self.installedAt = installedAt
         self.lastUpdateCheck = lastUpdateCheck
     }
@@ -80,6 +86,32 @@ public struct InstalledWebExtensionList: Codable, Equatable {
 /// `perm:<name>` for an API permission, `host:<match pattern>` for site
 /// access.
 public enum WebExtensionGrants {
+    /// API permissions this browser implements itself for extensions, which
+    /// the engine does not know (WebKit lists only its own in
+    /// `requestedPermissions`, and has no `privacy`). A manifest's request
+    /// for one is asked for and recorded like any other permission, and the
+    /// app's own code checks the record. One line per such permission.
+    public static let appImplementedPermissions: Set<String> = ["privacy"]
+
+    /// The app-implemented permissions a manifest's `permissions` asks for.
+    public static func appImplementedPermissions(declaredIn manifest: [String: Any]) -> [String] {
+        let declared = manifest["permissions"] as? [Any] ?? []
+        return Set(declared.compactMap { $0 as? String }).intersection(appImplementedPermissions).sorted()
+    }
+
+    /// Grants a loaded extension's manifest asks for that its record has
+    /// neither granted nor had refused: asked for once at load.
+    public static func unasked(_ requested: [String], in record: InstalledWebExtension) -> [String] {
+        Set(requested).subtracting(record.grants).subtracting(record.declinedGrants ?? []).sorted()
+    }
+
+    /// Whether every grant in `grants` is one this app implements, so that
+    /// refusing them still lets the extension run, without them.
+    public static func onlyAppImplemented(_ grants: [String]) -> Bool {
+        !grants.isEmpty && permissions(in: grants).count == grants.count
+            && Set(permissions(in: grants)).isSubset(of: appImplementedPermissions)
+    }
+
     public static func make(permissions: some Sequence<String>, matchPatterns: some Sequence<String>) -> [String] {
         Set(permissions.map { "perm:" + $0 }).union(matchPatterns.map { "host:" + $0 }).sorted()
     }
