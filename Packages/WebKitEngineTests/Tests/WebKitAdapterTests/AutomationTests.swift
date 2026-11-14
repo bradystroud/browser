@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+import ObjectiveC.runtime
 @testable import WebKitAdapter
 
 /// Agent control on the WebKit engine: input must reach a page as trusted
@@ -152,6 +153,79 @@ final class AutomationTests: WebKitTabTestCase {
         automation.evaluate("nope()") { if case .failure(let error) = $0 { failure = error } }
         waitUntil("evaluate failure") { failure != nil }
         XCTAssertTrue(failure?.message.contains("nope") ?? false, "\(String(describing: failure))")
+    }
+
+    func testExactViewportUsesNativeOnePixelDensityForPNGAndJPEG() throws {
+        for size in [CGSize(width: 1920, height: 1080), CGSize(width: 800, height: 600),
+                     CGSize(width: 390, height: 844), CGSize(width: 4096, height: 2160)] {
+            window.setContentSize(size)
+            tab.webView.frame = CGRect(origin: .zero, size: size)
+            let selector = NSSelectorFromString("_setOverrideDeviceScaleFactor:")
+            let method = try XCTUnwrap(class_getInstanceMethod(type(of: tab.webView), selector))
+            typealias DensitySetter = @convention(c) (AnyObject, Selector, Double) -> Void
+            let setter = unsafeBitCast(method_getImplementation(method), to: DensitySetter.self)
+            setter(tab.webView, selector, 2)
+            waitUntil("native Retina viewport") { (try? callJS("return devicePixelRatio")) as? Double == 2 }
+            let retinaPNG = try XCTUnwrap(perform("Retina PNG") { automation.screenshot(fullPage: false, completion: $0) })
+            let retinaImage = try XCTUnwrap(NSBitmapImageRep(data: retinaPNG))
+            XCTAssertEqual(retinaImage.pixelsWide, Int(size.width * 2))
+            XCTAssertEqual(retinaImage.pixelsHigh, Int(size.height * 2))
+            perform("exact viewport") { automation.setExactViewport(size, completion: $0) }
+            waitUntil("CSS viewport resized") {
+                let value = try? callJS("return [innerWidth, innerHeight, devicePixelRatio]") as? [Double]
+                return value == [size.width, size.height, 1]
+            }
+            let png = try XCTUnwrap(perform("exact PNG") { automation.screenshot(fullPage: false, completion: $0) })
+            let image = try XCTUnwrap(NSBitmapImageRep(data: png))
+            XCTAssertEqual(image.pixelsWide, Int(size.width))
+            XCTAssertEqual(image.pixelsHigh, Int(size.height))
+            var jpeg: Data?
+            perform("exact screencast") {
+                automation.startScreencast(quality: 70, onFrame: { data, _ in jpeg = data }, completion: $0)
+            }
+            waitUntil("native JPEG frame") { jpeg != nil }
+            automation.stopScreencast()
+            let frame = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(jpeg)))
+            XCTAssertEqual(frame.pixelsWide, Int(size.width))
+            XCTAssertEqual(frame.pixelsHigh, Int(size.height))
+            XCTAssertFalse(window.isVisible)
+            XCTAssertFalse(window.isKeyWindow)
+        }
+    }
+
+    func testExactViewportProtocolSetsNativeMetricsAndPropagatesFailure() throws {
+        var methods: [String] = []
+        var parameters: [String: Any]?
+        let protocolAutomation = DevToolsProtocolAutomation(execute: { method, json, completion in
+            methods.append(method)
+            parameters = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+            completion(false, "{\"message\":\"metrics rejected\"}")
+        }, setEventHandler: { _ in })
+        var failure: EngineAutomationError?
+        protocolAutomation.setExactViewport(CGSize(width: 1920, height: 1080)) {
+            if case .failure(let error) = $0 { failure = error }
+        }
+        XCTAssertEqual(methods, ["Emulation.setDeviceMetricsOverride"])
+        XCTAssertEqual(parameters?["width"] as? Int, 0)
+        XCTAssertEqual(parameters?["height"] as? Int, 0)
+        XCTAssertEqual(parameters?["deviceScaleFactor"] as? Int, 1)
+        XCTAssertEqual(parameters?["mobile"] as? Bool, false)
+        XCTAssertEqual(failure?.message, "metrics rejected")
+    }
+
+    func testViewportMeasurementDoesNotGrantProtocolUserActivation() throws {
+        var parameters: [String: Any]?
+        let protocolAutomation = DevToolsProtocolAutomation(execute: { method, json, completion in
+            XCTAssertEqual(method, "Runtime.evaluate")
+            parameters = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+            completion(true, "{\"result\":{\"value\":[390,844]}}")
+        }, setEventHandler: { _ in })
+        let measured = perform("protocol viewport") { protocolAutomation.measureViewport(completion: $0) }
+        XCTAssertEqual(measured, CGSize(width: 390, height: 844))
+        XCTAssertEqual(parameters?["userGesture"] as? Bool, false)
+        XCTAssertEqual(parameters?["expression"] as? String, "[window.innerWidth, window.innerHeight]")
+        let native = perform("WebKit viewport") { automation.measureViewport(completion: $0) }
+        XCTAssertEqual(native, tab.webView.bounds.size)
     }
 
     func testScreenshotIsAPNGAtDeviceResolution() throws {

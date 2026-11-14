@@ -35,6 +35,10 @@ enum VisualLookUpController {
     }
 
     static func handleRequest(imageURL: String, pageURL: String) {
+        guard #available(macOS 14.0, *) else {
+            showAlert(title: "Visual Look Up Isn't Available", message: "Visual Look Up requires macOS 14 or later.")
+            return
+        }
         guard ImageAnalyzer.isSupported else {
             // Shouldn't normally happen -- BRWBrowser.setVisualLookUpAvailable(_:)
             // is only ever called with `true` when this same check already

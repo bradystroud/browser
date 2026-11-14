@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 /// selection isn't exposed as a menu item (nine near-identical menu entries
 /// would be clutter, and no mainstream browser does this either), so there is
 /// no menu-key-equivalent to intercept it first.
-final class BrowserWindow: NSWindow {
+final class BrowserWindow: AgentSizeableWindow {
     /// One find bar per window, created lazily the first time ⌘F fires (see
     /// -toggleFindBar:). FindBarController.swift for why this lives here
     /// rather than on BrowserWindowController.

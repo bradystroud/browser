@@ -407,6 +407,11 @@ extension EngineTab {
 /// the page of the tab it belongs to. Every completion runs on the main
 /// thread.
 protocol EngineTabAutomation: AnyObject {
+    /// Reads CSS viewport dimensions without granting transient user activation.
+    func measureViewport(completion: @escaping (Result<CGSize, EngineAutomationError>) -> Void)
+    /// Uses one native image pixel per CSS pixel for an explicitly sized
+    /// automation viewport. The caller sizes the host view separately.
+    func setExactViewport(_ size: CGSize, completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
     /// Makes the page behave as if its window were focused, so focus, typing
     /// and caret logic work while the window is in the background.
     func prepare(completion: @escaping (Result<Void, EngineAutomationError>) -> Void)
@@ -437,6 +442,20 @@ protocol EngineTabAutomation: AnyObject {
 }
 
 extension EngineTabAutomation {
+    func measureViewport(completion: @escaping (Result<CGSize, EngineAutomationError>) -> Void) {
+        evaluate("[window.innerWidth, window.innerHeight]") { result in
+            completion(result.flatMap(Self.viewportSize))
+        }
+    }
+
+    static func viewportSize(_ value: Any?) -> Result<CGSize, EngineAutomationError> {
+        guard let dimensions = value as? [Double], dimensions.count == 2,
+              dimensions.allSatisfy({ $0.isFinite && $0 > 0 }) else {
+            return .failure(EngineAutomationError("the engine returned invalid CSS viewport dimensions"))
+        }
+        return .success(CGSize(width: dimensions[0], height: dimensions[1]))
+    }
+
     var dialogHandler: ((EngineAutomationDialog) -> EngineAutomationDialogAnswer)? {
         get { nil }
         set {}

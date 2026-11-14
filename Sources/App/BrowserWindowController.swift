@@ -48,6 +48,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// move engine (see holdsTabEngines).
     var agentPresentation: AgentPresentation? {
         didSet {
+            (window as? BrowserWindow)?.permitsOffscreenAgentSizing = agentPresentation != nil
             if agentPresentation != nil, agentIndicator == nil { installAgentIndicator() }
             guard agentPresentation != nil, tabStripOrientation != .horizontal else { return }
             tabStripOrientation = .horizontal
@@ -93,8 +94,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case .headed:
             window.isExcludedFromWindowsMenu = false
             window.collectionBehavior.remove(.transient)
-            window.setFrame(WindowManager.frameOnAVisibleScreen(window.frame), display: true)
+            window.setFrame(AgentPageWindowGeometry.visibleFrame(
+                window.frame, screens: NSScreen.screens.map(\.visibleFrame),
+                preferred: (window.screen ?? NSScreen.main)?.visibleFrame), display: true)
             window.orderFront(nil)
+        }
+    }
+
+    /// The host's measured chrome delta includes the dev and agent strips.
+    func resizeAgentPage(_ size: CLIPageSize) throws {
+        guard agentPresentation != nil, let window else { throw AgentPageWindowGeometry.SizingError.unavailable }
+        try AgentPageWindowGeometry.resize(
+            window: window, requested: NSSize(width: size.width, height: size.height), isViewport: size.isViewport,
+            host: { self.activeTab?.hostView }, layout: { self.applyChromeLayout() })
+        if agentPresentation == .headless {
+            present(.headless)
+        } else {
+            let frame = AgentPageWindowGeometry.visibleFrame(
+                window.frame, screens: NSScreen.screens.map(\.visibleFrame),
+                preferred: (window.screen ?? NSScreen.main)?.visibleFrame)
+            if frame != window.frame { window.setFrame(frame, display: true) }
         }
     }
 

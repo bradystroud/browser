@@ -206,7 +206,13 @@ public struct CLIPageInfo: Codable {
     /// rules when it opened. An agent's page never changes engine.
     public let engine: String?
 
-    public init(id: String, profileName: String, isPrivate: Bool, url: String, title: String, isLoading: Bool, isHeadless: Bool? = nil, engine: String? = nil) {
+    /// Page zoom factor; older apps omit it.
+    public let zoomFactor: Double?
+    /// Measured window.innerWidth / innerHeight in CSS pixels; nil if unavailable.
+    public let viewportWidth: Double?
+    public let viewportHeight: Double?
+
+    public init(id: String, profileName: String, isPrivate: Bool, url: String, title: String, isLoading: Bool, isHeadless: Bool? = nil, engine: String? = nil, zoomFactor: Double? = nil, viewportWidth: Double? = nil, viewportHeight: Double? = nil) {
         self.id = id
         self.profileName = profileName
         self.isPrivate = isPrivate
@@ -215,6 +221,9 @@ public struct CLIPageInfo: Codable {
         self.isLoading = isLoading
         self.isHeadless = isHeadless
         self.engine = engine
+        self.zoomFactor = zoomFactor
+        self.viewportWidth = viewportWidth
+        self.viewportHeight = viewportHeight
     }
 }
 
@@ -317,6 +326,53 @@ public enum CLIJSONValue: Codable, Equatable {
         case let array as [Any]: self = .array(array.map { CLIJSONValue(foundation: $0) })
         case let object as [String: Any]: self = .object(object.mapValues { CLIJSONValue(foundation: $0) })
         default: self = .null
+        }
+    }
+}
+
+/// Shared validation keeps CLI and direct socket requests under the same allocation limits.
+public struct CLIPageSize: Equatable {
+    public let width: Int
+    public let height: Int
+    public let isViewport: Bool
+
+    public static func parse(_ args: [String: String], requiresViewport: Bool = false) throws -> CLIPageSize? {
+        func dimension(_ value: String) throws -> Int {
+            guard !value.isEmpty, value.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+                  let number = Int(value), (200...8192).contains(number) else {
+                throw SizeError.invalid
+            }
+            return number
+        }
+        let width: Int
+        let height: Int
+        let viewport = args["viewport"] != nil
+        if let value = args["viewport"] {
+            guard args["width"] == nil, args["height"] == nil else { throw SizeError.conflict }
+            let parts = value.split(separator: "x", omittingEmptySubsequences: false)
+            guard parts.count == 2 else { throw SizeError.invalid }
+            width = try dimension(String(parts[0]))
+            height = try dimension(String(parts[1]))
+        } else {
+            guard !requiresViewport else { throw SizeError.required }
+            guard args["width"] != nil || args["height"] != nil else { return nil }
+            guard let w = args["width"], let h = args["height"] else { throw SizeError.pair }
+            width = try dimension(w)
+            height = try dimension(h)
+        }
+        guard width * height <= 16_777_216 else { throw SizeError.invalid }
+        return CLIPageSize(width: width, height: height, isViewport: viewport)
+    }
+
+    public enum SizeError: Error, LocalizedError {
+        case invalid, conflict, required, pair
+        public var errorDescription: String? {
+            switch self {
+            case .invalid: return "Page dimensions must be integers from 200 to 8192, with at most 16777216 total points (use --viewport WxH)."
+            case .conflict: return "--viewport cannot be combined with --width or --height."
+            case .required: return "page resize requires --viewport WxH."
+            case .pair: return "--width and --height must be supplied together."
+            }
         }
     }
 }

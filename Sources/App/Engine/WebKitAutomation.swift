@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import ObjectiveC.runtime
 
 /// EngineTabAutomation for a WKWebView.
 ///
@@ -69,6 +70,30 @@ final class WebKitAutomation: EngineTabAutomation {
     /// a drawn cursor freezes mid-move. Private SPI, checked at runtime,
     /// and only for agent pages; without it, keep the window uncovered.
     private static let occlusionDetectionSelector = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+
+    func setExactViewport(_ size: CGSize, completion: @escaping (Result<Void, EngineAutomationError>) -> Void) {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+              size.width.rounded() == size.width, size.height.rounded() == size.height else {
+            return completion(.failure(EngineAutomationError("exact viewport dimensions must be positive whole CSS pixels")))
+        }
+        guard let webView else { return completion(.failure(EngineAutomationError("the page closed"))) }
+        let selector = NSSelectorFromString("_setOverrideDeviceScaleFactor:")
+        guard let method = class_getInstanceMethod(WKWebView.self, selector),
+              method_getNumberOfArguments(method) == 3,
+              let argumentType = method_copyArgumentType(method, 2) else {
+            return completion(.failure(EngineAutomationError("this macOS WebKit lacks native 1x capture; use the CEF engine for an exact viewport")))
+        }
+        let returnType = method_copyReturnType(method)
+        defer { free(returnType); free(argumentType) }
+        guard String(cString: returnType) == "v", String(cString: argumentType) == "d" else {
+            return completion(.failure(EngineAutomationError("this macOS WebKit has an unsupported native capture-density API; use the CEF engine for an exact viewport")))
+        }
+        typealias Setter = @convention(c) (AnyObject, Selector, Double) -> Void
+        let setter = unsafeBitCast(method_getImplementation(method), to: Setter.self)
+        // Changing density leaves page zoom, fixed layout and mobile layout alone.
+        setter(webView, selector, 1)
+        completion(.success(()))
+    }
 
     func prepare(completion: @escaping (Result<Void, EngineAutomationError>) -> Void) {
         if let webView, webView.responds(to: Self.occlusionDetectionSelector) {

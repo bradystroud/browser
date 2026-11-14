@@ -252,6 +252,7 @@ set(BROWSER_SWIFT_SRCS
   TabSleep/TabSleepPreferences.swift
   TabSleep/BrowserWindowController+TabSleep.swift
   CLI/CLIServer.swift
+  CLI/AgentPageWindowGeometry.swift
   CLI/AgentPages.swift
   CLI/AgentWindowIndicator.swift
   CLI/AgentPageScript.swift
