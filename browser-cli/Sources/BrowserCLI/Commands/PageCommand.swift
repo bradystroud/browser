@@ -13,8 +13,9 @@ import BrowserCLIProtocol
 /// field's value.
 public enum PageCommand {
     static let usage = """
-        browser page open [<url>] [--profile <name> | --private] [--width W --height H] [--cursor] [--headless] [--dialogs accept|dismiss]
+        browser page open [<url>] [--profile <name> | --private] [--viewport WxH | --width W --height H] [--cursor] [--headless] [--dialogs accept|dismiss]
                           [--wait-selector S] [--wait-text T] [--wait-js EXPR] [--wait-url U] [--wait-idle] [--timeout MS] [--no-wait]
+        browser page resize <id> --viewport WxH
         browser page list
         browser page show <id> [--focus]   (bring a headless page on screen; only --focus gives it the keyboard)
         browser page hide <id>             (make it headless again)
@@ -36,6 +37,11 @@ public enum PageCommand {
         browser page record stop <id>
         browser page close <id>
 
+        Size: --viewport WxH sizes the page host in logical points, excluding browser chrome (200...8192 per
+          dimension, at most 16777216 points total). --width/--height retain window-content sizing; supply both.
+          resize preserves the page and session, and refuses while recording. JSON reports viewportWidth /
+          viewportHeight measured as CSS innerWidth / innerHeight and zoomFactor. Page zoom affects these values.
+          Explicit viewport pages keep native 1x capture for their lifetime; other pages keep display density.
         Targets: a ref from the last snapshot (e12), --selector (CSS), or --text (an element's name, matched
           case-insensitively; a link or button wins over plain text, a heading comes last). --role link|button|...
           narrows a selector or text match. The result says "(1 of N matches)" when the target was ambiguous.
@@ -96,9 +102,15 @@ public enum PageCommand {
             bool("cursor")
             bool("headless")
             copy("dialogs")
+            copy("viewport")
             copy("width")
             copy("height")
             waitFlags()
+        case "resize":
+            guard takeId(), positionals.isEmpty else { return usageError(json) }
+            copy("viewport")
+            copy("width")
+            copy("height")
         case "list":
             break
         case "show", "hide":
@@ -176,6 +188,11 @@ public enum PageCommand {
             return usageError(json)
         }
 
+        if sub == "open" || sub == "resize" {
+            do { _ = try CLIPageSize.parse(args, requiresViewport: sub == "resize") }
+            catch { return Output.emitError(error.localizedDescription, json: json) }
+        }
+
         if sub != "list" {
             args.merge(AgentIdentity.detect(flags: flags).requestArgs) { current, _ in current }
         }
@@ -187,6 +204,9 @@ public enum PageCommand {
                 if json { return Output.emitError(response.error ?? "page \(sub) failed", json: true) }
                 return Output.emitError(response.error ?? "page \(sub) failed", json: false)
             }
+            if let error = viewportCompatibilityError(response, requested: args["viewport"] != nil) {
+                return Output.emitError(error, json: json)
+            }
             if sub == "eval", !json, flags["raw"] != nil, case .string(let text)? = response.value {
                 print(text)
                 return true
@@ -195,6 +215,16 @@ public enum PageCommand {
         } catch {
             return Output.emitError("\(error)", json: json)
         }
+    }
+
+    static func viewportCompatibilityError(_ response: CLIResponse, requested: Bool) -> String? {
+        // The same app version introduced zoom metadata and explicit viewport sizing.
+        // A current app may omit only the dimensions when the renderer cannot answer in time.
+        guard requested, response.page?.zoomFactor == nil else { return nil }
+        guard let page = response.page, page.viewportWidth != nil, page.viewportHeight != nil else {
+            return "Browser did not report the requested viewport for \(response.page?.id ?? "the page"). Update Browser if it is older, or retry after the page has loaded."
+        }
+        return nil
     }
 
     private static func usageError(_ json: Bool) -> Bool {
@@ -235,8 +265,17 @@ public enum PageCommand {
         }
         if let pages = response.pages {
             guard !pages.isEmpty else { return "(no agent pages)" }
-            return pages.map { "\($0.id)\t\($0.isPrivate ? "private" : $0.profileName)\t\($0.isHeadless == true ? "headless" : "headed")\t\($0.engine ?? "")\t\($0.title)\t\($0.url)" }.joined(separator: "\n")
+            return pages.map { "\($0.id)\t\($0.isPrivate ? "private" : $0.profileName)\t\($0.isHeadless == true ? "headless" : "headed")\t\($0.engine ?? "")\t\($0.title)\t\($0.url)\t\(viewportDescription($0))" }.joined(separator: "\n")
         }
-        return response.message ?? "OK"
+        let message = response.message ?? "OK"
+        if let page = response.page, page.viewportWidth != nil, page.viewportHeight != nil {
+            return message + " Viewport: " + viewportDescription(page) + "."
+        }
+        return message
+    }
+
+    private static func viewportDescription(_ page: CLIPageInfo) -> String {
+        guard let width = page.viewportWidth, let height = page.viewportHeight else { return "viewport unavailable" }
+        return "\(Int(width))x\(Int(height))"
     }
 }

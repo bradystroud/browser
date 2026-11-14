@@ -27,6 +27,9 @@ final class AgentPage {
     /// engine's own input has no visible pointer.
     var showsCursor = false
     var recorder: AgentRecorder?
+    /// Follows the visible tab when a page opens a new tab in this agent window.
+    var requestedViewport: CGSize?
+    weak var viewportAutomation: EngineTabAutomation?
     /// How a confirm() or prompt() is answered. An alert has only OK.
     var acceptsDialogs = false
     var promptText: String?
@@ -146,7 +149,7 @@ enum AgentPages {
         let args = request.args
         switch request.command {
         case "page-open": open(args, completion: completion)
-        case "page-list": completion(CLIResponse(ok: true, message: "\(pages.count) page(s)", pages: pages.values.sorted { $0.id < $1.id }.map(info)))
+        case "page-list": list(completion: completion)
         default:
             guard let id = args["id"], !id.isEmpty else { return completion(.failure("\(request.command) requires a page id")) }
             guard let page = pages[id], page.controller != nil else {
@@ -157,6 +160,32 @@ enum AgentPages {
             applyIdentity(args, to: page.controller)
             page.controller?.agentIndicator?.update(activity: activityDescription(request))
             switch request.command {
+            case "page-resize":
+                guard page.recorder == nil else {
+                    return completion(.failure("Stop the recording before resizing its page."))
+                }
+                do {
+                    guard let size = try CLIPageSize.parse(args, requiresViewport: true) else {
+                        return completion(.failure("page resize requires --viewport WxH."))
+                    }
+                    guard let automation = page.automation else {
+                        return completion(.failure("The page has no automation engine."))
+                    }
+                    automation.setExactViewport(CGSize(width: size.width, height: size.height)) { result in
+                        switch result {
+                        case .success:
+                            guard page.closedAt == nil, pages[page.id] === page, let controller = page.controller else {
+                                return completion(.failure(page.closedExplanation))
+                            }
+                            do { try controller.resizeAgentPage(size) }
+                            catch { return completion(.failure(error.localizedDescription)) }
+                            page.requestedViewport = CGSize(width: size.width, height: size.height)
+                            page.viewportAutomation = automation
+                            completion(CLIResponse(ok: true, message: "Resized \(page.id).", page: info(page)))
+                        case .failure(let error): completion(.failure(String(describing: error)))
+                        }
+                    }
+                } catch { completion(.failure(error.localizedDescription)) }
             case "page-close": close(page, completion: completion)
             case "page-show", "page-hide":
                 let headless = request.command == "page-hide"
@@ -222,8 +251,16 @@ enum AgentPages {
     /// Adds what the page did on its own during the command to its result.
     private static func reporting(_ page: AgentPage, _ completion: @escaping Completion) -> Completion {
         { response in
+            let deliver: Completion = { response in
+                guard response.page != nil else { return completion(response) }
+                measuredInfo(page) { measured in
+                    var result = response
+                    result.page = measured
+                    completion(result)
+                }
+            }
             if let url = page.tab?.urlString, !url.isEmpty { page.lastSeenURL = url }
-            guard !page.events.isEmpty else { return completion(response) }
+            guard !page.events.isEmpty else { return deliver(response) }
             var response = response
             response.pageEvents = page.events
             let lines = page.events.map { "Page: \($0)" }.joined(separator: "\n")
@@ -233,7 +270,7 @@ enum AgentPages {
             } else {
                 response.error = [response.error, lines].compactMap { $0 }.joined(separator: "\n")
             }
-            completion(response)
+            deliver(response)
         }
     }
 
@@ -248,7 +285,40 @@ enum AgentPages {
         }
     }
 
-    private static func info(_ page: AgentPage) -> CLIPageInfo {
+    private static func list(completion: @escaping Completion) {
+        let ordered = pages.values.sorted { $0.id < $1.id }
+        guard !ordered.isEmpty else {
+            return completion(CLIResponse(ok: true, message: "0 page(s)", pages: []))
+        }
+        var result: [String: CLIPageInfo] = [:]
+        for page in ordered {
+            measuredInfo(page) { measured in
+                result[page.id] = measured
+                if result.count == ordered.count {
+                    completion(CLIResponse(ok: true, message: "\(result.count) page(s)",
+                                           pages: ordered.compactMap { result[$0.id] }))
+                }
+            }
+        }
+    }
+
+    private static func measuredInfo(_ page: AgentPage, completion: @escaping (CLIPageInfo) -> Void) {
+        guard let automation = page.automation else { return completion(info(page)) }
+        var finished = false
+        let deliver: (CGSize?) -> Void = { viewport in
+            guard !finished else { return }
+            finished = true
+            completion(info(page, viewport: viewport))
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { deliver(nil) }
+        automation.measureViewport { result in
+            guard case .success(let size) = result, size.width.isFinite, size.height.isFinite,
+                  size.width > 0, size.height > 0 else { return deliver(nil) }
+            deliver(size)
+        }
+    }
+
+    private static func info(_ page: AgentPage, viewport: CGSize? = nil) -> CLIPageInfo {
         let tab = page.tab
         let url = tab.map { $0.urlString.isEmpty ? "about:blank" : $0.urlString } ?? ""
         return CLIPageInfo(
@@ -259,10 +329,16 @@ enum AgentPages {
             title: tab?.title ?? "",
             isLoading: tab?.isLoading ?? false,
             isHeadless: page.controller?.agentPresentation == .headless,
-            engine: tab?.engine.rawValue)
+            engine: tab?.engine.rawValue,
+            zoomFactor: tab?.zoomFactor ?? 1,
+            viewportWidth: viewport.map { Double($0.width) },
+            viewportHeight: viewport.map { Double($0.height) })
     }
 
     private static func open(_ args: [String: String], completion: @escaping Completion) {
+        let size: CLIPageSize?
+        do { size = try CLIPageSize.parse(args) }
+        catch { return completion(.failure(error.localizedDescription)) }
         let url = args["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
         let profile: Profile
         let isPrivate = args["private"] == "true"
@@ -281,9 +357,12 @@ enum AgentPages {
         let controller = WindowManager.shared.openNewWindow(
             profile: profile, initialURL: url, isPrivate: isPrivate, activateApp: false,
             agentPresentation: args["headless"] == "true" ? .headless : .headed)
-        if let width = args["width"].flatMap(Double.init), let height = args["height"].flatMap(Double.init),
-           width >= 200, height >= 200 {
-            controller.window?.setContentSize(NSSize(width: width, height: height))
+        if let size {
+            do { try controller.resizeAgentPage(size) }
+            catch {
+                controller.window?.close()
+                return completion(.failure(error.localizedDescription))
+            }
         }
 
         let page = AgentPage(id: "p\(nextNumber)", controller: controller)
@@ -296,15 +375,73 @@ enum AgentPages {
         page.automation?.prepare { _ in }
         let completion = reporting(page, completion)
 
-        guard args["no-wait"] != "true" else {
-            return completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'.", page: info(page)))
-        }
-        wait(page, args, defaultTimeout: defaultOpenTimeout) { response in
-            guard response.ok else {
-                return completion(CLIResponse(ok: false, error: "Opened \(page.id), but: \(response.error ?? "the wait failed")", page: info(page)))
+        let finishOpen = {
+            guard args["no-wait"] != "true" else {
+                return completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'.", page: info(page)))
             }
-            completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)': \(info(page).url)", page: info(page)))
+            wait(page, args, defaultTimeout: defaultOpenTimeout) { response in
+                guard response.ok else {
+                    return completion(CLIResponse(ok: false, error: "Opened \(page.id), but: \(response.error ?? "the wait failed")", page: info(page)))
+                }
+                completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)': \(info(page).url)", page: info(page)))
+            }
         }
+        let failViewport: (EngineAutomationError) -> Void = { error in
+            close(page) { _ in
+                completion(.failure("Could not open an exact viewport: \(error.message). The agent window was closed."))
+            }
+        }
+        if let size, size.isViewport {
+            awaitLiveAutomation(page, timeout: defaultOpenTimeout) { result in
+                switch result {
+                case .failure(let error):
+                    failViewport(error)
+                case .success(let automation):
+                    // Preparation proves the native browser exists, without waiting for its document to load.
+                    // Apply the viewport once: an unsupported native API is a permanent failure, not startup lag.
+                    automation.setExactViewport(CGSize(width: size.width, height: size.height)) { result in
+                        switch result {
+                        case .success:
+                            page.requestedViewport = CGSize(width: size.width, height: size.height)
+                            page.viewportAutomation = automation
+                            finishOpen()
+                        case .failure(let error):
+                            failViewport(error)
+                        }
+                    }
+                }
+            }
+        } else { finishOpen() }
+    }
+
+    private static func awaitLiveAutomation(
+        _ page: AgentPage,
+        timeout: TimeInterval,
+        completion: @escaping (Result<EngineTabAutomation, EngineAutomationError>) -> Void
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func poll() {
+            guard page.closedAt == nil, page.controller != nil, pages[page.id] === page else {
+                return completion(.failure(EngineAutomationError(page.closedExplanation)))
+            }
+            guard let automation = page.automation else {
+                return completion(.failure(EngineAutomationError("\(page.id)'s engine has no automation.")))
+            }
+            automation.prepare { result in
+                guard page.closedAt == nil, page.controller != nil, pages[page.id] === page else {
+                    return completion(.failure(EngineAutomationError(page.closedExplanation)))
+                }
+                switch result {
+                case .success: completion(.success(automation))
+                case .failure(let error):
+                    guard Date() < deadline else {
+                        return completion(.failure(EngineAutomationError("Timed out after \(Int(timeout * 1000)) ms waiting for \(page.id)'s live engine: \(error)")))
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + pollInterval, execute: poll)
+                }
+            }
+        }
+        poll()
     }
 
     private static func close(_ page: AgentPage, completion: @escaping Completion) {
@@ -349,12 +486,39 @@ enum AgentPages {
         guard tab.capabilities.agentControl else {
             return completion(.failure("\(page.id)'s engine (\(tab.engine.rawValue)) has no agent control"))
         }
-        guard let automation = page.automation else {
-            return completion(.failure("\(page.id)'s tab has no live page yet"))
+        if page.requestedViewport != nil {
+            awaitLiveAutomation(page, timeout: defaultOpenTimeout) { result in
+                switch result {
+                case .failure(let error): completion(.failure(error.message))
+                case .success(let automation):
+                    applyRequestedViewport(page, automation: automation, completion: completion, then: body)
+                }
+            }
+        } else {
+            guard let automation = page.automation else {
+                return completion(.failure("\(page.id)'s tab has no live page yet"))
+            }
+            automation.prepare { result in
+                if case .failure(let error) = result { return completion(.failure(error.message)) }
+                body(automation)
+            }
         }
-        automation.prepare { result in
-            if case .failure(let error) = result { return completion(.failure(error.message)) }
-            body(automation)
+    }
+
+    private static func applyRequestedViewport(
+        _ page: AgentPage,
+        automation: EngineTabAutomation,
+        completion: @escaping Completion,
+        then body: @escaping (EngineTabAutomation) -> Void
+    ) {
+        guard let viewport = page.requestedViewport, page.viewportAutomation !== automation else { return body(automation) }
+        automation.setExactViewport(viewport) { result in
+            switch result {
+            case .success:
+                page.viewportAutomation = automation
+                body(automation)
+            case .failure(let error): completion(.failure(error.message))
+            }
         }
     }
 

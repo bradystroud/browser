@@ -10,6 +10,8 @@
 #   ./scripts/test-webkit.sh --repeat 10             # flake hunt: N full runs
 set -euo pipefail
 
+bash "$(dirname "$0")/test-agent-viewport.sh"
+
 cd "$(dirname "$0")/../Packages/WebKitEngineTests"
 
 repeat=1

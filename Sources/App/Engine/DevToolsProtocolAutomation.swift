@@ -52,16 +52,37 @@ final class DevToolsProtocolAutomation: EngineTabAutomation {
         }
     }
 
+    func setExactViewport(_ size: CGSize, completion: @escaping (Result<Void, EngineAutomationError>) -> Void) {
+        guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+              size.width.rounded() == size.width, size.height.rounded() == size.height else {
+            return completion(.failure(EngineAutomationError("exact viewport dimensions must be positive whole CSS pixels")))
+        }
+        sendVoid("Emulation.setDeviceMetricsOverride", [
+            // Zero leaves dimensions sourced from the native host view.
+            "width": 0, "height": 0, "deviceScaleFactor": 1, "mobile": false,
+        ], completion: completion)
+    }
+
     func prepare(completion: @escaping (Result<Void, EngineAutomationError>) -> Void) {
         sendVoid("Emulation.setFocusEmulationEnabled", ["enabled": true], completion: completion)
     }
 
     func evaluate(_ expression: String, completion: @escaping (Result<Any?, EngineAutomationError>) -> Void) {
+        evaluate(expression, userGesture: true, completion: completion)
+    }
+
+    func measureViewport(completion: @escaping (Result<CGSize, EngineAutomationError>) -> Void) {
+        evaluate("[window.innerWidth, window.innerHeight]", userGesture: false) { result in
+            completion(result.flatMap(Self.viewportSize))
+        }
+    }
+
+    private func evaluate(_ expression: String, userGesture: Bool, completion: @escaping (Result<Any?, EngineAutomationError>) -> Void) {
         send("Runtime.evaluate", [
             "expression": expression,
             "returnByValue": true,
             "awaitPromise": true,
-            "userGesture": true,
+            "userGesture": userGesture,
         ]) { result in
             switch result {
             case .failure(let error):
