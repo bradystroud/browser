@@ -192,7 +192,7 @@ bool BRWClientHandler::OnBeforePopup(
   // Alloy has no popup blocker of its own: without this, any page could
   // open tabs at will from a timer or on load. A real click on a
   // target="_blank" link carries a gesture and still gets through.
-  if (!user_gesture) {
+  if (!user_gesture && !allows_popups_without_gesture_) {
     NSLog(@"Browser: refused a page-opened window with no user gesture");
     return true;
   }
@@ -383,6 +383,9 @@ void BRWClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   if (!frame->IsMain()) {
     return;
   }
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidFinishMainFrameLoadWithURL:httpStatusCode:)]) {
+    [delegate_ browserDidFinishMainFrameLoadWithURL:ToNSString(frame->GetURL()) httpStatusCode:httpStatusCode];
+  }
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidCommitNavigation:)]) {
     [delegate_ browserDidCommitNavigation:ToNSString(frame->GetURL())];
   }
@@ -401,6 +404,12 @@ void BRWClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
   }
   NSLog(@"Browser: load failed for %s: %s (code %d)", failedUrl.ToString().c_str(),
         errorText.ToString().c_str(), errorCode);
+  if (frame->IsMain() && delegate_ &&
+      [delegate_ respondsToSelector:@selector(browserDidFailMainFrameLoadWithURL:errorCode:errorText:)]) {
+    [delegate_ browserDidFailMainFrameLoadWithURL:ToNSString(failedUrl)
+                                        errorCode:errorCode
+                                        errorText:ToNSString(errorText)];
+  }
 }
 
 void BRWClientHandler::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) {

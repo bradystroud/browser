@@ -44,6 +44,9 @@ class BRWClientHandler : public CefClient,
   BRWClientHandler(NSView* host_view, const std::string& profile_name);
 
   void SetDelegate(id<BRWBrowserDelegate> delegate) { delegate_ = delegate; }
+  // Lets OnBeforePopup through without a user gesture; see
+  // -[BRWBrowser setAllowsPopupsWithoutGesture:].
+  void SetAllowsPopupsWithoutGesture(bool allow) { allows_popups_without_gesture_ = allow; }
   id<BRWBrowserDelegate> GetDelegate() { return delegate_; }
 
   // CefBrowserHost::CreateBrowser is asynchronous -- OnAfterCreated (and thus
@@ -340,6 +343,7 @@ class BRWClientHandler : public CefClient,
   // RequestClose()'s doc comment for why that breaks OnBeforeClose delivery).
   bool close_requested_ = false;
   __weak id<BRWBrowserDelegate> delegate_;
+  bool allows_popups_without_gesture_ = false;
   std::string pending_url_;
   // Synthetic prompt ids for OnRequestMediaAccessPermission, which -- unlike
   // OnShowPermissionPrompt -- gives us no id of its own. Reserves the high

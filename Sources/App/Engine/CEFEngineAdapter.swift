@@ -109,6 +109,9 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
             },
             setEventHandler: { [weak browser] handler in
                 browser?.setAutomationEventHandler(handler)
+            },
+            setAllowsPopups: { [weak browser] allow in
+                browser?.setAllowsPopupsWithoutGesture(allow)
             })
     }()
 
@@ -253,6 +256,19 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidCommitNavigation(_ url: String) {
         delegate?.engineTabDidCommitNavigation(url)
+    }
+
+    private(set) var mainDocumentLoad: EngineMainDocumentLoad?
+
+    func browserDidFinishMainFrameLoad(withURL url: String, httpStatusCode: Int) {
+        // Chromium's own error page for a failed load ends with status 0 at
+        // the same URL; the failure it shows is the one to keep.
+        if httpStatusCode <= 0, let last = mainDocumentLoad, last.error != nil, last.url == url { return }
+        mainDocumentLoad = EngineMainDocumentLoad(url: url, httpStatus: httpStatusCode > 0 ? httpStatusCode : nil)
+    }
+
+    func browserDidFailMainFrameLoad(withURL url: String, errorCode: Int, errorText: String) {
+        mainDocumentLoad = EngineMainDocumentLoad(url: url, httpStatus: nil, error: "\(errorText) (\(errorCode))")
     }
 
     func browserDidBeginDownload(withId downloadId: Int64, url: String, suggestedName: String, destinationPath: String) {

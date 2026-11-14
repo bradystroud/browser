@@ -62,4 +62,25 @@ final class ArgParserTests: XCTestCase {
         XCTAssertEqual(parsed.flags["profile"], "work")
         XCTAssertTrue(parsed.jsonOutput)
     }
+
+    /// `--version` is answered before any command word, so it must not take
+    /// `--json` (or anything else) as its value.
+    func testVersionIsAValuelessFlag() {
+        let parsed = ArgParser.parse(["--version", "--json"])
+        XCTAssertEqual(parsed.flags["version"], "")
+        XCTAssertTrue(parsed.jsonOutput)
+        XCTAssertTrue(parsed.positionals.isEmpty)
+    }
+
+    /// A switch that took a value would swallow the next flag: once
+    /// `--allow-password --selector input` sent `--selector` as the switch's
+    /// value and `input` as text to type.
+    func testAllowSwitchesKeepTheFollowingFlag() {
+        let parsed = ArgParser.parse(["type", "p1", "pw", "--allow-password", "--selector", "input", "--allow-popups", "--json"])
+        XCTAssertEqual(parsed.positionals, ["type", "p1", "pw"])
+        XCTAssertEqual(parsed.flags["selector"], "input")
+        XCTAssertEqual(parsed.flags["allow-password"], "")
+        XCTAssertEqual(parsed.flags["allow-popups"], "")
+        XCTAssertTrue(parsed.jsonOutput)
+    }
 }

@@ -14,6 +14,12 @@ final class DownloadTests: WebKitTabTestCase {
                 contentType: "text/plain",
                 headers: ["Content-Disposition": "inline; filename=\"shown.txt\""],
                 body: Data("inline body".utf8)),
+            "/empty-404": LocalHTTPServer.Response(
+                status: 404, contentType: "", headers: ["X-Content-Type-Options": "nosniff"], body: Data()),
+            "/attach-500": LocalHTTPServer.Response(
+                status: 500, contentType: "text/plain",
+                headers: ["Content-Disposition": "attachment; filename=\"error.txt\""],
+                body: Data("error body".utf8)),
         ]
     }
 
@@ -64,6 +70,25 @@ final class DownloadTests: WebKitTabTestCase {
         XCTAssertEqual(text?.trimmingCharacters(in: .whitespacesAndNewlines), "inline body")
         settle(0.2)
         XCTAssertTrue(recorder.downloads.isEmpty, "inline content must render, not download: \(recorder.events)")
+    }
+
+    /// An HTTP error with nothing WebKit can show is an error page at that
+    /// URL, never an empty file in Downloads with the tab left behind.
+    func testEmptyErrorResponseShowsErrorPageNotDownload() throws {
+        tab.loadURL(server.url("/empty-404"))
+        waitUntil("error page shown") {
+            (try? self.callJS("return document.body ? document.body.innerText : ''") as? String)?.contains("HTTP 404") == true
+        }
+        let href = try callJS("return location.href") as? String
+        XCTAssertEqual(href, server.url("/empty-404"))
+        settle(0.2)
+        XCTAssertTrue(recorder.downloads.isEmpty, "an empty error response must not download: \(recorder.events)")
+    }
+
+    func testErrorResponseThatIsAnAttachmentStillDownloads() throws {
+        tab.loadURL(server.url("/attach-500"))
+        waitUntil("download finished") { recorder.firstIndex(of: "downloadEnd") != nil }
+        XCTAssertEqual(recorder.downloads.values.first?.suggestedName, "error.txt")
     }
 
     // MARK: - Policy and path rules (no web view needed)

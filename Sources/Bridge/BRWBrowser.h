@@ -86,6 +86,18 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// is the history-recording signal -- see Tab.swift / BrowserWindowController.
 - (void)browserDidCommitNavigation:(NSString *)url;
 
+/// How each main-frame load ended, from OnLoadEnd: the response's HTTP
+/// status, or 0 when the document came with none (about:, data:, file:, or
+/// Chromium's own error page). Unlike -browserDidCommitNavigation:, it is
+/// sent for every main-frame load, so an agent command can report a server
+/// error page.
+- (void)browserDidFinishMainFrameLoadWithURL:(NSString *)url httpStatusCode:(NSInteger)httpStatusCode;
+
+/// A main-frame load that never got a document, from OnLoadError (DNS, a
+/// refused connection, TLS). ERR_ABORTED, a load replaced by a newer one,
+/// is not sent.
+- (void)browserDidFailMainFrameLoadWithURL:(NSString *)url errorCode:(NSInteger)errorCode errorText:(NSString *)errorText;
+
 /// A new download started. `destinationPath` is where CEF was told to save
 /// it (see BRWClientHandler::OnBeforeDownload -- always ~/Downloads today,
 /// no save dialog). `downloadId` is CEF's own globally-unique download
@@ -464,6 +476,11 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// delivery.
 - (void)setAutomationEventHandler:(nullable void (^)(NSString *method, NSString *paramsJSON))handler
     NS_SWIFT_NAME(setAutomationEventHandler(_:));
+
+/// Lets the page open new tabs with no user gesture: from script, a timer,
+/// or several from one click. Scheme checks still apply. Only agent pages
+/// set it. Off by default.
+- (void)setAllowsPopupsWithoutGesture:(BOOL)allow NS_SWIFT_NAME(setAllowsPopupsWithoutGesture(_:));
 
 /// Turns off any override set by -setResponsiveDesignModeWithWidth:... --
 /// safe to call even if none is currently active.

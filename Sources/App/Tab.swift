@@ -68,10 +68,15 @@ protocol TabDelegate: AnyObject {
     /// holds its tabs, because the agent drives the engine tab itself, and a
     /// move would close it under the agent mid-command.
     func tabHoldsEngine(_ tab: Tab) -> Bool
+    /// Whether an empty new tab shows the start page. An agent's window
+    /// gets a real about:blank instead: the start page is a large data: URL,
+    /// which is what the page's own `location.href` would then report.
+    func tabShowsStartPage(_ tab: Tab) -> Bool
 }
 
 extension TabDelegate {
     func tabHoldsEngine(_ tab: Tab) -> Bool { false }
+    func tabShowsStartPage(_ tab: Tab) -> Bool { true }
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -536,6 +541,12 @@ final class Tab: NSObject, EngineTabDelegate {
     /// real frame (CEF's SetAsChild needs real bounds at creation time).
     func createBrowserIfNeeded() {
         guard browser == nil else { return }
+        // The delegate is only known now, not when `init` chose the start page.
+        if isShowingStartPage, delegate?.tabShowsStartPage(self) == false {
+            isShowingStartPage = false
+            engineURLString = Self.blankPageSentinel
+            title = ""
+        }
         // A private tab never goes through Engines.createTab(engine:profileName:...)
         // -- that path always resolves to a persisted-cache_path context (see
         // BRWGetOrCreateProfileContext), even for a made-up profile name.
@@ -705,6 +716,7 @@ final class Tab: NSObject, EngineTabDelegate {
     /// them still has a page. A closed popup has none.
     private let openedPopups = NSHashTable<Tab>.weakObjects()
     var hasLiveOpenedPopup: Bool { openedPopups.allObjects.contains { !$0.isAsleep } }
+    func isOpener(of tab: Tab) -> Bool { openedPopups.contains(tab) }
 
     /// Where a slept tab was, put back once its first load after waking
     /// finishes -- if it woke to the same URL. Back/forward history does not
@@ -770,7 +782,10 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func load(url: String) {
-        let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
+        var resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
+        if resolved.isStartPage, delegate?.tabShowsStartPage(self) == false {
+            resolved = (Self.blankPageSentinel, false)
+        }
         let decision = EngineRulesStore.shared.decide(url: resolved.url, trigger: .explicitLoad, currentEngine: engine, override: engineOverride)
         if decision.clearsOverride { engineOverride = nil }
         // A private tab that has loaded something keeps its engine (and with

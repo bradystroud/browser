@@ -23,12 +23,13 @@ enum AgentPageScript {
 
     /// `{ref}`, `{selector}` or `{text}` as a JS object literal. `role`
     /// narrows a selector or text match to elements of that role.
+    /// Every field given is passed on, so the page script can combine a
+    /// selector with text, and refuse a ref given with either.
     static func target(ref: String?, selector: String?, text: String?, role: String? = nil) -> String {
-        let roleField = role.map { ", role: \(literal($0))" } ?? ""
-        if let ref { return "{ref: \(literal(ref))}" }
-        if let selector { return "{selector: \(literal(selector))\(roleField)}" }
-        if let text { return "{text: \(literal(text))\(roleField)}" }
-        return "null"
+        let fields = [("ref", ref), ("selector", selector), ("text", text), ("role", role)]
+            .compactMap { key, value in value.map { "\(key): \(literal($0))" } }
+        guard ref != nil || selector != nil || text != nil else { return "null" }
+        return "{" + fields.joined(separator: ", ") + "}"
     }
 
     private static let install = #"""
@@ -194,6 +195,17 @@ enum AgentPageScript {
       const isPassword = (el) =>
         !!el && el.tagName === 'INPUT' && (el.type || '').toLowerCase() === 'password';
 
+      // Whether the document an element is in is served from this machine
+      // (localhost, *.localhost, 127.0.0.0/8, ::1): the only place
+      // `type --allow-password` may type into a password field.
+      const onLoopback = (el) => {
+        const loc = ((el && el.ownerDocument) || document).location;
+        if (loc.protocol !== 'http:' && loc.protocol !== 'https:') return false;
+        const host = loc.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+        return host === 'localhost' || host.endsWith('.localhost') || host === '::1' ||
+          /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+      };
+
       const INTERACTIVE = 'a[href], button, input:not([type=hidden]), select, textarea, summary, ' +
         '[role=button], [role=link], [role=menuitem], [role=menuitemcheckbox], [role=menuitemradio], ' +
         '[role=tab], [role=option], [role=checkbox], [role=radio], [role=switch], [role=combobox], ' +
@@ -311,16 +323,28 @@ enum AgentPageScript {
       // best-ranked one is taken.
       const resolveInfo = (target) => {
         if (!target) throw new Error('no target given');
+        if (target.ref && (target.selector || target.text)) {
+          throw new Error('use a ref, or --selector and --text, not both');
+        }
         if (target.ref) {
           const el = refToElement.get(target.ref)?.deref();
           if (!el || !el.isConnected) throw new Error('no element ' + target.ref + ' on this page any more; take a new snapshot');
           return {el, matches: 1};
         }
         const forRole = target.role ? ' with role ' + target.role : '';
+        // A selector with text means both: the selector's matches, narrowed
+        // to those whose name is the text (or, failing that, contains it).
         if (target.selector) {
-          const matches = queryAll(target.selector).filter(el => roleMatches(el, target.role));
+          let matches = queryAll(target.selector).filter(el => roleMatches(el, target.role));
+          let forText = '';
+          if (target.text) {
+            const wanted = target.text.toLowerCase();
+            const exact = matches.filter(el => name(el).toLowerCase() === wanted);
+            matches = exact.length ? exact : matches.filter(el => name(el).toLowerCase().includes(wanted));
+            forText = ' with text "' + target.text + '"';
+          }
           const el = matches.find(visible) || matches[0];
-          if (!el) throw new Error('nothing matches selector ' + target.selector + forRole);
+          if (!el) throw new Error('nothing matches selector ' + target.selector + forText + forRole);
           return {el, matches: matches.length};
         }
         const wanted = target.text.toLowerCase();
@@ -354,7 +378,7 @@ enum AgentPageScript {
         const hit = deepHit(x, y);
         // A hit on an ancestor (a label's padding, say) still lands on it.
         const obscured = !!hit && !within(hit, el) && !within(el, hit);
-        return {x, y, obscured, element: describe(el), password: isPassword(el)};
+        return {x, y, obscured, element: describe(el), password: isPassword(el), loopback: onLoopback(el)};
       };
 
       const deepActive = () => {
@@ -422,7 +446,7 @@ enum AgentPageScript {
         return pageText().includes(text);
       };
 
-      return {resolve, resolveInfo, point, describe, deepActive, isPassword, cursor, snapshot, has, visible, idle};
+      return {resolve, resolveInfo, point, describe, deepActive, isPassword, onLoopback, cursor, snapshot, has, visible, idle};
     })())
     """#
 }

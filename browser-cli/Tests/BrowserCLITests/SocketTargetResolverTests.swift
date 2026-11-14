@@ -65,7 +65,7 @@ final class SocketTargetResolverTests: XCTestCase {
     }
 
     func testEveryPageBooleanPreservesFollowingTargetFlag() throws {
-        let booleans = ["private", "cursor", "headless", "no-wait", "wait-idle", "focus", "gone", "idle", "double", "clear", "submit", "full-page", "raw"]
+        let booleans = ["private", "cursor", "headless", "no-wait", "wait-idle", "focus", "gone", "idle", "double", "clear", "submit", "full-page", "raw", "allow-password", "allow-popups"]
         for flag in booleans {
             XCTAssertTrue(ArgParser.valuelessFlags.contains(flag), flag)
             let parsed = try SocketTargetResolver.parse(["page", "list", "--" + flag, "--socket", "/chosen.sock"])

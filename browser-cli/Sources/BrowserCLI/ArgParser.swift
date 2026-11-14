@@ -27,9 +27,9 @@ public enum ArgParser {
     /// then lose the profile entirely. Any new valueless flag must be added
     /// here.
     static let valuelessFlags: Set<String> = [
-        "new-window", "little", "help",
+        "new-window", "little", "help", "version",
         "private", "cursor", "no-wait", "gone", "double", "clear", "submit", "full-page", "headless",
-        "wait-idle", "idle", "raw", "focus",
+        "wait-idle", "idle", "raw", "focus", "allow-password", "allow-popups",
     ]
 
     /// `--json` is a bare switch (no value), as is anything in

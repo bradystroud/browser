@@ -56,6 +56,20 @@ enum WebKitDownloadPolicy {
         return navigationResponse.isForMainFrame && !navigationResponse.canShowMIMEType
     }
 
+    /// The status of a main-frame HTTP error (4xx/5xx) whose body WebKit
+    /// cannot display -- typically an empty body with no Content-Type. Left
+    /// to `shouldDownload`, that becomes an empty file in Downloads and the
+    /// tab never leaves the page it was on. Chromium shows its own
+    /// "HTTP ERROR 404" page for the same response, so this gets an error
+    /// page too. An error response that is a real attachment still downloads.
+    static func undisplayableErrorStatus(_ navigationResponse: WKNavigationResponse) -> Int? {
+        guard navigationResponse.isForMainFrame, !navigationResponse.canShowMIMEType,
+              !isAttachment(navigationResponse.response),
+              let http = navigationResponse.response as? HTTPURLResponse,
+              http.statusCode >= 400 else { return nil }
+        return http.statusCode
+    }
+
     /// Chromium's reading of the disposition type (net::HttpContentDisposition):
     /// "inline", an empty type, or a header that opens straight into a
     /// parameter (`filename=x`) render inline; any other type, including an

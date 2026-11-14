@@ -293,6 +293,12 @@ bool IsCertStatusError(cef_cert_status_t status) {
   _automation->SetEventHandler(handler);
 }
 
+- (void)setAllowsPopupsWithoutGesture:(BOOL)allow {
+  if (_handler) {
+    _handler->SetAllowsPopupsWithoutGesture(allow);
+  }
+}
+
 - (void)showDevTools {
   [self showDevToolsInView:nil panel:BRWDevToolsPanelDefault];
 }
