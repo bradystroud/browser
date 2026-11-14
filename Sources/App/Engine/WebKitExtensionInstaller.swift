@@ -62,6 +62,7 @@ enum WebKitExtensionInstaller {
             let zip = try Crx3.verifiedArchive(crx, expectedID: id)
             let staged = directory.appendingPathComponent(".staging-\(id)-\(UUID().uuidString)", isDirectory: true)
             try unpack(zip, into: staged)
+            prepareForWebKit(staged, id: id)
             return staged
         }.value
     }
@@ -85,6 +86,21 @@ enum WebKitExtensionInstaller {
         }
         try? files.removeItem(at: folder)
         try files.moveItem(at: scratch, to: folder)
+    }
+
+    /// Adds the Chrome compatibility layer to a folder this app unpacked
+    /// (`ChromeExtensionCompatibility`). A failure is logged, not thrown: the
+    /// extension is still loaded as the store shipped it, as it would have
+    /// been before the layer existed.
+    static func prepareForWebKit(_ folder: URL, id: String) {
+        do {
+            let written = try ChromeExtensionCompatibility.prepare(folder: folder)
+            if !written.isEmpty {
+                NSLog("Browser: added the Chrome compatibility layer to extension %@ (%@)", id, written.joined(separator: ", "))
+            }
+        } catch {
+            NSLog("Browser: couldn't add the Chrome compatibility layer to extension %@: %@", id, error.localizedDescription)
+        }
     }
 
     /// Puts `staged` where `destination` is. The old folder is kept aside

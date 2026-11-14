@@ -171,6 +171,7 @@ set(BROWSER_SWIFT_SRCS
   Passwords/SensitivePasteboard.swift
   Passwords/PasswordManagerCoordinator.swift
   Passwords/PasswordsPaneController.swift
+  Passwords/ICloudPasswordsSection.swift
   Autofill/PaymentAddressDetectionScript.swift
   Autofill/AutofillFillScript.swift
   Autofill/AddressStoreManager.swift
@@ -388,8 +389,10 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CredentialScope.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExternalSchemePolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionPackage.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionCompatibility.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionUpdate.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ICloudPasswordsExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ZipArchive.swift
   )
 source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})

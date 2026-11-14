@@ -209,6 +209,74 @@ final class ExtensionManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: profileFolder.path))
     }
 
+    // MARK: - The Chrome compatibility layer
+
+    /// An MV3 worker that, like iCloud Passwords, reads `chrome.privacy`
+    /// and `webNavigation.onHistoryStateUpdated` at its top level, then
+    /// sets its badge -- which it only reaches if neither read threw.
+    private func writeChromeOnlyExtension(at folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "manifest_version": 3, "name": "Chrome Only", "version": "1.0",
+            "permissions": ["privacy", "webNavigation", "storage"],
+            "background": ["service_worker": "background.js"],
+            "action": ["default_title": "Chrome Only"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
+        try Data("""
+        chrome.privacy.services.passwordSavingEnabled.onChange.addListener(function () {});
+        chrome.webNavigation.onHistoryStateUpdated.addListener(function () {});
+        chrome.webNavigation.onTabReplaced.addListener(function () {});
+        chrome.privacy.services.passwordSavingEnabled.get({}).then(function (d) {
+          chrome.action.setBadgeText({ text: d.levelOfControl === "not_controllable" ? "ran" : "odd" });
+        });
+        """.utf8).write(to: folder.appendingPathComponent("background.js"))
+    }
+
+    private func badge(of id: String, within seconds: Double) async -> String? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let text = manager.action(extensionId: id, profileId: profileId, tab: nil)?.badgeText, !text.isEmpty { return text }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return manager.action(extensionId: id, profileId: profileId, tab: nil)?.badgeText
+    }
+
+    /// A store install from before the layer existed is prepared when it
+    /// loads, and its worker then runs to the end in real WebKit.
+    func testStoreExtensionNeedingChromeAPIsRunsOnceLoaded() async throws {
+        let id = String(repeating: "c", count: 32)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("Extensions", isDirectory: true)
+        let folder = extensions.appendingPathComponent(id, isDirectory: true)
+        try writeChromeOnlyExtension(at: folder)
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Chrome Only", version: "1.0",
+                                           grants: ["perm:privacy", "perm:storage", "perm:webNavigation"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+
+        manager.loadExtensions(profileId: profileId)
+
+        let text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "ran", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent(ChromeExtensionCompatibility.shimFile).path))
+    }
+
+    /// The control for the test above: the same extension loaded from a
+    /// developer's folder is left as it is, and its worker stops at the
+    /// first API WebKit lacks.
+    func testUnpackedExtensionIsNeverWrittenTo() async throws {
+        let folder = root.appendingPathComponent("dev-chrome-only-\(UUID().uuidString)", isDirectory: true)
+        try writeChromeOnlyExtension(at: folder)
+        let before = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        host.answers = [true]
+        try await manager.loadUnpacked(folder: folder, profileId: profileId)
+        let id = try XCTUnwrap(manager.extensions(profileId: profileId).first?.id)
+        try await manager.reload(extensionId: id, profileId: profileId)
+
+        let text = await badge(of: id, within: 3)
+        XCTAssertTrue(text?.isEmpty ?? true, "the worker stopped at chrome.privacy, so it never set a badge")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), before)
+    }
+
     func testUnknownPermissionsAreNamedNotHidden() {
         XCTAssertEqual(WebKitExtensionManager.describe(["perm:debugger"]), ["Use the “debugger” permission"])
     }

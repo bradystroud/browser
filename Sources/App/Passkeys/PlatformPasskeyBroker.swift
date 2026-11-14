@@ -409,7 +409,7 @@ final class PlatformPasskeyBroker: NSObject {
     /// Only a build signed with Apple's grant and its provisioning profile
     /// carries the key (see the Passkeys note in AGENTS.md). Without it the
     /// system refuses every request that names an origin.
-    private static let hasBrowserPasskeyEntitlement: Bool = {
+    static let hasBrowserPasskeyEntitlement: Bool = {
         guard let task = SecTaskCreateFromSelf(nil),
               let value = SecTaskCopyValueForEntitlement(task, "com.apple.developer.web-browser.public-key-credential" as CFString, nil)
         else { return false }

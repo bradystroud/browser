@@ -19,6 +19,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     private lazy var listButtons = SettingsTablePane.removeOnlyButtons(target: self, action: #selector(listButtonClicked))
     private lazy var revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedPassword))
     private let form = SettingsForm()
+    private let iCloudSection = ICloudPasswordsSection()
 
     private var selectedProfile: Profile?
     private var credentials: [SavedCredential] = []
@@ -59,6 +60,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     /// PrivacyPaneController.reload().
     func reload() {
         selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
+        iCloudSection.setProfile(selectedProfile)
         loadCredentialsForSelectedProfile()
     }
 
@@ -74,6 +76,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
         form.addRow("Profile:", profilePopup)
+        iCloudSection.install(in: form, hostView: view)
 
         let siteColumn = NSTableColumn(identifier: .init("site"))
         siteColumn.title = "Site"
@@ -139,6 +142,7 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     @objc private func profileSelectionChanged() {
         selectedProfile = profilePopup.selectedItem?.representedObject as? Profile
+        iCloudSection.setProfile(selectedProfile)
         loadCredentialsForSelectedProfile()
     }
 

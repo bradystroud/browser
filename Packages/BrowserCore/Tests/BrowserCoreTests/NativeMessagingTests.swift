@@ -145,6 +145,42 @@ final class NativeMessagingTests: XCTestCase {
         XCTAssertEqual(result.messages.first as? String, origin)
     }
 
+    /// Ends the host by itself and returns the summary the app logs.
+    private func summary(ofHostRunning body: String, send messages: [Any] = []) throws -> String {
+        let path = try makeHost("summary", body: body)
+        let manifest = NativeMessagingManifest(name: "com.example.summary", path: path.path, type: "stdio", allowedOrigins: [origin])
+        let host = NativeMessagingHostProcess(manifest: manifest, origin: origin, queue: .main)
+        var line = ""
+        let done = expectation(description: "exited")
+        host.onExit = { reason in
+            line = reason.map { host.exitSummary(for: $0) } ?? "stopped"
+            done.fulfill()
+        }
+        try host.start()
+        for message in messages { try host.send(message) }
+        wait(for: [done], timeout: 10)
+        return line.replacingOccurrences(of: "pid \(host.processIdentifier)", with: "pid N")
+    }
+
+    func testExitSummaryGivesTheStatusOfAHostThatNeverReplied() throws {
+        XCTAssertEqual(try summary(ofHostRunning: "exit 3;"), "com.example.summary (pid N) exited with status 3, before it ever replied")
+    }
+
+    /// What a host refused by its launch constraint looks like.
+    func testExitSummaryGivesTheSignalThatKilledTheHost() throws {
+        XCTAssertEqual(try summary(ofHostRunning: "kill 'KILL', $$;"), "com.example.summary (pid N) killed by signal 9, before it ever replied")
+    }
+
+    func testExitSummaryCountsReplies() throws {
+        let line = try summary(ofHostRunning: #"readmsg(); writemsg('1'); writemsg('2'); exit 0;"#, send: ["go"])
+        XCTAssertEqual(line, "com.example.summary (pid N) exited with status 0, after 2 messages")
+    }
+
+    func testExitSummaryOfAHostThatSentGarbage() throws {
+        let line = try summary(ofHostRunning: #"print pack("L", 3) . "{{{"; sleep 5;"#)
+        XCTAssertEqual(line, "com.example.summary (pid N) closed by the browser: Error when communicating with the native messaging host., before it ever replied")
+    }
+
     func testReplyIsKeptWhenTheHostExitsAtOnce() throws {
         let path = try makeHost("once", body: #"readmsg(); writemsg('{"ok":true}'); exit 0;"#)
         let manifest = NativeMessagingManifest(name: "com.example.once", path: path.path, type: "stdio", allowedOrigins: [origin])

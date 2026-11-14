@@ -77,12 +77,34 @@ final class WebKitExtensionProfile {
         }
     }
 
+    /// The folder to load, with the Chrome compatibility layer in place when
+    /// it is a copy this app unpacked; staging adds it, and this brings an
+    /// extension installed before the layer (or before a newer shim) up to
+    /// date. A developer's unpacked folder is never written to: it loads as
+    /// it is, and the log says when it asks for an API the layer would have
+    /// supplied.
+    func preparedFolder(for record: InstalledWebExtension) -> URL {
+        let folder = resourceFolder(for: record)
+        switch record.source {
+        case .webStore:
+            WebKitExtensionInstaller.prepareForWebKit(folder, id: record.id)
+        case .unpacked:
+            if ChromeExtensionCompatibility.isNeeded(folder: folder) {
+                NSLog("Browser: unpacked extension %@ asks for %@, which WebKit only partly supports; the Chrome compatibility layer is only added to Web Store installs",
+                      record.id, ChromeExtensionCompatibility.suppliedPermissions.sorted().joined(separator: " or "))
+            }
+        }
+        return folder
+    }
+
     /// A message already on the list is not added again: WebKit reports
     /// every error the context has each time the list changes.
-    func noteError(_ text: String, for id: String) {
-        guard errors[id]?.contains(text) != true else { return }
+    @discardableResult
+    func noteError(_ text: String, for id: String) -> Bool {
+        guard errors[id]?.contains(text) != true else { return false }
         errors[id, default: []].append(text)
         errors[id] = Array(errors[id]!.suffix(20))
+        return true
     }
 
     func tabAdapter(for tab: ExtensionHostTab) -> WebKitExtensionTabAdapter {
@@ -229,7 +251,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
     private func load(_ id: String, in profile: WebKitExtensionProfile) async -> Bool {
         guard let record = profile.record(id), profile.contexts[id] == nil else { return false }
         do {
-            let found = try await WKWebExtension(resourceBaseURL: profile.resourceFolder(for: record))
+            let found = try await WKWebExtension(resourceBaseURL: profile.preparedFolder(for: record))
             try start(found, record: record, in: profile)
             return true
         } catch {
@@ -279,6 +301,9 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             NotificationCenter.default.removeObserver(observer)
         }
         guard let context = profile.contexts.removeValue(forKey: id) else { return }
+        // WebKit does not disconnect a context's native ports when it unloads
+        // it, so the hosts would outlive the extension.
+        MainActor.assumeIsolated { WebKitNativeMessaging.stopHosts(for: context) }
         do {
             try profile.controller.unload(context)
         } catch {
@@ -302,8 +327,10 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             forName: WKWebExtensionContext.errorsDidUpdateNotification, object: context, queue: .main
         ) { [weak self, weak profile, weak context] _ in
             guard let self, let profile, let context, profile.contexts[id] === context else { return }
-            for error in context.errors {
-                profile.noteError(error.localizedDescription, for: id)
+            for error in context.errors where profile.noteError(error.localizedDescription, for: id) {
+                let nsError = error as NSError
+                NSLog("Browser: extension %@ reported an error (%@ %ld): %@",
+                      id, nsError.domain, nsError.code, nsError.localizedDescription)
             }
             self.host?.extensionsDidChange(profileId: profile.profileId)
             let workerFailed = context.errors.contains {
@@ -427,10 +454,10 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         guard let record = profile.record(id) else { throw WebKitExtensionError.notInstalled }
         guard profile.busy.insert(id).inserted else { throw WebKitExtensionError.busy }
         defer { profile.busy.remove(id) }
-        let folder = profile.resourceFolder(for: record)
-        guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path) else {
+        guard FileManager.default.fileExists(atPath: profile.resourceFolder(for: record).appendingPathComponent("manifest.json").path) else {
             throw WebKitExtensionError.noManifest
         }
+        let folder = profile.preparedFolder(for: record)
         let found = try await WKWebExtension(resourceBaseURL: folder)
         let name = found.displayName ?? record.name
         let requested = Self.grants(for: found)
@@ -728,8 +755,18 @@ extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
         try await WebKitNativeMessaging.sendMessage(message, toHost: applicationIdentifier, from: extensionContext)
     }
 
-    func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for extensionContext: WKWebExtensionContext) async throws {
-        try WebKitNativeMessaging.connect(port, from: extensionContext)
+    /// The completion-handler form, not `async`: an async method only starts
+    /// once WebKit's call has returned, and a message the extension posts
+    /// straight after `connectNative` (iCloud Passwords' first one) reaches
+    /// a port with no handler yet and is dropped. Here the handler is in
+    /// place before WebKit's call returns.
+    func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for extensionContext: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        do {
+            try WebKitNativeMessaging.connect(port, from: extensionContext)
+            completionHandler(nil)
+        } catch {
+            completionHandler(error)
+        }
     }
 
     func webExtensionController(_ controller: WKWebExtensionController, openWindowsFor extensionContext: WKWebExtensionContext) -> [any WKWebExtensionWindow] {

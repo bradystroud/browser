@@ -143,6 +143,8 @@ public final class NativeMessagingHostProcess {
     public var onMessage: ((Any) -> Void)?
     public var onExit: ((NativeMessagingError?) -> Void)?
 
+    public let name: String
+
     private let process = Process()
     private let input = Pipe()
     private let output = Pipe()
@@ -150,8 +152,10 @@ public final class NativeMessagingHostProcess {
     private let lock = NSLock()
     private var reader = NativeMessagingFrame.Reader()
     private var finished = false
+    private var received = 0
 
     public init(manifest: NativeMessagingManifest, origin: String, queue: DispatchQueue = .main) {
+        self.name = manifest.name
         self.queue = queue
         let executable = URL(fileURLWithPath: manifest.path)
         process.executableURL = executable
@@ -194,12 +198,42 @@ public final class NativeMessagingHostProcess {
         finish(nil)
     }
 
+    /// The process id while the host runs, or after; 0 before `start()`.
+    public var processIdentifier: Int32 { process.processIdentifier }
+
+    /// Whole messages read from the host so far.
+    public var messagesReceived: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return received
+    }
+
+    /// How a host that ended by itself ended, for the log: its exit status
+    /// or the signal that killed it, and whether it ever replied. A host the
+    /// system refuses to run -- a launch constraint that does not accept
+    /// this app as its parent -- starts, is killed by SIGKILL before it
+    /// reads anything, and never replies, which nothing else reports.
+    public func exitSummary(for reason: NativeMessagingError) -> String {
+        let ended: String
+        if reason != .hostExited || process.processIdentifier == 0 || process.isRunning {
+            ended = "closed by the browser: \(reason.description)"
+        } else if process.terminationReason == .uncaughtSignal {
+            ended = "killed by signal \(process.terminationStatus)"
+        } else {
+            ended = "exited with status \(process.terminationStatus)"
+        }
+        let count = messagesReceived
+        let replies = count == 0 ? "before it ever replied" : "after \(count) \(count == 1 ? "message" : "messages")"
+        return "\(name) (pid \(process.processIdentifier)) \(ended), \(replies)"
+    }
+
     private func read(_ data: Data) {
         guard !data.isEmpty else { return }
         let messages: [Any]
         lock.lock()
         do {
             messages = try reader.append(data)
+            received += messages.count
             lock.unlock()
         } catch {
             lock.unlock()
