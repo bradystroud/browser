@@ -12,6 +12,7 @@ private struct EmailFieldPayload: Decodable {
     let viewportWidth: Double?
     let viewportHeight: Double?
     let hasPasswordField: Bool?
+    let usernameLike: Bool?
 }
 
 /// The field a tab's page has focused, as of its last report.
@@ -22,16 +23,19 @@ private final class FocusedEmailField {
     var rect: CGRect
     var viewportWidth: Double
     let hasPasswordField: Bool
+    /// The field looks like a sign-in's user name in its own right.
+    let usernameLike: Bool
     /// Me-card emails, fetched once per focus off the main thread. Never
     /// stored beyond this focus.
     var meCardEmails: [String] = []
 
-    init(origin: WebOrigin, value: String, rect: CGRect, viewportWidth: Double, hasPasswordField: Bool) {
+    init(origin: WebOrigin, value: String, rect: CGRect, viewportWidth: Double, hasPasswordField: Bool, usernameLike: Bool) {
         self.origin = origin
         self.value = value
         self.rect = rect
         self.viewportWidth = viewportWidth
         self.hasPasswordField = hasPasswordField
+        self.usernameLike = usernameLike
     }
 }
 
@@ -63,6 +67,8 @@ private final class PendingEmail {
 /// Coordination with the password manager: when the field's form has a
 /// password field and the password manager holds a credential for this
 /// origin, the popup stays closed -- the password manager fills that form.
+/// It also stays closed on a sign-in field while a password-manager
+/// extension is in charge (standsAsideForExtension).
 final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
     static let shared = EmailAutofillCoordinator()
 
@@ -143,7 +149,8 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
         case "emailFieldFocused":
             let field = FocusedEmailField(
                 origin: origin, value: value, rect: Self.rect(payload),
-                viewportWidth: payload.viewportWidth ?? 0, hasPasswordField: payload.hasPasswordField ?? false
+                viewportWidth: payload.viewportWidth ?? 0, hasPasswordField: payload.hasPasswordField ?? false,
+                usernameLike: payload.usernameLike ?? false
             )
             focused.setObject(field, forKey: tab)
             dismissedTab = nil
@@ -281,6 +288,10 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
             hidePopup()
             return
         }
+        if standsAsideForExtension(field, in: tab) {
+            hidePopup()
+            return
+        }
 
         let rows = suggestionRows(for: tab, field: field)
         // Nothing to add once the field already holds the only match.
@@ -294,6 +305,20 @@ final class EmailAutofillCoordinator: NSObject, TabLifecycleObserver {
         }
         popupTab = tab
         popup.show(rows: rows, below: fieldRect, in: window, focusContainer: tab.hostView)
+    }
+
+    /// A password-manager extension -- one holding the profile's
+    /// passwordSavingEnabled, as iCloud Passwords does -- shows its own list
+    /// of accounts under a sign-in's user-name field. This panel is a window
+    /// above the page and takes the arrow keys and Return while it shows, so
+    /// on such a field it would hide that list and steal its keys. Anywhere
+    /// else (a newsletter, a checkout) the extension offers nothing, and the
+    /// panel works as usual. Asked of the tab itself: a tab no extension
+    /// reaches (a private one, an agent's, one whose engine runs none) has
+    /// nothing to stand aside for.
+    private func standsAsideForExtension(_ field: FocusedEmailField, in tab: Tab) -> Bool {
+        guard field.hasPasswordField || field.usernameLike, tab.capabilities.webExtensions, tab.runsExtensions else { return false }
+        return ExtensionControlledSettingsCenter.shared.holder(of: .passwordSavingEnabled, profileId: tab.profileId) != nil
     }
 
     private func suggestionRows(for tab: Tab, field: FocusedEmailField) -> [EmailSuggestionRow] {

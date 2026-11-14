@@ -48,7 +48,7 @@ final class ExtensionsToolbarController: NSObject {
 
     func refresh() {
         guard let window, let contentView = window.contentView, let controller,
-              let manager = ExtensionsCoordinator.shared.manager, !controller.isPrivate
+              let manager = ExtensionsCoordinator.shared.manager, controller.runsExtensions
         else {
             puzzleButton?.isHidden = true
             pinnedButtons.values.forEach { $0.removeFromSuperview() }
@@ -134,12 +134,12 @@ final class ExtensionsToolbarController: NSObject {
     }
 
     private func press(_ id: String) {
-        guard let controller, let manager = ExtensionsCoordinator.shared.manager else { return }
+        guard let controller, controller.runsExtensions, let manager = ExtensionsCoordinator.shared.manager else { return }
         manager.performAction(extensionId: id, window: ExtensionsCoordinator.shared.windowHandle(for: controller))
     }
 
     @objc private func puzzleTapped(_ sender: NSButton) {
-        guard let controller, let manager = ExtensionsCoordinator.shared.manager else { return }
+        guard let controller, controller.runsExtensions, let manager = ExtensionsCoordinator.shared.manager else { return }
         let profileId = controller.profile.id
         let menu = NSMenu()
         let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }

@@ -28,6 +28,11 @@ extension WebKitTab: WKUIDelegate {
             }
             return nil
         }
+        if #available(macOS 15.4, *), let url = navigationAction.request.url,
+           WebKitExtensionManager.shared.openPageWindow(url, openerOrigin: Self.extensionOrigin(of: navigationAction),
+                                                        from: webView, features: windowFeatures) {
+            return nil
+        }
         guard PopupTargetPolicy.isAllowed(targetURL: target, openerOrigin: Self.sourceOrigin(of: navigationAction)) else {
             NSLog("Browser: refused a page-opened window for %@", Self.schemeForLog(target))
             return nil
@@ -167,6 +172,15 @@ extension WebKitTab: WKUIDelegate {
         guard let frame = navigationAction.value(forKey: "sourceFrame") as? WKFrameInfo else { return nil }
         let origin = frame.securityOrigin
         return WebOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+    }
+
+    /// `chrome-extension://<id>` when the frame asking for the window is an
+    /// extension's page, else nil.
+    static func extensionOrigin(of navigationAction: WKNavigationAction) -> String? {
+        guard let frame = navigationAction.value(forKey: "sourceFrame") as? WKFrameInfo else { return nil }
+        let origin = frame.securityOrigin
+        guard origin.protocol == "chrome-extension", !origin.host.isEmpty else { return nil }
+        return "\(origin.protocol)://\(origin.host)"
     }
 
     /// Only the scheme: a refused target may be a megabyte-long data: URL.

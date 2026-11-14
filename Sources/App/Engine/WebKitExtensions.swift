@@ -77,20 +77,24 @@ final class WebKitExtensionProfile {
         }
     }
 
-    /// The folder to load, with the Chrome compatibility layer in place when
-    /// it is a copy this app unpacked; staging adds it, and this brings an
-    /// extension installed before the layer (or before a newer shim) up to
-    /// date. A developer's unpacked folder is never written to: it loads as
-    /// it is, and the log says when it asks for an API the layer would have
-    /// supplied.
-    func preparedFolder(for record: InstalledWebExtension) -> URL {
+    /// The folder WebKit loads: for a store extension, WebKit's prepared
+    /// copy beside the untouched package, built or brought up to date off
+    /// the main thread (WebKitExtensionInstaller.webKitFolder). A
+    /// developer's unpacked folder is never written to or copied: it loads
+    /// as it is, and the log says when it asks for an API the layer would
+    /// have supplied.
+    func preparedFolder(for record: InstalledWebExtension) async -> URL {
         let folder = resourceFolder(for: record)
         switch record.source {
         case .webStore:
-            WebKitExtensionInstaller.prepareForWebKit(folder, id: record.id)
+            let id = record.id
+            let extensions = directory
+            return await Task.detached(priority: .userInitiated) {
+                WebKitExtensionInstaller.webKitFolder(forPackage: folder, id: id, in: extensions)
+            }.value
         case .unpacked:
             if ChromeExtensionCompatibility.isNeeded(folder: folder) {
-                NSLog("Browser: unpacked extension %@ asks for %@, which WebKit only partly supports; the Chrome compatibility layer is only added to Web Store installs",
+                NSLog("Browser: unpacked extension %@ would get the Chrome compatibility layer (%@, or action.openPopup from a framed page), which is only added to Web Store installs",
                       record.id, ChromeExtensionCompatibility.suppliedPermissions.sorted().joined(separator: " or "))
             }
         }
@@ -205,8 +209,13 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
     /// profile's controller, which is what injects content scripts. A tab
     /// built before the profile had a controller is never reached by
     /// extensions, so this is called for every tab.
-    func configuration(for base: WKWebViewConfiguration, profileId: String, initialURL: String) -> WKWebViewConfiguration {
-        guard let profile = profile(for: profileId) else { return base }
+    ///
+    /// A tab that may not run extensions (an agent's page, see
+    /// ExtensionIsolationPolicy) gets `base` back untouched: no controller,
+    /// so no content scripts and no extension API, and no extension's page
+    /// configuration, so its pages cannot load in it.
+    func configuration(for base: WKWebViewConfiguration, profileId: String, initialURL: String, runsExtensions: Bool) -> WKWebViewConfiguration {
+        guard runsExtensions, let profile = profile(for: profileId) else { return base }
         if let url = URL(string: initialURL), url.scheme == Self.pageScheme, let id = url.host,
            let context = profile.contexts[id], let page = context.webViewConfiguration {
             // The page bridge and friends each register a named handler on
@@ -227,6 +236,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         for observer in profile.errorObservers.values { NotificationCenter.default.removeObserver(observer) }
         profile.errorObservers = [:]
         profile.controller.delegate = nil
+        ExtensionSettingsHost.provider?.forget(profileId: profileId)
     }
 
     // MARK: - Loading
@@ -251,7 +261,9 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
     private func load(_ id: String, in profile: WebKitExtensionProfile) async -> Bool {
         guard let record = profile.record(id), profile.contexts[id] == nil else { return false }
         do {
-            let found = try await WKWebExtension(resourceBaseURL: profile.preparedFolder(for: record))
+            let folder = await profile.preparedFolder(for: record)
+            let found = try await WKWebExtension(resourceBaseURL: folder)
+            guard profile.contexts[id] == nil, profile.record(id) != nil else { return false }
             try start(found, record: record, in: profile)
             return true
         } catch {
@@ -411,7 +423,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         let record = InstalledWebExtension(id: id, source: .webStore, name: name, version: found.version ?? "0", grants: grants)
         profile.list.extensions.append(record)
         profile.save()
-        let installed = try await WKWebExtension(resourceBaseURL: profile.storeFolder(for: id))
+        let installed = try await WKWebExtension(resourceBaseURL: await profile.preparedFolder(for: record))
         try start(installed, record: record, in: profile)
         host?.extensionNotify("\(name) was added.", profileId: profileId)
     }
@@ -457,7 +469,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         guard FileManager.default.fileExists(atPath: profile.resourceFolder(for: record).appendingPathComponent("manifest.json").path) else {
             throw WebKitExtensionError.noManifest
         }
-        let folder = profile.preparedFolder(for: record)
+        let folder = await profile.preparedFolder(for: record)
         let found = try await WKWebExtension(resourceBaseURL: folder)
         let name = found.displayName ?? record.name
         let requested = Self.grants(for: found)
@@ -493,6 +505,8 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             guard let self, let profile else { return }
             defer { profile.busy.remove(id) }
             self.unload(id, in: profile)
+            // What it held goes back to the user, as when it is turned off.
+            ExtensionSettingsHost.provider?.release(extensionId: id, profileId: profileId)
             profile.list.extensions.removeAll { $0.id == id }
             profile.errors[id] = nil
             profile.save()
@@ -500,6 +514,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             // unpacked is deleted.
             if record.source == .webStore {
                 try? FileManager.default.removeItem(at: profile.storeFolder(for: id))
+                WebKitExtensionInstaller.removeWebKitCopy(id: id, in: profile.directory)
             }
             self.host?.extensionsDidChange(profileId: profileId)
         }
@@ -521,6 +536,9 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             Task { @MainActor in await self.load(id, in: profile) }
         } else {
             unload(id, in: profile)
+            // A turned-off extension holds no setting (Chrome's rule); it
+            // takes it again, if it wants it, when it next runs.
+            ExtensionSettingsHost.provider?.release(extensionId: id, profileId: profileId)
         }
         host?.extensionsDidChange(profileId: profileId)
     }
@@ -751,8 +769,19 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
 
 @available(macOS 15.4, *)
 extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
+    /// The calling extension's profile, and whether the user granted it
+    /// `privacy` -- which WebKit has no permission for, so the grant is read
+    /// from the app's own record of what was agreed to.
+    private func settingsCaller(_ controller: WKWebExtensionController, _ context: WKWebExtensionContext) -> (profileId: String?, privacyGranted: Bool) {
+        guard let profile = profile(for: controller) else { return (nil, false) }
+        let granted = profile.record(context.uniqueIdentifier)?.grants.contains("perm:privacy") ?? false
+        return (profile.profileId, granted)
+    }
+
     func webExtensionController(_ controller: WKWebExtensionController, sendMessage message: Any, toApplicationWithIdentifier applicationIdentifier: String?, for extensionContext: WKWebExtensionContext) async throws -> Any? {
-        try await WebKitNativeMessaging.sendMessage(message, toHost: applicationIdentifier, from: extensionContext)
+        let caller = settingsCaller(controller, extensionContext)
+        return try await WebKitNativeMessaging.sendMessage(message, toHost: applicationIdentifier, from: extensionContext,
+                                                           profileId: caller.profileId, privacyGranted: caller.privacyGranted)
     }
 
     /// The completion-handler form, not `async`: an async method only starts
@@ -762,7 +791,8 @@ extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
     /// place before WebKit's call returns.
     func webExtensionController(_ controller: WKWebExtensionController, connectUsing port: WKWebExtension.MessagePort, for extensionContext: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
         do {
-            try WebKitNativeMessaging.connect(port, from: extensionContext)
+            let caller = settingsCaller(controller, extensionContext)
+            try WebKitNativeMessaging.connect(port, from: extensionContext, profileId: caller.profileId, privacyGranted: caller.privacyGranted)
             completionHandler(nil)
         } catch {
             completionHandler(error)
@@ -863,6 +893,25 @@ extension WebKitExtensionManager: WKWebExtensionControllerDelegate {
     func webExtensionController(_ controller: WKWebExtensionController, didUpdate action: WKWebExtension.Action, forExtensionContext context: WKWebExtensionContext) {
         guard let profile = profile(for: controller) else { return }
         host?.extensionsDidChange(profileId: profile.profileId)
+    }
+
+    /// `window.open` of an extension's own page from a frame of that same
+    /// extension inside a web page (`WebKitTab`'s `createWebViewWith`).
+    /// Returns false when `url` is not such a page, and the caller's usual
+    /// rules apply.
+    @MainActor
+    func openPageWindow(_ url: URL, openerOrigin: String?, from webView: WKWebView, features: WKWindowFeatures) -> Bool {
+        guard url.scheme == Self.pageScheme, let id = url.host, openerOrigin == "\(Self.pageScheme)://\(id)" else { return false }
+        guard let controller = webView.configuration.webExtensionController,
+              let profile = profile(for: controller), let context = profile.contexts[id],
+              let configuration = context.webViewConfiguration else {
+            NSLog("Browser: refused a window for extension %@: it is not running for this tab's profile", id)
+            return true
+        }
+        configuration.applicationNameForUserAgent = webView.configuration.applicationNameForUserAgent
+        WebKitExtensionPageWindow.show(url, configuration: configuration, features: features,
+                                       title: context.webExtension.displayName ?? id, over: webView.window)
+        return true
     }
 
     /// WebKit's own popover, hung from the extension's pinned button in the

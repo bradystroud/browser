@@ -18,6 +18,9 @@ enum AutofillScript {
     /// safe as JS string literals, whatever characters (quotes, newlines,
     /// unicode) the stored credential happens to contain.
     ///
+    /// Never fills a field marked `autocomplete="new-password"`; a page whose
+    /// only password fields are new ones gets nothing.
+    ///
     /// Does nothing unless the document it lands in is at `expectedOrigin`:
     /// the script is evaluated asynchronously, and the tab may have moved to
     /// (or not yet left) a document on another origin by the time it runs.
@@ -29,7 +32,16 @@ enum AutofillScript {
         return """
         (function(usernameValue, passwordValue, expectedOrigin) {
           if (window.top !== window || location.origin !== expectedOrigin) { return; }
-          var passwordField = document.querySelector('input[type="password"]');
+          // A field the page marks as a new password (sign-up, change of
+          // password) is for a password that does not exist yet: filling the
+          // saved one there would sign the user up with it, or make the
+          // "new" password the old one.
+          var passwordField = null;
+          var passwordFields = document.querySelectorAll('input[type="password"]');
+          for (var p = 0; p < passwordFields.length; p++) {
+            var tokens = (passwordFields[p].getAttribute('autocomplete') || '').toLowerCase().split(/\\s+/);
+            if (tokens.indexOf('new-password') === -1) { passwordField = passwordFields[p]; break; }
+          }
           if (!passwordField) { return; }
           var scope = passwordField.form || document;
           var candidates = Array.prototype.slice.call(scope.querySelectorAll('input'));

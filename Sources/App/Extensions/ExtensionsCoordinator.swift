@@ -11,8 +11,11 @@ extension Notification.Name {
 
 /// The app's side of the extension system: tells the engine's
 /// EngineExtensionManager which windows and tabs exist as they come and go,
-/// and answers what it asks back -- see ExtensionHost. Private windows are
-/// never reported, so extensions never see or touch them.
+/// and answers what it asks back -- see ExtensionHost. Only windows that run
+/// extensions (BrowserWindowController.runsExtensions) are reported, so
+/// extensions never see or touch a private window or an agent's window: not
+/// in a window or tab list, not as a place to open a tab, not as a target
+/// for a message or a script.
 ///
 /// Engine-agnostic: it only ever talks to `Engines.extensions`, and does
 /// nothing at all where the engine has none.
@@ -34,6 +37,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
     func activate() {
         guard !isActivated, let manager else { return }
         isActivated = true
+        ExtensionSettingsHost.provider = ExtensionControlledSettingsCenter.shared
         manager.activate(host: self, storageDirectory: { profileId in
             guard !profileId.hasPrefix(Profile.privateIdPrefix) else { return nil }
             return URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId), isDirectory: true)
@@ -44,7 +48,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
             forName: NSWindow.didBecomeMainNotification, object: nil, queue: .main
         ) { [weak self] notification in
             guard let self, let controller = (notification.object as? NSWindow)?.windowController as? BrowserWindowController,
-                  !controller.isPrivate, let window = self.windowHandles[ObjectIdentifier(controller)] else { return }
+                  controller.runsExtensions, let window = self.windowHandles[ObjectIdentifier(controller)] else { return }
             self.manager?.windowDidBecomeFocused(window)
         })
     }
@@ -72,7 +76,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
     // MARK: - TabLifecycleObserver
 
     func tabLifecycleEvent(_ event: TabLifecycleEvent, tab: Tab, in controller: BrowserWindowController) {
-        guard let manager, !controller.isPrivate, !tab.isPrivate else { return }
+        guard let manager, controller.runsExtensions, !tab.isPrivate else { return }
         // A link peek's page is not one of the window's tabs, so extensions
         // hear of it only once "Open as Tab" adds it to the strip.
         if case .closed = event {} else if !controller.tabs.contains(where: { $0 === tab }) { return }
@@ -118,7 +122,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
         var seen = Set<ObjectIdentifier>()
         for window in NSApp.orderedWindows {
             guard let controller = window.windowController as? BrowserWindowController,
-                  controller.profile.id == profileId, !controller.isPrivate,
+                  controller.profile.id == profileId, controller.runsExtensions,
                   WindowManager.shared.windowControllers.contains(where: { $0 === controller }),
                   seen.insert(ObjectIdentifier(controller)).inserted
             else { continue }

@@ -62,7 +62,6 @@ enum WebKitExtensionInstaller {
             let zip = try Crx3.verifiedArchive(crx, expectedID: id)
             let staged = directory.appendingPathComponent(".staging-\(id)-\(UUID().uuidString)", isDirectory: true)
             try unpack(zip, into: staged)
-            prepareForWebKit(staged, id: id)
             return staged
         }.value
     }
@@ -88,19 +87,43 @@ enum WebKitExtensionInstaller {
         try files.moveItem(at: scratch, to: folder)
     }
 
-    /// Adds the Chrome compatibility layer to a folder this app unpacked
-    /// (`ChromeExtensionCompatibility`). A failure is logged, not thrown: the
-    /// extension is still loaded as the store shipped it, as it would have
-    /// been before the layer existed.
-    static func prepareForWebKit(_ folder: URL, id: String) {
+    /// Where WebKit's prepared copies of store extensions live, beside the
+    /// packages in the profile's extensions folder.
+    static func webKitCopies(in directory: URL) -> URL {
+        directory.appendingPathComponent("webkit", isDirectory: true)
+    }
+
+    /// The folder WebKit loads a store extension from. The package's own
+    /// folder, `<extensions>/<id>/`, stays exactly as it unpacked, because
+    /// another engine prepares its own copy from it; WebKit gets
+    /// `<extensions>/webkit/<id>/` with the Chrome compatibility layer
+    /// (`PreparedExtensionCopy`) when the layer applies, and the package
+    /// itself when it does not. A package folder the layer was once written
+    /// into is put back first. Failures are logged, not thrown: the
+    /// extension then loads from what there is, as it did before the layer.
+    ///
+    /// File work only; never on the main thread.
+    static func webKitFolder(forPackage folder: URL, id: String, in directory: URL) -> URL {
         do {
-            let written = try ChromeExtensionCompatibility.prepare(folder: folder)
-            if !written.isEmpty {
-                NSLog("Browser: added the Chrome compatibility layer to extension %@ (%@)", id, written.joined(separator: ", "))
+            if try PreparedExtensionCopy.restorePristine(folder) {
+                NSLog("Browser: took the Chrome compatibility layer out of extension %@'s package folder", id)
             }
         } catch {
-            NSLog("Browser: couldn't add the Chrome compatibility layer to extension %@: %@", id, error.localizedDescription)
+            NSLog("Browser: couldn't restore extension %@'s package folder: %@", id, error.localizedDescription)
         }
+        do {
+            if let copy = try PreparedExtensionCopy.ensure(pristine: folder, copies: webKitCopies(in: directory), id: id) {
+                return copy
+            }
+        } catch {
+            NSLog("Browser: couldn't prepare extension %@ for WebKit: %@", id, error.localizedDescription)
+        }
+        return folder
+    }
+
+    /// WebKit's copy of a store extension that is being removed.
+    static func removeWebKitCopy(id: String, in directory: URL) {
+        PreparedExtensionCopy.remove(id: id, in: webKitCopies(in: directory))
     }
 
     /// Puts `staged` where `destination` is. The old folder is kept aside
@@ -121,12 +144,15 @@ enum WebKitExtensionInstaller {
         if hadOld { try? files.removeItem(at: aside) }
     }
 
-    /// Staging and set-aside folders a crash or quit left behind.
+    /// Staging and set-aside folders a crash or quit left behind, among the
+    /// packages and among WebKit's copies.
     static func removeLeftovers(in directory: URL) {
         let files = FileManager.default
-        guard let names = try? files.contentsOfDirectory(atPath: directory.path) else { return }
-        for name in names where name.hasPrefix(".staging-") || name.hasPrefix(".previous-") || name.hasPrefix(".unpacking-") {
-            try? files.removeItem(at: directory.appendingPathComponent(name))
+        for folder in [directory, webKitCopies(in: directory)] {
+            guard let names = try? files.contentsOfDirectory(atPath: folder.path) else { continue }
+            for name in names where name.hasPrefix(".staging-") || name.hasPrefix(".previous-") || name.hasPrefix(".unpacking-") {
+                try? files.removeItem(at: folder.appendingPathComponent(name))
+            }
         }
     }
 }

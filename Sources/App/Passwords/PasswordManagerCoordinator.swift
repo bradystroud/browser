@@ -323,23 +323,28 @@ final class PasswordManagerCoordinator: NSObject, TabLifecycleObserver {
             return
         }
 
+        // Off when the user turned it off, or when an extension holds
+        // passwordSavingEnabled -- that extension asks its own question, and
+        // one sign-in gets one save prompt. A password this store already
+        // holds is still offered for update (PasswordSavePrompt).
+        let offersSaving = ExtensionControlledSettingsCenter.shared.effectiveValue(of: .passwordSavingEnabled, profileId: tab.profileId)
+
         // The "is this already saved?" check is a Keychain read, so it has
         // to happen off the main thread (browser-le4.1) -- hence deciding
         // and showing asynchronously rather than inline.
         keychainQueue.async { [weak self] in
-            let existing = PasswordStore.credential(profileName: profileName, for: origin)
+            let saved = PasswordStore.password(profileName: profileName, for: origin, username: username)
             DispatchQueue.main.async {
                 guard let self else { return }
-                if let existing, existing.username == username, existing.password == password {
-                    // Identical to what's already saved -- nothing to ask about.
-                    // (Also the normal outcome right after an automatic fill.)
-                    return
-                }
-                guard controller.activeTab === tab else { return }
+                // Nothing to ask when it is identical to what's already saved
+                // -- also the normal outcome right after an automatic fill.
+                let kind = PasswordSavePrompt.decide(offersSaving: offersSaving, password: password, savedPassword: saved)
+                guard kind != .none, controller.activeTab === tab else { return }
                 self.recentlyPromptedAt[key] = Date()
                 let anchor = self.anchorView(in: contentView, controller: controller)
                 self.savePrompt.show(
                     origin: origin.serialized,
+                    isUpdate: kind == .update,
                     anchorView: anchor,
                     onSave: {
                         self.keychainQueue.async {

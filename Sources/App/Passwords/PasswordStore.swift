@@ -220,6 +220,15 @@ enum PasswordStore {
         return (best.username, password)
     }
 
+    /// The saved password for `username` that may be used at `origin`, if
+    /// any -- what the save prompt compares a sign-in against, so a second
+    /// account on the same site is not mistaken for a changed password.
+    static func password(profileName: String, for origin: WebOrigin, username: String) -> String? {
+        let candidates = items(profileName: profileName, server: origin.host, username: username)
+        guard let best = CredentialScope.bestMatch(for: origin, in: candidates, scope: { $0.scope }) else { return nil }
+        return password(persistentRef: best.persistentRef)
+    }
+
     /// Every saved credential across every origin in this profile, for the
     /// Passwords settings pane's list -- never includes the password itself;
     /// see `password(profileName:credential:)` for the one Touch-ID-gated

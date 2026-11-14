@@ -287,7 +287,7 @@ final class ExtensionPortTests: XCTestCase {
         let id = String(repeating: "h", count: 32)
         _ = try await install(id: id, manifest: Self.connectManifest, files: Self.connectFiles, grants: [])
         let url = "chrome-extension://\(id)/page.html"
-        let configuration = manager.configuration(for: WKWebViewConfiguration(), profileId: profileId, initialURL: url)
+        let configuration = manager.configuration(for: WKWebViewConfiguration(), profileId: profileId, initialURL: url, runsExtensions: true)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         show(webView)
         webView.load(URLRequest(url: try XCTUnwrap(URL(string: url))))

@@ -88,6 +88,15 @@ final class ChromeExtensionCompatibilityTests: XCTestCase {
         XCTAssertTrue(ChromeExtensionCompatibility.isNeeded(manifest: ["permissions": ["privacy"]]))
     }
 
+    func testAnActionWithAPageItCanFrameCounts() {
+        let framed: [String: Any] = ["action": [:], "web_accessible_resources": [["resources": ["completion_list.html"], "matches": ["<all_urls>"]]]]
+        XCTAssertTrue(ChromeExtensionCompatibility.isNeeded(manifest: framed))
+        XCTAssertTrue(ChromeExtensionCompatibility.isNeeded(manifest: ["action": [:], "web_accessible_resources": [["resources": ["ui/*"]]]]))
+        XCTAssertFalse(ChromeExtensionCompatibility.isNeeded(manifest: ["action": [:], "web_accessible_resources": [["resources": ["images/a.png"]]]]))
+        XCTAssertFalse(ChromeExtensionCompatibility.isNeeded(manifest: ["action": [:]]))
+        XCTAssertFalse(ChromeExtensionCompatibility.isNeeded(manifest: ["web_accessible_resources": [["resources": ["page.html"]]]]), "no action, no openPopup")
+    }
+
     func testAnUnreadableManifestIsAnError() throws {
         try write("{ not json", to: "manifest.json")
         XCTAssertThrowsError(try ChromeExtensionCompatibility.prepare(folder: folder)) { error in
@@ -314,6 +323,104 @@ final class ChromeExtensionCompatibilityTests: XCTestCase {
         XCTAssertEqual(string(js, "chrome.webNavigation.onHistoryStateUpdated === own"), "true")
         XCTAssertEqual(string(js, "chrome.privacy.services.passwordSavingEnabled"), "engine")
         XCTAssertEqual(string(js, "typeof chrome.privacy.services.autofillAddressEnabled.get"), "function", "only the missing members are added")
+    }
+
+    /// The extension's page framed in a web page: openPopup goes to the
+    /// background as a message instead of to WebKit.
+    func testFramedPageRelaysOpenPopupThroughTheBackground() throws {
+        let js = try context(permissions: [], extraSetup: """
+        var window = {}; window.top = {};
+        Object.defineProperty(window.top, 'location', { get: function () { throw new Error('cross-origin'); } });
+        var location = { origin: 'chrome-extension://abc', pathname: '/list.html' };
+        var replies = [];
+        chrome.runtime.onMessage = { addListener: function () { log.push('listened'); } };
+        chrome.runtime.sendMessage = function (m, callback) { log.push('sent ' + JSON.stringify(m)); callback(replies.shift()); };
+        chrome.action = { openPopup: function () { log.push('engine openPopup'); return Promise.resolve(); } };
+        """)
+        js.evaluateScript("""
+        replies = [{}, { error: 'No windows open.' }, undefined];
+        chrome.action.openPopup().then(function () { log.push('resolved'); })
+          .then(function () { return chrome.action.openPopup({ windowId: 4 }); })
+          .catch(function (e) { log.push('rejected: ' + e.message); })
+          .then(function () { chrome.action.openPopup(function () { log.push('callback'); }); });
+        """)
+        XCTAssertEqual(string(js, "log.join('|')"), """
+        sent {"__browserCompatOpenPopup":true}|resolved|sent {"__browserCompatOpenPopup":true,"windowId":4}|rejected: No windows open.|sent {"__browserCompatOpenPopup":true}|callback
+        """)
+    }
+
+    /// The background answers the relay by calling the real openPopup for
+    /// the sender's window, and ignores every other message.
+    func testBackgroundOpensThePopupForARelayedRequest() throws {
+        let js = try context(permissions: [], extraSetup: """
+        var listener;
+        chrome.runtime.onMessage = { addListener: function (f) { listener = f; } };
+        var fail = false;
+        chrome.action = { openPopup: function (o) { log.push('openPopup ' + JSON.stringify(o)); return fail ? Promise.reject(new Error('busy')) : Promise.resolve(); } };
+        """)
+        js.evaluateScript("""
+        log.push('other: ' + listener({ subject: 'x' }, {}, function () { log.push('wrong reply'); }));
+        log.push('kept: ' + listener({ __browserCompatOpenPopup: true }, { tab: { windowId: 9 } }, function (r) { log.push('reply ' + JSON.stringify(r)); }));
+        """)
+        XCTAssertEqual(string(js, "log.join('|')"), "other: undefined|kept: true|openPopup {\"windowId\":9}|reply {}")
+        js.evaluateScript("""
+        fail = true; log = [];
+        listener({ __browserCompatOpenPopup: true, windowId: 2 }, {}, function (r) { log.push('reply ' + JSON.stringify(r)); });
+        """)
+        XCTAssertEqual(string(js, "log.join('|')"), "openPopup {\"windowId\":2}|reply {\"error\":\"busy\"}")
+    }
+
+    private let framedSetup = """
+    var window = {}; window.top = {};
+    Object.defineProperty(window.top, 'location', { get: function () { throw new Error('cross-origin'); } });
+    var location = { origin: 'chrome-extension://abc', pathname: '/list.html' };
+    function engine(name) { return function () { log.push('engine ' + name); return Promise.resolve('engine'); }; }
+    chrome.tabs.query = engine('tabs.query');
+    chrome.tabs.connect = engine('tabs.connect');
+    chrome.alarms = { create: engine('alarms.create'), onAlarm: { addListener: engine('alarms.onAlarm') } };
+    chrome.contextMenus = { create: engine('contextMenus.create') };
+    chrome.storage = { local: { get: engine('storage.get') } };
+    chrome.runtime.connect = engine('runtime.connect');
+    """
+
+    /// In a frame inside a web page, calls WebKit would answer by killing the
+    /// page fail here instead, in Chrome's promise or callback form; events
+    /// and unprivileged APIs reach the engine.
+    func testFramedPageRefusesPrivilegedAPIsAndKeepsTheRest() throws {
+        let js = try context(permissions: [], extraSetup: framedSetup)
+        js.evaluateScript("""
+        chrome.tabs.query({}).catch(function (e) { log.push('rejected: ' + e.message); });
+        chrome.alarms.create('a', {}, function (r) { log.push('callback: ' + r); });
+        try { chrome.tabs.connect(1); } catch (e) { log.push('threw: ' + e.message); }
+        try { chrome.contextMenus.create({}); } catch (e) { log.push('threw: ' + e.message); }
+        chrome.alarms.onAlarm.addListener(function () {});
+        chrome.storage.local.get('x');
+        chrome.runtime.connect();
+        """)
+        XCTAssertEqual(string(js, "log.join('|')"), """
+        threw: chrome.tabs.connect() is not available in an extension page shown inside a web page.|\
+        threw: chrome.contextMenus.create() is not available in an extension page shown inside a web page.|\
+        engine alarms.onAlarm|engine storage.get|engine runtime.connect|\
+        rejected: chrome.tabs.query() is not available in an extension page shown inside a web page.|callback: undefined
+        """)
+    }
+
+    /// The background, a popup or an extension tab keep every API as WebKit
+    /// made it.
+    func testPrivilegedContextsKeepPrivilegedAPIs() throws {
+        let worker = try context(permissions: [], extraSetup: """
+        chrome.tabs.query = function () { log.push('engine tabs.query'); };
+        """)
+        worker.evaluateScript("chrome.tabs.query({});")
+        XCTAssertEqual(string(worker, "log.join('|')"), "engine tabs.query")
+
+        let popup = try context(permissions: [], extraSetup: """
+        var window = {}; window.top = window;
+        var location = { origin: 'chrome-extension://abc', pathname: '/popup.html' };
+        chrome.tabs.query = function () { log.push('engine tabs.query'); };
+        """)
+        popup.evaluateScript("chrome.tabs.query({});")
+        XCTAssertEqual(string(popup, "log.join('|')"), "engine tabs.query")
     }
 
     func testShimDoesNothingWithoutAnExtensionAPI() throws {

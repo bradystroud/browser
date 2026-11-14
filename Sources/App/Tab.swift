@@ -72,11 +72,16 @@ protocol TabDelegate: AnyObject {
     /// gets a real about:blank instead: the start page is a large data: URL,
     /// which is what the page's own `location.href` would then report.
     func tabShowsStartPage(_ tab: Tab) -> Bool
+    /// Whether the profile's extensions may reach `tab`. An agent's window
+    /// says no (see ExtensionIsolationPolicy): its tabs are built without
+    /// the extension system and refuse extension pages.
+    func tabRunsExtensions(_ tab: Tab) -> Bool
 }
 
 extension TabDelegate {
     func tabHoldsEngine(_ tab: Tab) -> Bool { false }
     func tabShowsStartPage(_ tab: Tab) -> Bool { true }
+    func tabRunsExtensions(_ tab: Tab) -> Bool { true }
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -171,6 +176,16 @@ final class Tab: NSObject, EngineTabDelegate {
     /// See TabDelegate.tabHoldsEngine. A tab that holds its engine loads
     /// every address there, rule or not.
     var holdsEngine: Bool { delegate?.tabHoldsEngine(self) ?? false }
+
+    /// See TabDelegate.tabRunsExtensions. A tab with no delegate yet, or a
+    /// private one, never does.
+    var runsExtensions: Bool { !isPrivate && (delegate?.tabRunsExtensions(self) ?? false) }
+
+    /// What the current engine tab was built with. An engine tab cannot
+    /// gain or lose the extension system once it exists, so a tab that
+    /// moves to a window answering differently gets a new one
+    /// (`matchExtensionAccess()`).
+    private(set) var engineTabRunsExtensions = false
 
     /// "Reopen in ..." -- the user's own engine choice for this tab, which
     /// rules do not override while it lasts. See EngineSwitchPolicy.
@@ -521,6 +536,8 @@ final class Tab: NSObject, EngineTabDelegate {
         self.title = ""
         self.engine = opener.engine
         self.isPopup = true
+        // The engine built the popup from its opener's configuration.
+        self.engineTabRunsExtensions = opener.engineTabRunsExtensions
         super.init()
         hostView.wantsLayer = true
         popup.attach(to: devTools.pageView)
@@ -552,9 +569,17 @@ final class Tab: NSObject, EngineTabDelegate {
         // BRWGetOrCreateProfileContext), even for a made-up profile name.
         // createPrivateTab is the only path that gets CEF's actual empty-
         // cache_path incognito context (browser-12m.1).
+        let runsExtensions = self.runsExtensions
+        if !runsExtensions, ExtensionIsolationPolicy.isExtensionURL(engineURLString) {
+            NSLog("Browser: tab %@ may not run extensions; not opening an extension page", id.uuidString)
+            engineURLString = Self.blankPageSentinel
+            isShowingStartPage = false
+        }
         let browser = isPrivate
             ? Engines.createPrivateTab(engine: engine, hostView: devTools.pageView, initialURL: engineURLString)
-            : Engines.createTab(engine: engine, profileName: profileName, profileId: profileId, hostView: devTools.pageView, initialURL: engineURLString)
+            : Engines.createTab(engine: engine, profileName: profileName, profileId: profileId, hostView: devTools.pageView,
+                                initialURL: engineURLString, runsExtensions: runsExtensions)
+        engineTabRunsExtensions = runsExtensions
         browser.delegate = self
         devTools.attach(to: browser, capabilities: capabilities)
         if !siteStyleSheets.isEmpty {
@@ -597,6 +622,21 @@ final class Tab: NSObject, EngineTabDelegate {
             NSLog("Browser: tab %@ holds its engine; not moving it to %@", id.uuidString, newEngine.rawValue)
             return
         }
+        replaceEngineTab(with: newEngine, url: url, override: override)
+    }
+
+    /// Gives this tab a fresh engine tab when the window it now belongs to
+    /// differs from the one its engine tab was built for on whether
+    /// extensions run (see TabDelegate.tabRunsExtensions), so a tab never
+    /// silently keeps or lacks them. Same engine and address; what lived
+    /// only in the old engine tab is lost, as with `switchEngine`.
+    func matchExtensionAccess() {
+        guard browser != nil, engineTabRunsExtensions != runsExtensions else { return }
+        NSLog("Browser: tab %@ rebuilt: its window %@ extensions", id.uuidString, runsExtensions ? "runs" : "does not run")
+        replaceEngineTab(with: engine, url: isShowingStartPage ? Self.blankPageSentinel : engineURLString, override: engineOverride)
+    }
+
+    private func replaceEngineTab(with newEngine: EngineChoice, url: String, override: EngineOverride?) {
         let resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         NSLog("Browser: tab %@ moving from %@ to %@", id.uuidString, engine.rawValue, newEngine.rawValue)
         if let browser {
@@ -644,6 +684,10 @@ final class Tab: NSObject, EngineTabDelegate {
     /// is refused here, before anything is sent, and loaded there on the
     /// next run-loop turn -- never inside the engine's own callback.
     func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool {
+        if !engineTabRunsExtensions || !runsExtensions, ExtensionIsolationPolicy.isExtensionURL(url) {
+            NSLog("Browser: tab %@ may not run extensions; refused a navigation to an extension page", id.uuidString)
+            return false
+        }
         guard let target = engineSwapTarget(forNavigationTo: url) else {
             if Self.isWebURL(url) { hasSentWebRequest = true }
             return true
@@ -782,6 +826,10 @@ final class Tab: NSObject, EngineTabDelegate {
     }
 
     func load(url: String) {
+        if !runsExtensions, ExtensionIsolationPolicy.isExtensionURL(url) {
+            NSLog("Browser: tab %@ may not run extensions; not loading an extension page", id.uuidString)
+            return
+        }
         var resolved = Self.resolveInitialLoad(url, profileId: profileId, isPrivate: isPrivate)
         if resolved.isStartPage, delegate?.tabShowsStartPage(self) == false {
             resolved = (Self.blankPageSentinel, false)

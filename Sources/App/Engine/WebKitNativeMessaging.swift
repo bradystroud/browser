@@ -42,6 +42,25 @@ enum WebKitNativeMessaging {
 
     private static var connections: [ObjectIdentifier: Connection] = [:]
 
+    /// `onChange` ports to the settings host, answered inside the app. They
+    /// are not Connections: no process stands behind them, so the stale-host
+    /// cleanup has nothing to stop, and they never keep background content
+    /// loaded -- a page listening for a setting is no reason to keep a
+    /// worker running.
+    private final class SettingsPort {
+        weak var port: WKWebExtension.MessagePort?
+        weak var context: WKWebExtensionContext?
+        let subscription: NSObjectProtocol
+
+        init(port: WKWebExtension.MessagePort, context: WKWebExtensionContext, subscription: NSObjectProtocol) {
+            self.port = port
+            self.context = context
+            self.subscription = subscription
+        }
+    }
+
+    private static var settingsPorts: [ObjectIdentifier: SettingsPort] = [:]
+
     /// WebKit unloads non-persistent background content 30 seconds after it
     /// was last woken, unless the background page posted on one of its ports
     /// in the last two minutes (`WebExtensionContext::scheduleBackgroundContentToUnload`
@@ -75,7 +94,16 @@ enum WebKitNativeMessaging {
 
     /// One message and its reply: the host is started, sent the message,
     /// and stopped after its first reply, as Chrome does.
-    static func sendMessage(_ message: Any, toHost name: String?, from context: WKWebExtensionContext) async throws -> Any? {
+    /// `profileId` and `privacyGranted` describe the calling extension as the
+    /// app knows it: its profile, and whether the user granted it `privacy`
+    /// (a permission WebKit itself does not know, so only the app's record of
+    /// the grant can say).
+    static func sendMessage(_ message: Any, toHost name: String?, from context: WKWebExtensionContext,
+                            profileId: String?, privacyGranted: Bool) async throws -> Any? {
+        if name == ChromeExtensionCompatibility.settingsHost {
+            return try settingsProvider(for: context, profileId: profileId, privacyGranted: privacyGranted)
+                .handle(message, from: context.uniqueIdentifier, profileId: profileId ?? "")
+        }
         let manifest = try manifest(named: name, for: context)
         let host = NativeMessagingHostProcess(manifest: manifest, origin: origin(of: context))
         return try await withCheckedThrowingContinuation { continuation in
@@ -103,7 +131,12 @@ enum WebKitNativeMessaging {
         }
     }
 
-    static func connect(_ port: WKWebExtension.MessagePort, from context: WKWebExtensionContext) throws {
+    static func connect(_ port: WKWebExtension.MessagePort, from context: WKWebExtensionContext,
+                        profileId: String?, privacyGranted: Bool) throws {
+        if port.applicationIdentifier == ChromeExtensionCompatibility.settingsHost {
+            try listenToSettings(on: port, from: context, profileId: profileId, privacyGranted: privacyGranted)
+            return
+        }
         // A restarted worker reconnects as it starts: the hosts its previous
         // run left behind are stopped before the new one starts.
         stopStaleHosts()
@@ -150,7 +183,59 @@ enum WebKitNativeMessaging {
     static func stopHosts(for context: WKWebExtensionContext) {
         stop(connections.filter { $0.value.context === context || $0.value.context == nil }, because: "its extension was unloaded")
         updateKeepAlive()
+        for (key, listener) in settingsPorts where listener.context === context || listener.context == nil {
+            endSettingsPort(key)
+            if let port = listener.port, !port.isDisconnected { port.disconnect() }
+        }
     }
+
+    // MARK: - The settings host
+
+    /// The browser answers `ChromeExtensionCompatibility.settingsHost`
+    /// itself (ExtensionSettingsHost.provider), for an extension the user
+    /// granted `privacy`. The extension is the one WebKit names as the
+    /// sender, never one a message names.
+    private static func settingsProvider(for context: WKWebExtensionContext, profileId: String?,
+                                         privacyGranted: Bool) throws -> ExtensionSettingsProvider {
+        let name = ChromeExtensionCompatibility.settingsHost
+        guard let provider = ExtensionSettingsHost.provider, profileId != nil else {
+            throw error(NativeMessagingError.hostNotFound(name))
+        }
+        guard privacyGranted else {
+            throw error(NativeMessagingError.forbidden(host: name, origin: origin(of: context)))
+        }
+        return provider
+    }
+
+    private static func listenToSettings(on port: WKWebExtension.MessagePort, from context: WKWebExtensionContext,
+                                         profileId: String?, privacyGranted: Bool) throws {
+        let provider = try settingsProvider(for: context, profileId: profileId, privacyGranted: privacyGranted)
+        let key = ObjectIdentifier(port)
+        // A listener whose page or worker went away without its port being
+        // disconnected is dropped at the first change that fails to reach it.
+        let subscription = provider.subscribe(extensionId: context.uniqueIdentifier, profileId: profileId ?? "") { [weak port] message in
+            guard let port, !port.isDisconnected else { return endSettingsPort(key) }
+            port.sendMessage(message) { failure in
+                if failure != nil { MainActor.assumeIsolated { endSettingsPort(key) } }
+            }
+        }
+        port.messageHandler = { _, _ in }
+        port.disconnectHandler = { _ in endSettingsPort(key) }
+        settingsPorts[key] = SettingsPort(port: port, context: context, subscription: subscription)
+    }
+
+    private static func endSettingsPort(_ key: ObjectIdentifier) {
+        guard let listener = settingsPorts.removeValue(forKey: key) else { return }
+        ExtensionSettingsHost.provider?.unsubscribe(listener.subscription)
+    }
+
+    /// Open settings ports for `context`, for tests.
+    static func settingsPortCount(for context: WKWebExtensionContext) -> Int {
+        settingsPorts.values.filter { $0.context === context }.count
+    }
+
+    /// Whether the keep-alive timer is running, for tests.
+    static var isKeepingBackgroundsAlive: Bool { keepAliveTimer != nil }
 
     /// The process ids of the hosts running for `context`.
     static func hostProcessIdentifiers(for context: WKWebExtensionContext) -> [Int32] {

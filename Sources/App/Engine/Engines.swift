@@ -53,8 +53,8 @@ enum Engines {
         EngineChoice.allCases.allSatisfy { engine($0).initialize(profilesRootPath: profilesRootPath) }
     }
 
-    static func createTab(engine choice: EngineChoice, profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
-        engine(choice).createTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
+    static func createTab(engine choice: EngineChoice, profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) -> EngineTab {
+        engine(choice).createTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL, runsExtensions: runsExtensions)
     }
 
     static func createPrivateTab(engine choice: EngineChoice, hostView: NSView, initialURL: String) -> EngineTab {
