@@ -20,20 +20,39 @@ enum CEFEngine: BrowserEngine {
             perTabCPUUsage: true,
             perTabAudioMute: true,
             customContextMenuItems: true,
-            // Chromium's extension system is Chrome-style only; this app's
-            // Alloy-style CEF 150 browsers have none.
-            webExtensions: false,
+            // Chromium's own extension system, loaded from the switch: see
+            // CEFExtensionRuntime.
+            webExtensions: CEFExtensionRuntime.shared.isAvailable,
+            extensionActionsAreStatic: true,
+            extensionChangesNeedRelaunch: true,
+            pageAutoResize: true,
             agentControl: true)
     }
 
-    static func initialize(profilesRootPath: String) -> Bool {
-        BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
+    /// Whenever this macOS supports extensions, also when they are off in
+    /// this session: the consent note follows the next launch's setting.
+    static var extensionRuntime: FollowerExtensionRuntime? {
+        CEFExtensionRuntime.shared.isSupported ? CEFExtensionRuntime.shared : nil
     }
 
-    /// `runsExtensions` has nothing to switch off: this engine runs no
-    /// extensions (`webExtensions: false`).
+    static func initialize(profilesRootPath: String) -> Bool {
+        CEFExtensionRuntime.shared.prepareBeforeEngineStart(profilesRootPath: profilesRootPath)
+        // An extension switch on the app's own command line is kept only by a
+        // build outside /Applications launched on its own scratch profiles
+        // root (not the real one, nor inside or around it); a real install
+        // never loads an extension it did not prepare.
+        let isTestLaunch = Bundle.main.bundlePath != DevBuildIndicator.installedBundlePath
+            && CommandLineArgs.allowsAgentExtensionsRoot
+        BRWExtensionRuntime.setKeepsExternalExtensionSwitches(isTestLaunch)
+        return BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
+    }
+
+    /// Chromium loads switch extensions into the whole profile context, so a
+    /// tab that must not run them (`runsExtensions` false) cannot be one of
+    /// that context's tabs while the profile runs any: it stays empty, and
+    /// `browser page open` refuses before it gets here.
     static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) -> EngineTab {
-        CEFTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
+        CEFTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL, runsExtensions: runsExtensions)
     }
 
     static func createPrivateTab(hostView: NSView, initialURL: String) -> EngineTab {
@@ -47,6 +66,9 @@ enum CEFEngine: BrowserEngine {
     static var isTerminating: Bool {
         (NSApp as? BRWApplication)?.isTerminating ?? false
     }
+
+    /// Whether `tab` is one of this engine's.
+    static func owns(_ tab: EngineTab) -> Bool { tab is CEFTab }
 
     static func setVisualLookUpAvailable(_ available: Bool) {
         BRWBrowser.setVisualLookUpAvailable(available)
@@ -86,9 +108,21 @@ enum CEFEngine: BrowserEngine {
 /// callbacks into EngineTabDelegate calls -- the only place that translation
 /// happens. `private`: nothing outside this file needs the concrete type,
 /// only the EngineTab protocol CEFEngine.createTab returns.
+///
+/// A profile tab's browser is created only once its profile's context is
+/// ready with the profile's own extensions (CEFExtensionRuntime); until then
+/// `browser` is nil, and calls either wait for it (`withBrowser`) or answer
+/// as a page that has not loaded would.
 private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     weak var delegate: EngineTabDelegate?
-    private let browser: BRWBrowser
+    private var browser: BRWBrowser?
+    /// Calls made before the browser existed, run in order when it does;
+    /// each one's cancel runs instead if the tab closes first.
+    private var pendingCalls: [(run: (BRWBrowser) -> Void, cancel: (() -> Void)?)] = []
+    private var pendingURL: String?
+    private var isClosed = false
+    /// Nil for a private tab.
+    private let profileId: String?
 
     private var siteStyleSheets: [String: String] = [:]
     /// The URL of the document the main frame actually holds, as OnLoadStart
@@ -96,24 +130,50 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     /// navigation's destination while the old document is still live.
     private var currentMainFrameURL: String?
 
-    init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
-        browser = BRWBrowser(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
+    init(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) {
+        self.profileId = profileId
         super.init()
-        browser.delegate = self
+        if !runsExtensions, CEFExtensionRuntime.shared.extensionsReachEveryTab(profileId: profileId) {
+            NSLog("Browser: not opening a tab that may not run extensions in profile %@: its Chromium context runs them", profileId)
+            isClosed = true
+            // Said where an agent reads why its page never loaded.
+            mainDocumentLoad = EngineMainDocumentLoad(
+                url: initialURL, httpStatus: nil,
+                error: "This profile runs extensions in Chromium tabs, and this page may not run them")
+            return
+        }
+        CEFExtensionRuntime.shared.whenProfileReady(profileId) { [weak self] in
+            guard let self, !self.isClosed else { return }
+            let browser = BRWBrowser(profileName: profileName, profileId: profileId, hostView: hostView,
+                                     initialURL: self.pendingURL ?? initialURL)
+            browser.delegate = self
+            self.browser = browser
+            let calls = self.pendingCalls
+            self.pendingCalls = []
+            calls.forEach { $0.run(browser) }
+        }
+    }
+
+    /// Runs `call` on the browser now, or once it exists; `onCancel` when
+    /// the tab closes without one.
+    private func withBrowser(_ call: @escaping (BRWBrowser) -> Void, onCancel: (() -> Void)? = nil) {
+        if let browser { return call(browser) }
+        guard !isClosed else { onCancel?(); return }
+        pendingCalls.append((call, onCancel))
     }
 
     private lazy var protocolAutomation: DevToolsProtocolAutomation = {
-        let browser = self.browser
-        return DevToolsProtocolAutomation(
-            execute: { [weak browser] method, params, completion in
-                guard let browser else { return completion(false, #"{"message":"the page closed"}"#) }
-                browser.executeAutomationMethod(method, paramsJSON: params, completion: completion)
+        DevToolsProtocolAutomation(
+            execute: { [weak self] method, params, completion in
+                guard let self, !self.isClosed else { return completion(false, #"{"message":"the page closed"}"#) }
+                self.withBrowser({ $0.executeAutomationMethod(method, paramsJSON: params, completion: completion) },
+                                 onCancel: { completion(false, #"{"message":"the page closed"}"#) })
             },
-            setEventHandler: { [weak browser] handler in
-                browser?.setAutomationEventHandler(handler)
+            setEventHandler: { [weak self] handler in
+                self?.withBrowser { $0.setAutomationEventHandler(handler) }
             },
-            setAllowsPopups: { [weak browser] allow in
-                browser?.setAllowsPopupsWithoutGesture(allow)
+            setAllowsPopups: { [weak self] allow in
+                self?.withBrowser { $0.setAllowsPopupsWithoutGesture(allow) }
             })
     }()
 
@@ -123,31 +183,42 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     /// -initPrivateWithHostView:initialURL: for what makes this different
     /// from the designated initializer above.
     init(privateHostView hostView: NSView, initialURL: String) {
-        browser = BRWBrowser(privateWithHostView: hostView, initialURL: initialURL)
+        let browser = BRWBrowser(privateWithHostView: hostView, initialURL: initialURL)
+        self.browser = browser
+        profileId = nil
         super.init()
         browser.delegate = self
     }
 
-    func loadURL(_ url: String) { browser.loadURL(url) }
-    func goBack() { browser.goBack() }
-    func goForward() { browser.goForward() }
-    func reload() { browser.reload() }
-    func stopLoading() { browser.stopLoad() }
-    func close() { browser.close() }
+    func loadURL(_ url: String) {
+        if let browser { return browser.loadURL(url) }
+        pendingURL = url
+    }
+    func goBack() { browser?.goBack() }
+    func goForward() { browser?.goForward() }
+    func reload() { browser?.reload() }
+    func stopLoading() { browser?.stopLoad() }
+    func close() {
+        isClosed = true
+        let cancelled = pendingCalls
+        pendingCalls = []
+        cancelled.forEach { $0.cancel?() }
+        browser?.close()
+    }
 
     /// Where docked tools currently live, so the picker and inspect-at-point
     /// open into the same place; nil means CEF's own separate window.
     private weak var devToolsContainer: NSView?
 
-    var isDevToolsOpen: Bool { browser.isDevToolsOpen }
+    var isDevToolsOpen: Bool { browser?.isDevToolsOpen ?? false }
 
     func showDevTools(panel: DevToolsPanel, dockSide: DevToolsDockSide, in container: NSView?) {
         devToolsContainer = dockSide == .window ? nil : container
-        browser.showDevTools(in: devToolsContainer, panel: Self.bridgePanel(panel))
+        browser?.showDevTools(in: devToolsContainer, panel: Self.bridgePanel(panel))
     }
-    func closeDevTools() { browser.closeDevTools() }
-    func startElementPicker() { browser.startElementPicker(in: devToolsContainer) }
-    func inspectElement(at point: NSPoint) { browser.inspectElement(at: point, in: devToolsContainer) }
+    func closeDevTools() { browser?.closeDevTools() }
+    func startElementPicker() { browser?.startElementPicker(in: devToolsContainer) }
+    func inspectElement(at point: NSPoint) { browser?.inspectElement(at: point, in: devToolsContainer) }
 
     private static func bridgePanel(_ panel: DevToolsPanel) -> BRWDevToolsPanel {
         switch panel {
@@ -158,21 +229,21 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     }
 
     func setResponsiveDesignMode(width: Int, height: Int, deviceScaleFactor: Double, mobile: Bool) {
-        browser.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile)
+        withBrowser { $0.setResponsiveDesignMode(width: Int32(width), height: Int32(height), deviceScaleFactor: deviceScaleFactor, mobile: mobile) }
     }
-    func clearResponsiveDesignMode() { browser.clearResponsiveDesignMode() }
-    func cpuUsagePercent() -> Double { browser.cpuUsagePercent() }
+    func clearResponsiveDesignMode() { withBrowser { $0.clearResponsiveDesignMode() } }
+    func cpuUsagePercent() -> Double { browser?.cpuUsagePercent() ?? 0 }
     var contentProcessIdentifier: pid_t? { nil }
-    func setAudioMuted(_ muted: Bool) { browser.setAudioMuted(muted) }
-    func setZoomLevel(_ level: Double) { browser.setZoomLevel(level) }
-    func zoomLevel() -> Double { browser.zoomLevel() }
-    func print() { browser.print() }
+    func setAudioMuted(_ muted: Bool) { withBrowser { $0.setAudioMuted(muted) } }
+    func setZoomLevel(_ level: Double) { withBrowser { $0.setZoomLevel(level) } }
+    func zoomLevel() -> Double { browser?.zoomLevel() ?? 0 }
+    func print() { browser?.print() }
 
     /// Chromium already judged the certificate (hasCertificateError), so the
     /// trust built here is only for showing the chain in the system's
     /// certificate viewer; nothing evaluates it.
     func securityStatus() -> EngineSecurityStatus? {
-        guard let status = browser.securityStatus() else { return nil }
+        guard let status = browser?.securityStatus() else { return nil }
         let certificates = status.certificateChain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) }
         var trust: SecTrust?
         if !certificates.isEmpty {
@@ -185,24 +256,26 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
             serverTrust: trust)
     }
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
+        guard let browser else { return completion(false, "The page has not loaded yet.") }
         browser.printToPDF(withPath: path, completion: completion)
     }
     func downloadImage(url: String, completion: @escaping (Data?, Int) -> Void) {
+        guard let browser else { return completion(nil, 0) }
         browser.downloadImage(atURL: url) { pngData, httpStatusCode in
             completion(pngData, httpStatusCode)
         }
     }
     func startDownload(url: String) {
-        browser.startDownload(forURL: url)
+        withBrowser { $0.startDownload(forURL: url) }
     }
     func find(_ searchText: String, forward: Bool, matchCase: Bool, findNext: Bool) {
-        browser.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
+        browser?.find(searchText, forward: forward, matchCase: matchCase, findNext: findNext)
     }
     func stopFinding(clearSelection: Bool) {
-        browser.stopFinding(clearSelection)
+        browser?.stopFinding(clearSelection)
     }
     func executeJavaScript(_ code: String) {
-        browser.executeJavaScript(code)
+        browser?.executeJavaScript(code)
     }
 
     /// CEF offers no document-start user script without renderer-side code,
@@ -211,7 +284,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     /// the page, never the whole map: this runs in the page's own world.
     func setSiteStyleSheets(_ sheetsBySite: [String: String]) {
         siteStyleSheets = sheetsBySite
-        browser.executeJavaScript(SiteStyleSheetScript.apply(css: siteStyleSheetCSS(for: currentMainFrameURL)))
+        browser?.executeJavaScript(SiteStyleSheetScript.apply(css: siteStyleSheetCSS(for: currentMainFrameURL)))
     }
 
     private func siteStyleSheetCSS(for url: String?) -> String {
@@ -220,10 +293,15 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     }
 
     func getPageSource(completion: @escaping (String?) -> Void) {
+        guard let browser else { return completion(nil) }
         browser.getPageSource(completion: completion)
     }
     func respondToPageMessage(requestId: Int64, success: Bool, response: String) {
-        browser.respondToPageMessage(withId: requestId, success: success, response: response)
+        browser?.respondToPageMessage(withId: requestId, success: success, response: response)
+    }
+
+    func setAutoResize(enabled: Bool, minSize: NSSize, maxSize: NSSize) {
+        withBrowser { $0.setAutoResize(enabled: enabled, minSize: minSize, maxSize: maxSize) }
     }
 
     // MARK: - BRWBrowserDelegate -> EngineTabDelegate
@@ -310,7 +388,7 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
         currentMainFrameURL = url
         let css = siteStyleSheetCSS(for: url)
         if !css.isEmpty {
-            browser.executeJavaScript(SiteStyleSheetScript.apply(css: css))
+            browser?.executeJavaScript(SiteStyleSheetScript.apply(css: css))
         }
         delegate?.engineTabDidStartMainFrameLoad()
     }
@@ -344,6 +422,17 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     }
 
     func browserDidRequestNewTab(forURL url: String, disposition: BRWWindowOpenDisposition) {
+        // The bridge lets an extension's page open only its own pages; the
+        // extension runtime decides where they show (an action popup, or a
+        // tab in this engine, where that extension runs). Outside CEF's
+        // callback: showing it may close the popup this page is in.
+        if let profileId, let target = URL(string: url), target.scheme?.lowercased() == "chrome-extension" {
+            let asWindow = disposition == .newPopup || disposition == .newWindow
+            DispatchQueue.main.async {
+                CEFExtensionRuntime.shared.extensionPageRequestedOpen(target, profileId: profileId, asWindow: asWindow)
+            }
+            return
+        }
         let engineDisposition: EngineWindowOpenDisposition
         switch disposition {
         case .foregroundTab: engineDisposition = .foregroundTab
@@ -370,6 +459,10 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     @objc(browserDidRequestInspectElementAtPoint:)
     func browserDidRequestInspectElement(at point: NSPoint) {
         delegate?.engineTabDidRequestInspectElement(at: point)
+    }
+
+    func browserDidAutoResize(to size: NSSize) {
+        delegate?.engineTabDidAutoResize(to: size)
     }
 
     func browserDidBlockRequest(toTracker trackerDomain: String, onPageHost pageHost: String) {

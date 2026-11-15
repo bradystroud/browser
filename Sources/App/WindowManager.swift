@@ -38,9 +38,11 @@ final class WindowManager {
         initialURL: String = HomepagePreference.newWindowURL,
         isPrivate: Bool = false,
         activateApp: Bool = true,
-        agentPresentation: BrowserWindowController.AgentPresentation? = nil
+        agentPresentation: BrowserWindowController.AgentPresentation? = nil,
+        initialTabEngine: EngineChoice? = nil
     ) -> BrowserWindowController {
         let controller = BrowserWindowController(profile: profile, initialURL: initialURL, isPrivate: isPrivate)
+        controller.initialTabEngine = initialTabEngine
         if let agentPresentation {
             markAgentOwned(controller)
             controller.agentPresentation = agentPresentation

@@ -18,6 +18,7 @@ let package = Package(
             exclude: [
                 // CEF-backed; needs the Obj-C++ bridge and libcef.
                 "Engine/CEFEngineAdapter.swift",
+                "Engine/CEFExtensionRuntime.swift",
             ],
             linkerSettings: [.linkedFramework("WebKit"), .linkedFramework("AppKit")]
         ),

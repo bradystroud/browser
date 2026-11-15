@@ -602,7 +602,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
 
         guard !restoreTabs.isEmpty else {
-            addTab(url: initialURL, makeActive: true)
+            insertTab(url: initialURL, makeActive: true, at: tabs.count, focusOmnibox: initialTabEngine == nil, engine: initialTabEngine)
             return
         }
 
@@ -1525,6 +1525,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func addTab(url: String, makeActive: Bool) -> Tab {
         insertTab(url: url, makeActive: makeActive, at: tabs.count, focusOmnibox: makeActive)
     }
+
+    /// A tab that opens in `engine`, whatever the rules say for a new tab:
+    /// an extension page one engine's extension runtime opened, which the
+    /// other engine has its own copy of. The tab's own navigations keep it
+    /// there, as for any tab (see EngineSwitchPolicy).
+    @discardableResult
+    func addTab(url: String, makeActive: Bool, engine: EngineChoice) -> Tab {
+        insertTab(url: url, makeActive: makeActive, at: tabs.count, focusOmnibox: false, engine: engine)
+    }
+
+    /// The engine of the tab `show()` opens at `initialURL`, when it must not
+    /// be left to the rules (see addTab(url:makeActive:engine:)).
+    var initialTabEngine: EngineChoice?
 
     /// Opens `url` as a new tab immediately after `openerIndex` -- standard
     /// "a link click opens a new tab next to this one" placement, the

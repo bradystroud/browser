@@ -20,6 +20,9 @@ set(BROWSER_BRIDGE_SRCS
   ../Bridge/BRWEngine.h
   ../Bridge/BRWEngine.mm
   ../Bridge/BRWEngineInternal.h
+  ../Bridge/BRWExtensions.h
+  ../Bridge/BRWExtensions.mm
+  ../Bridge/BRWExtensionsInternal.h
   ../Bridge/BRWBrowser.h
   ../Bridge/BRWBrowser.mm
   ../Bridge/BRWPageMessageRouter.h
@@ -97,6 +100,9 @@ set(BROWSER_SWIFT_SRCS
   Engine/DevToolsProtocolAutomation.swift
   Engine/MacKeyboardLayout.swift
   Engine/Engines.swift
+  Engine/CombinedExtensionManager.swift
+  Engine/CEFExtensionRuntime.swift
+  Engine/WebKitExtensionKeys.swift
   Engine/WebKitEngineAdapter.swift
   Engine/WebKitAutomation.swift
   Engine/WebKitBackgroundTabPolicy.swift
@@ -163,6 +169,9 @@ set(BROWSER_SWIFT_SRCS
   Extensions/ExtensionsToolbarController.swift
   Extensions/ExtensionsWindowController.swift
   Extensions/ExtensionsPaneController.swift
+  Extensions/ExtensionsCoordinator+Engines.swift
+  Extensions/ExtensionPopupController.swift
+  Extensions/ChromiumTabExtensionsPreference.swift
   Permissions/PermissionStore.swift
   Permissions/PermissionPromptController.swift
   Passwords/PasswordDetectionScript.swift
@@ -403,6 +412,13 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ICloudPasswordsExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ZipArchive.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionShim.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionPreparer.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionPolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromiumProfilePreferences.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/Crx3PublicKey.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionPlan.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionLifecycle.swift
   )
 source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})
 
