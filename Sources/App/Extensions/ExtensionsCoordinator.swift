@@ -38,15 +38,7 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
         guard !isActivated, let manager else { return }
         isActivated = true
         ExtensionSettingsHost.provider = ExtensionControlledSettingsCenter.shared
-        manager.activate(host: self, storageDirectory: { profileId in
-            guard !profileId.hasPrefix(Profile.privateIdPrefix) else { return nil }
-            // Never the profile's Extensions/ (see WebExtensionsFolder): what
-            // an earlier version kept there is moved out first.
-            let profileDirectory = URL(fileURLWithPath: CommandLineArgs.profileDirectory(profileId: profileId), isDirectory: true)
-            return WebExtensionsFolder.prepared(inProfile: profileDirectory) { message in
-                NSLog("Browser: extensions of profile %@: %@", profileId, message)
-            }
-        })
+        manager.activate(host: self, storageDirectory: Self.storageDirectory)
         TabLifecycleCenter.shared.addObserver(self)
         observers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeMainNotification, object: nil, queue: .main
@@ -167,7 +159,10 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
             }
             // A sheet ordered in while the omnibox holds focus trips AppKit's
             // completion-list assertion (see CLAUDE.md).
-            Self.resignFieldEditor(in: window)
+            guard Self.resignFieldEditor(in: window) else {
+                NSLog("Browser: extension question not asked, a text field would not end editing: %@", request.title)
+                return false
+            }
             return await withCheckedContinuation { done in
                 alert.beginSheetModal(for: window) { done.resume(returning: $0 == .alertFirstButtonReturn) }
             }
@@ -176,10 +171,19 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
         return await task.value
     }
 
-    static func resignFieldEditor(in window: NSWindow) {
-        if let editor = window.firstResponder as? NSTextView, editor.isFieldEditor {
+    /// Ends text editing in `window`. True when no field editor is first
+    /// responder afterwards: a field's delegate can refuse to end editing,
+    /// and nothing may be ordered on screen while it is still editing.
+    @discardableResult
+    static func resignFieldEditor(in window: NSWindow) -> Bool {
+        if isEditingText(in: window) {
             window.makeFirstResponder(nil)
         }
+        return !isEditingText(in: window)
+    }
+
+    static func isEditingText(in window: NSWindow?) -> Bool {
+        (window?.firstResponder as? NSTextView)?.isFieldEditor == true
     }
 
     func extensionNotify(_ message: String, profileId: String) {
