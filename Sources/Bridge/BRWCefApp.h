@@ -25,6 +25,14 @@ class BRWCefApp : public CefApp, public CefBrowserProcessHandler {
       CefRefPtr<CefCommandLine> command_line) override;
 
   void OnScheduleMessagePumpWork(int64_t delay_ms) override;
+  void OnContextInitialized() override;
+
+  // Chromium asks for these only when it creates a Chrome-style browser
+  // window of its own (an extension's windows.create, openOptionsPage, ...).
+  // This app never asks for one, so every such browser goes to the client
+  // that closes it -- see BRWUnmanagedBrowserClient.
+  CefRefPtr<CefClient> GetDefaultClient() override;
+  CefRefPtr<CefRequestContextHandler> GetDefaultRequestContextHandler() override;
 
  private:
   IMPLEMENT_REFCOUNTING(BRWCefApp);

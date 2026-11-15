@@ -531,10 +531,17 @@ enum AgentPages {
         } else {
             profile = ProfileManager.shared.fallbackProfile
         }
+        let engine = EngineRulesStore.shared.decide(url: url, trigger: .newTab, currentEngine: nil, override: nil).engine
+        if !isPrivate, let refusal = extensionRefusal(profile: profile, engine: engine) { return completion(.failure(refusal)) }
 
         let controller = WindowManager.shared.openNewWindow(
             profile: profile, initialURL: url, isPrivate: isPrivate, activateApp: false,
             agentPresentation: args["headless"] == "true" ? .headless : .headed)
+        if !isPrivate, let actual = controller.activeTab?.engine, actual != engine,
+           let refusal = extensionRefusal(profile: profile, engine: actual) {
+            controller.window?.close()
+            return completion(.failure(refusal))
+        }
         if let size {
             do { try controller.resizeAgentPage(size) }
             catch {
@@ -696,6 +703,18 @@ enum AgentPages {
             }
             completion(response)
         }
+    }
+
+    /// An agent page never runs the profile's extensions. Where an engine
+    /// loads them into every tab of a profile, with no way to keep one tab
+    /// out (Chromium's, see Engines.extensionsReachEveryTab), the page cannot
+    /// open there at all.
+    private static func extensionRefusal(profile: Profile, engine: EngineChoice) -> String? {
+        guard !CommandLineArgs.allowsAgentExtensions,
+              Engines.extensionsReachEveryTab(engine: engine, profileId: profile.id) else { return nil }
+        return "Profile '\(profile.name)' runs extensions in \(engine.displayName) tabs, and they would run in this agent page too. "
+            + "Open it with --private, in a profile without \(engine.displayName) extensions, or in another engine. "
+            + "To test an extension, launch a scratch instance with --profiles-root <dir> --allow-agent-extensions."
     }
 
     // MARK: - Engine access

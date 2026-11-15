@@ -299,7 +299,8 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         defer { if let staged { try? FileManager.default.removeItem(at: staged) } }
         do {
             try profile.createDirectory()
-            let fetched = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory)
+            let key = CRXPublicKeySink()
+            let fetched = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory, publicKey: key)
             staged = fetched
             let found = try await WKWebExtension(resourceBaseURL: fetched)
             let name = found.displayName ?? record.name
@@ -307,7 +308,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             var declined = Set(record.declinedGrants ?? [])
             let added = WebExtensionGrants.added(requested, beyond: record.grants + declined)
             if !added.isEmpty,
-               !(await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow")) {
+               !(await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow", manifest: found.manifest)) {
                 guard WebExtensionGrants.onlyAppImplemented(added) else {
                     profile.noteError("Its files are \(state == .missing ? "missing" : "incomplete"), and the version that would replace them asks for access that was refused. Reload it to be asked again.", for: id)
                     host?.extensionsDidChange(profileId: profile.profileId)
@@ -325,6 +326,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
                 $0.grants = Array(Set($0.grants).union(requested).subtracting(declined)).sorted()
                 $0.declinedGrants = declined.isEmpty ? nil : declined.sorted()
             }
+            if let publicKey = key.base64 { profile.update(id) { $0.publicKey = publicKey } }
             profile.save()
             NSLog("Browser: downloaded extension %@ again (%@ package, version %@)", id, "\(state)", found.version ?? "?")
             return true
@@ -512,18 +514,20 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         defer { profile.busy.remove(id) }
         try profile.createDirectory()
 
-        let staged = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory)
+        let key = CRXPublicKeySink()
+        let staged = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory, publicKey: key)
         defer { try? FileManager.default.removeItem(at: staged) }
         let found = try await WKWebExtension(resourceBaseURL: staged)
         let name = found.displayName ?? id
         let grants = Self.grants(for: found)
-        guard await consent(title: "Add “\(name)”?", grants: grants, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Add Extension") else {
+        guard await consent(title: "Add “\(name)”?", grants: grants, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Add Extension", manifest: found.manifest) else {
             throw WebKitExtensionError.cancelled
         }
         guard profile.record(id) == nil else { throw WebKitExtensionError.alreadyInstalled(name) }
         try WebKitExtensionInstaller.replace(profile.storeFolder(for: id), with: staged)
         recordContents(of: id, in: profile)
-        let record = InstalledWebExtension(id: id, source: .webStore, name: name, version: found.version ?? "0", grants: grants)
+        let record = InstalledWebExtension(id: id, source: .webStore, name: name, version: found.version ?? "0", grants: grants,
+                                           publicKey: key.base64)
         profile.list.extensions.append(record)
         profile.save()
         let installed = try await WKWebExtension(resourceBaseURL: await profile.preparedFolder(for: record))
@@ -551,7 +555,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         }
         let name = found.displayName ?? folder.lastPathComponent
         let grants = Self.grants(for: found)
-        guard await consent(title: "Load “\(name)”?", grants: grants, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Load Extension") else {
+        guard await consent(title: "Load “\(name)”?", grants: grants, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Load Extension", manifest: found.manifest) else {
             throw WebKitExtensionError.cancelled
         }
         let record = InstalledWebExtension(id: id, source: .unpacked, name: name, version: found.version ?? "0",
@@ -580,7 +584,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         let added = WebExtensionGrants.added(requested, beyond: record.grants)
         var declined = Set(record.declinedGrants ?? [])
         if !added.isEmpty {
-            let allowed = await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow")
+            let allowed = await consent(title: "“\(name)” wants more access", grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Allow", manifest: found.manifest)
             if allowed {
                 declined.subtract(added)
             } else if WebExtensionGrants.onlyAppImplemented(added) {
@@ -717,7 +721,8 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         var staged: URL?
         defer { if let staged { try? FileManager.default.removeItem(at: staged) } }
         do {
-            staged = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory)
+            let key = CRXPublicKeySink()
+            staged = try await WebKitExtensionInstaller.downloadAndStage(id: id, in: profile.directory, publicKey: key)
             guard let staged else { return false }
             let found = try await WKWebExtension(resourceBaseURL: staged)
             // The package itself has to be the newer version the check
@@ -732,7 +737,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
             let added = WebExtensionGrants.added(requested, beyond: record.grants + declined)
             if !added.isEmpty {
                 let title = "An update to “\(name)” wants more access"
-                if !(await consent(title: title, grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Update")) {
+                if !(await consent(title: title, grants: added, icon: found.icon(for: CGSize(width: 64, height: 64)), allow: "Update", manifest: found.manifest)) {
                     guard WebExtensionGrants.onlyAppImplemented(added) else { return false }
                     declined.formUnion(added)
                 }
@@ -748,6 +753,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
                 $0.grants = Array(Set($0.grants).union(requested).subtracting(declined)).sorted()
                 $0.declinedGrants = declined.isEmpty ? nil : declined.sorted()
             }
+            if let publicKey = key.base64 { profile.update(id) { $0.publicKey = publicKey } }
             profile.save()
             if wasLoaded || profile.record(id)?.enabled == true {
                 await load(id, in: profile)
@@ -818,13 +824,13 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
     }
 
     @MainActor
-    private func consent(title: String, grants: [String], icon: NSImage?, allow: String) async -> Bool {
+    private func consent(title: String, grants: [String], icon: NSImage?, allow: String, manifest: [String: Any]? = nil) async -> Bool {
         guard let host else { return false }
         let lines = Self.describe(grants)
         let message = lines.isEmpty
             ? "It doesn't ask for any special access."
             : "It will be able to:\n• " + lines.joined(separator: "\n• ")
-        return await host.extensionConfirm(ExtensionConsentRequest(title: title, message: message, icon: icon, allowTitle: allow))
+        return await host.extensionConfirm(ExtensionConsentRequest(title: title, message: message, icon: icon, allowTitle: allow, manifest: manifest))
     }
 
     // MARK: - Tabs and windows, as the app reports them

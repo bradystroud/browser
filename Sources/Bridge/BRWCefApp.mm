@@ -2,6 +2,7 @@
 
 #import <Foundation/Foundation.h>
 
+#import "BRWExtensionsInternal.h"
 #import "BRWMessagePump.h"
 
 BRWCefApp::BRWCefApp() = default;
@@ -26,8 +27,26 @@ void BRWCefApp::OnBeforeCommandLineProcessing(
   if (!disableMockKeychain && !command_line->HasSwitch("use-mock-keychain")) {
     command_line->AppendSwitch("use-mock-keychain");
   }
+
+  if (process_type.empty()) {
+    BRWExtensionsAppendLoadExtensionSwitch(command_line);
+  }
 }
 
 void BRWCefApp::OnScheduleMessagePumpWork(int64_t delay_ms) {
   BRWMessagePump::Get().OnScheduleMessagePumpWork(delay_ms);
+}
+
+void BRWCefApp::OnContextInitialized() {
+  BRWExtensionsNoteEngineContextInitialized();
+}
+
+CefRefPtr<CefClient> BRWCefApp::GetDefaultClient() {
+  return BRWUnmanagedBrowserClient();
+}
+
+CefRefPtr<CefRequestContextHandler> BRWCefApp::GetDefaultRequestContextHandler() {
+  // A context Chromium makes for its own window belongs to no app profile,
+  // so it gets a handler that refuses the extension bridge.
+  return BRWCreateExtensionContextHandler(std::string());
 }

@@ -60,19 +60,21 @@ final class ExtensionsToolbarController: NSObject {
         puzzle.isHidden = false
         controller.placeTrailingToolbarControl(puzzle, slot: Self.firstSlot)
 
-        let pinned = manager.extensions(profileId: profileId).filter { $0.isPinned && $0.isLoaded }
+        let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
+        let pinned = manager.extensions(profileId: profileId).filter {
+            $0.isPinned && Self.hasButton($0, manager: manager, profileId: profileId, tab: activeTab)
+        }
         let pinnedIds = Set(pinned.map(\.id))
         for (id, button) in pinnedButtons where !pinnedIds.contains(id) {
             button.removeFromSuperview()
             pinnedButtons[id] = nil
         }
-        let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
         for (offset, summary) in pinned.enumerated() {
             let button = pinnedButtons[summary.id] ?? makePinnedButton(id: summary.id, in: contentView)
             controller.placeTrailingToolbarControl(button, slot: Self.firstSlot + 1 + offset)
             let action = manager.action(extensionId: summary.id, profileId: profileId, tab: activeTab)
             button.image = Self.iconImage(action?.icon ?? summary.icon, name: summary.name)
-            button.toolTip = action?.label ?? summary.name
+            button.toolTip = Self.toolTip(label: action?.label ?? summary.name, action: action)
             button.alphaValue = (action?.isEnabled ?? true) ? 1 : 0.45
             (button as? ExtensionToolbarButton)?.badgeText = action?.badgeText ?? ""
             button.menu = contextMenu(for: summary)
@@ -130,7 +132,56 @@ final class ExtensionsToolbarController: NSObject {
 
     @objc private func pinnedTapped(_ sender: ExtensionToolbarButton) {
         guard let id = sender.extensionId else { return }
+        if let controller, let manager = ExtensionsCoordinator.shared.manager,
+           let reason = Self.disabledReason(manager.action(
+               extensionId: id, profileId: controller.profile.id,
+               tab: controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) })) {
+            showReason(reason, from: sender)
+            return
+        }
         press(id)
+    }
+
+    /// Whether the extension gets a button over `tab`: loaded by the engine
+    /// that owns the install list, or, while it is on, given a button for
+    /// this tab by the engine running the tab's page (an extension one
+    /// engine cannot start can still run in the other's tabs).
+    private static func hasButton(_ summary: EngineExtensionSummary, manager: EngineExtensionManager,
+                                  profileId: String, tab: ExtensionHostTab?) -> Bool {
+        summary.isLoaded || (summary.isEnabled && manager.action(extensionId: summary.id, profileId: profileId, tab: tab) != nil)
+    }
+
+    /// Why a button does nothing in the selected tab, when it does nothing.
+    private static func disabledReason(_ action: EngineExtensionAction?) -> String? {
+        guard let action, !action.isEnabled else { return nil }
+        return action.disabledReason
+    }
+
+    private static func toolTip(label: String, action: EngineExtensionAction?) -> String {
+        disabledReason(action).map { "\(label)\n\($0)" } ?? label
+    }
+
+    /// The reason, said where the user clicked. The click came from this
+    /// window, so ending a text field's editing first is expected; a
+    /// popover ordered in during editing takes the app down (see CLAUDE.md).
+    private func showReason(_ reason: String, from button: NSButton) {
+        guard let window = button.window, let controller else { return }
+        guard ExtensionsCoordinator.resignFieldEditor(in: window) else {
+            NSLog("Browser: not showing why an extension's button does nothing: a text field would not end editing")
+            return
+        }
+        let label = NSTextField(wrappingLabelWithString: reason)
+        label.preferredMaxLayoutWidth = 260
+        let size = label.fittingSize
+        label.frame = NSRect(x: 12, y: 10, width: size.width, height: size.height)
+        let content = NSViewController()
+        content.view = NSView(frame: NSRect(x: 0, y: 0, width: size.width + 24, height: size.height + 20))
+        content.view.addSubview(label)
+        let popover = NSPopover()
+        popover.contentViewController = content
+        popover.behavior = .transient
+        let anchor = controller.popoverAnchor(for: button)
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
 
     private func press(_ id: String) {
@@ -144,7 +195,7 @@ final class ExtensionsToolbarController: NSObject {
         let menu = NSMenu()
         let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
         let all = manager.extensions(profileId: profileId)
-        let running = all.filter(\.isLoaded)
+        let running = all.filter { Self.hasButton($0, manager: manager, profileId: profileId, tab: activeTab) }
         if running.isEmpty {
             let empty = NSMenuItem(title: all.isEmpty ? "No Extensions Installed" : "No Extensions Turned On", action: nil, keyEquivalent: "")
             empty.isEnabled = false
@@ -158,8 +209,11 @@ final class ExtensionsToolbarController: NSObject {
             item.target = self
             item.representedObject = summary.id
             item.image = Self.iconImage(action?.icon ?? summary.icon, name: summary.name)
-            item.toolTip = action?.label
+            item.toolTip = Self.toolTip(label: action?.label ?? summary.name, action: action)
             item.isEnabled = action?.isEnabled ?? true
+            if let reason = Self.disabledReason(action) {
+                if #available(macOS 14.4, *) { item.subtitle = reason }
+            }
             menu.addItem(item)
         }
         if !running.isEmpty {
@@ -283,7 +337,10 @@ final class ExtensionsToolbarController: NSObject {
         alert.messageText = "The extension couldn't be added"
         alert.informativeText = text
         if let window {
-            ExtensionsCoordinator.resignFieldEditor(in: window)
+            guard ExtensionsCoordinator.resignFieldEditor(in: window) else {
+                NSLog("Browser: extension error not shown, a text field would not end editing: %@", text)
+                return
+            }
             alert.beginSheetModal(for: window)
         } else {
             alert.runModal()

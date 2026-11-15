@@ -14,9 +14,12 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
     private let storeField = NSTextField()
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
+    private let noticeLabel = NSTextField(wrappingLabelWithString: "")
+    private var listView: NSScrollView?
     private let optionsButton = NSButton()
     private let reloadButton = NSButton()
     private let removeButton = NSButton()
+    private let approveButton = NSButton()
     private var items: [EngineExtensionSummary] = []
     private var observers: [NSObjectProtocol] = []
     private var frameMemory: WindowFrameMemory?
@@ -63,6 +66,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
     func show() {
         ExtensionsCoordinator.shared.activate()
         manager?.loadExtensions(profileId: profile.id)
+        manager?.refreshRuntimeStatus(profileId: profile.id)
         reload()
         window?.makeKeyAndOrderFront(nil)
         AppActivation.activate()
@@ -111,6 +115,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
             (optionsButton, "Options", #selector(openOptions), margin, CGFloat(90)),
             (reloadButton, "Reload", #selector(reloadSelected), margin + 96, 90),
             (removeButton, "Remove…", #selector(removeSelected), margin + 192, 96),
+            (approveButton, "Review Access…", #selector(reviewAccess), margin + 294, 130),
         ] {
             button.title = title
             button.bezelStyle = .rounded
@@ -137,7 +142,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         detailLabel.font = .systemFont(ofSize: 11)
         detailLabel.isSelectable = true
         let detailY = statusLabel.frame.maxY + 6
-        detailLabel.frame = NSRect(x: margin, y: detailY, width: width - margin * 2, height: 70)
+        detailLabel.frame = NSRect(x: margin, y: detailY, width: width - margin * 2, height: 86)
         detailLabel.autoresizingMask = [.width, .maxYMargin]
         content.addSubview(detailLabel)
 
@@ -159,7 +164,89 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         ListAppearance.apply(to: tableView, in: scrollView, rowHeight: 36)
         scrollView.documentView = tableView
         content.addSubview(scrollView)
+        listView = scrollView
+
+        noticeLabel.font = .systemFont(ofSize: 11)
+        noticeLabel.textColor = .systemOrange
+        noticeLabel.isSelectable = true
+        noticeLabel.frame = NSRect(x: margin, y: scrollView.frame.maxY - 34, width: width - margin * 2, height: 32)
+        noticeLabel.autoresizingMask = [.width, .minYMargin]
+        noticeLabel.isHidden = true
+        content.addSubview(noticeLabel)
         updateSelectionDependentViews()
+    }
+
+    /// Changes that reach another engine's tabs only after a relaunch, and
+    /// the switch that keeps extensions out of Chromium tabs, said above the
+    /// list. The app has no way to relaunch itself, so it says how.
+    private func updateNotice() {
+        var lines: [String] = []
+        if ChromiumTabExtensionsPreference.needsRelaunch {
+            lines.append(ChromiumTabExtensionsPreference.isOn
+                ? "Extensions run in Chromium tabs after Browser relaunches."
+                : "Extensions stop running in Chromium tabs after Browser relaunches.")
+        } else if !ChromiumTabExtensionsPreference.isOnThisLaunch {
+            lines.append("Extensions do not run in Chromium tabs: turned off in Settings › Extensions.")
+        }
+        // Removed extensions have no row, and a removal reaches an engine
+        // that reads its extensions at launch only after a relaunch.
+        let leftovers = manager?.extensionsStillRunningAfterRemoval(profileId: profile.id) ?? []
+        for leftover in leftovers {
+            lines.append("“\(leftover.name)” was removed and keeps running in \(leftover.engine.displayName) tabs until Browser relaunches.")
+        }
+        let approvals = items.filter { $0.runtimes.values.contains(where: \.needsApproval) }
+        if !approvals.isEmpty {
+            lines.append(approvals.count == 1
+                ? "“\(approvals[0].name)” needs your approval before it runs in more tabs: select it and click Review Access."
+                : "\(approvals.count) extensions need your approval before they run in more tabs: select each and click Review Access.")
+        }
+        let waiting = items.flatMap { item in item.runtimes.filter { $0.value.needsRelaunch }.map(\.key) }
+        let engines = Set(waiting).map(\.displayName).sorted()
+        if !engines.isEmpty, !ChromiumTabExtensionsPreference.needsRelaunch {
+            lines.append("Some changes reach \(engines.joined(separator: " and ")) tabs only after Browser relaunches.")
+        }
+        if lines.contains(where: { $0.contains("relaunch") }) {
+            lines.append("Quit Browser (⌘Q) and open it again; your windows and tabs come back.")
+        }
+        noticeLabel.stringValue = lines.joined(separator: " ")
+        noticeLabel.isHidden = lines.isEmpty
+        guard let listView else { return }
+        var frame = listView.frame
+        // From the notice's current frame, which follows the window's top
+        // edge through resizes: the list's own top when there is no notice.
+        let top = lines.isEmpty ? noticeLabel.frame.maxY + 2 : noticeLabel.frame.minY - 4
+        frame.size.height = max(0, top - frame.minY)
+        listView.frame = frame
+    }
+
+    /// One engine's state of an extension, in a few words for its row.
+    private static func shortState(_ status: EngineExtensionRuntimeStatus, isEnabled: Bool) -> String {
+        if status.unavailableReason != nil { return "not available" }
+        if status.needsApproval { return "needs your approval" }
+        if status.isWaitingForKey { return "waiting for its store key" }
+        if status.needsRelaunch { return status.isRunning ? (isEnabled ? "changes after a relaunch" : "stops after a relaunch") : "runs after a relaunch" }
+        return status.isRunning ? "running" : "off"
+    }
+
+    /// The same, as a sentence for the details.
+    private static func fullState(_ status: EngineExtensionRuntimeStatus, isEnabled: Bool, engine: EngineChoice) -> String {
+        let tabs = "\(engine.displayName) tabs"
+        if let reason = status.unavailableReason {
+            return "Not available in \(tabs): \(reason)" + (status.isRunning ? " It keeps running there until Browser relaunches." : "")
+        }
+        if status.needsApproval {
+            return "Needs your approval to run in \(tabs): there it would get more access than you agreed to. Click Review Access to see the list."
+                + (status.isRunning ? " It keeps running there with its earlier access until Browser relaunches." : "")
+        }
+        if status.isWaitingForKey {
+            return "Waiting for its Chrome Web Store key, which Browser gets on its own; it runs in \(tabs) after the next relaunch."
+        }
+        if status.needsRelaunch {
+            if !status.isRunning { return "Runs in \(tabs) after Browser relaunches." }
+            return isEnabled ? "Running in \(tabs); its changes reach them after Browser relaunches."
+                : "Still running in \(tabs) until Browser relaunches."
+        }
+        return status.isRunning ? "Running in \(tabs)." : "Not running in \(tabs)."
     }
 
     private func reload() {
@@ -170,6 +257,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         updateSelectionDependentViews()
+        updateNotice()
     }
 
     private var selected: EngineExtensionSummary? {
@@ -182,6 +270,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
             optionsButton.isEnabled = false
             reloadButton.isEnabled = false
             removeButton.isEnabled = false
+            approveButton.isEnabled = false
             detailLabel.stringValue = items.isEmpty
                 ? "No extensions yet. Paste a Chrome Web Store link above, or load an unpacked extension's folder."
                 : ""
@@ -190,6 +279,7 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         optionsButton.isEnabled = item.hasOptionsPage && item.isLoaded
         reloadButton.isEnabled = true
         removeButton.isEnabled = true
+        approveButton.isEnabled = item.runtimes.values.contains(where: \.needsApproval)
         var lines = ["ID: \(item.id)"]
         switch item.source {
         case .webStore: lines.append("From the Chrome Web Store")
@@ -197,6 +287,9 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         }
         if !item.description.isEmpty { lines.append(item.description) }
         if let error = item.errors.last { lines.append("Error: \(error)") }
+        for (engine, status) in item.runtimes.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            lines.append(Self.fullState(status, isEnabled: item.isEnabled, engine: engine))
+        }
         detailLabel.stringValue = lines.joined(separator: "\n")
     }
 
@@ -226,6 +319,9 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
             if case .unpacked = item.source { subtitle += " · Unpacked" }
             if item.isEnabled, !item.isLoaded { subtitle += " · Couldn't start" }
             if !item.isEnabled { subtitle += " · Off" }
+            for (engine, status) in item.runtimes.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                subtitle += " · \(engine.displayName) tabs: " + Self.shortState(status, isEnabled: item.isEnabled)
+            }
             let text = NSTextField(labelWithString: "")
             text.attributedStringValue = {
                 let value = NSMutableAttributedString(string: item.name, attributes: [.font: NSFont.systemFont(ofSize: 13)])
@@ -307,12 +403,55 @@ final class ExtensionsWindowController: NSWindowController, ProfileWindowControl
         let alert = NSAlert()
         alert.messageText = "Remove “\(item.name)”?"
         alert.informativeText = "Its settings and data in this profile go with it."
+            + item.runtimes.filter { $0.value.isRunning }.keys.map(\.displayName).sorted()
+                .map { " It keeps running in \($0) tabs until Browser relaunches." }.joined()
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
         let profileId = profile.id
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn else { return }
             self?.manager?.remove(extensionId: item.id, profileId: profileId)
+        }
+    }
+
+    /// Shows everything another engine would give the selected extension,
+    /// in the usual consent sheet, and records a yes. That engine grants an
+    /// extension's whole manifest at once, so it is asked for as a whole.
+    @objc private func reviewAccess() {
+        guard let item = selected, let manager else { return }
+        let profileId = profile.id
+        for (engine, status) in item.runtimes.sorted(by: { $0.key.rawValue < $1.key.rawValue }) where status.needsApproval {
+            // The list the sheet shows, and the only one a yes may record.
+            let shown = status.approvalGrants
+            var lines: [String] = []
+            if #available(macOS 15.4, *) { lines = WebKitExtensionManager.describe(shown) }
+            let tabs = "\(engine.displayName) tabs"
+            let list = lines.isEmpty ? "It asks for no special access." : "It will be able to:\n• " + lines.joined(separator: "\n• ")
+            let request = ExtensionConsentRequest(
+                title: "Let “\(item.name)” run in \(tabs)?",
+                message: "In \(tabs), \(engine.displayName) gives it everything its manifest asks for, without asking again. "
+                    + list + "\n\nIt starts running there after Browser relaunches.",
+                icon: item.icon, allowTitle: "Allow")
+            Task { @MainActor [weak self] in
+                guard await ExtensionsCoordinator.shared.extensionConfirm(request) else { return }
+                let recorded = manager.approveRuntimeGrants(extensionId: item.id, profileId: profileId, engine: engine,
+                                                            grants: shown)
+                self?.reload()
+                guard !recorded else { return }
+                // Not recorded: what it would get changed while the sheet was
+                // open (it still needs approval, of a new list), or it needs
+                // a grant the user declined elsewhere (the engine says so).
+                let now = manager.extensions(profileId: profileId).first { $0.id == item.id }?.runtimes[engine]
+                let reason: String?
+                if now?.needsApproval == true {
+                    reason = "What it would get in \(engine.displayName) tabs changed while you were deciding. Click Review Access to see the new list."
+                } else {
+                    reason = now?.unavailableReason.map { "Not approved for \(engine.displayName) tabs: \($0)" }
+                }
+                self?.statusLabel.stringValue = reason ?? "Nothing was waiting for approval."
+                NSLog("Browser: approval of extension %@ for %@ tabs not recorded: %@", item.id, engine.rawValue, reason ?? "nothing pending")
+            }
+            return
         }
     }
 

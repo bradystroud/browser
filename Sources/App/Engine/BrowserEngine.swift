@@ -226,10 +226,18 @@ protocol EngineTabDelegate: AnyObject {
     /// inspectElement(at:), passing `point` unchanged. An engine that claims
     /// its tools through engineTabDevToolsDidOpen() instead never sends it.
     func engineTabDidRequestInspectElement(at point: NSPoint)
+
+    /// While EngineTab.setAutoResize is on, the page's preferred size
+    /// changed to `size` (points). The receiver sizes the tab's host view;
+    /// the engine does not. A size outside the bounds given can arrive
+    /// (the first report can be the view's size before layout), so the
+    /// receiver clamps it.
+    func engineTabDidAutoResize(to size: NSSize)
 }
 
 extension EngineTabDelegate {
     func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool { true }
+    func engineTabDidAutoResize(to size: NSSize) {}
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -398,11 +406,21 @@ protocol EngineTab: AnyObject {
     /// (in particular, that `requestId` is global across every tab, not
     /// scoped to whichever EngineTab this is called on).
     func respondToPageMessage(requestId: Int64, success: Bool, response: String)
+
+    /// Lays the page out at its own preferred size, between `minSize` and
+    /// `maxSize` (points), and reports each change through
+    /// EngineTabDelegate.engineTabDidAutoResize(to:), for a page that sizes
+    /// its container (an extension's action popup). May be called before
+    /// the page has loaded. Only where `EngineCapabilities.pageAutoResize`.
+    func setAutoResize(enabled: Bool, minSize: NSSize, maxSize: NSSize)
 }
 
 extension EngineTab {
     /// No agent control (see `EngineCapabilities.agentControl`).
     var automation: EngineTabAutomation? { nil }
+
+    /// No page-driven sizing (see `EngineCapabilities.pageAutoResize`).
+    func setAutoResize(enabled: Bool, minSize: NSSize, maxSize: NSSize) {}
 }
 
 /// The end of one main-frame document load. `sequence` grows with every
@@ -645,6 +663,17 @@ struct EngineCapabilities {
     /// Chrome extensions can be installed and run -- `extensions` on the
     /// engine is non-nil.
     var webExtensions: Bool = false
+    /// An extension's toolbar button is only what its manifest declares: the
+    /// extension cannot set a badge, title or icon per tab, and a press is
+    /// never reported to it (`action.onClicked`); only a popup page opens.
+    var extensionActionsAreStatic: Bool = false
+    /// Installing, removing, enabling, disabling or updating an extension
+    /// reaches this engine's tabs only after the app relaunches.
+    var extensionChangesNeedRelaunch: Bool = false
+    /// setAutoResize(enabled:minSize:maxSize:) sizes the page to its
+    /// content and reports it, so the app can host an extension's action
+    /// popup in this engine itself.
+    var pageAutoResize: Bool = false
     /// Tabs offer `automation`, so the `browser page` CLI commands work.
     var agentControl: Bool = false
     /// The engine shows the system passkey sheet (Touch ID, iCloud
@@ -799,8 +828,14 @@ protocol BrowserEngine {
     /// The engine's extension system, where it has one -- see
     /// EngineCapabilities.webExtensions.
     static var extensions: EngineExtensionManager? { get }
+
+    /// The engine's own extension runtime when it runs the install list
+    /// another engine's `extensions` owns, rather than having one of its
+    /// own. See `CombinedExtensionManager`.
+    static var extensionRuntime: FollowerExtensionRuntime? { get }
 }
 
 extension BrowserEngine {
     static var extensions: EngineExtensionManager? { nil }
+    static var extensionRuntime: FollowerExtensionRuntime? { nil }
 }

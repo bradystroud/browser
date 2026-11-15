@@ -135,6 +135,23 @@ enum CommandLineArgs {
             realDataDirectories: real)
     }()
 
+    /// The launch has its own `--profiles-root`, not the real data nor inside
+    /// or around it: the condition `allowsAgentExtensions` puts on its flag,
+    /// for the other test-only switches (outside extension folders, the
+    /// extension test hooks).
+    static let allowsAgentExtensionsRoot: Bool = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let realData = [
+            ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: [], appSupportDirectory: appSupport.path),
+            ProfilesRootResolver.profilesRootPath(arguments: [], appSupportDirectory: appSupport.path),
+        ]
+        let real = realData + realData.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+        return ExtensionIsolationPolicy.agentPagesMayRunExtensions(
+            arguments: [ExtensionIsolationPolicy.allowAgentExtensionsFlag],
+            profilesRootOverride: ProfilesRootResolver.explicitOverride(arguments: CommandLine.arguments),
+            realDataDirectories: real)
+    }()
+
     /// The engine a tab uses when no site rule decides: an explicit
     /// `--engine cef|webkit` launch argument if given (browser-n50),
     /// otherwise the Settings preference (browser-2a7), otherwise webkit. Any

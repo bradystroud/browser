@@ -1,5 +1,6 @@
 #import "BRWClientHandler.h"
 #import "BRWContentBlockerInternal.h"
+#import "BRWExtensionsInternal.h"
 #import "BRWPageMessageRouter.h"
 #import "BRWStringUtil.h"
 #import "BRWThreatListInternal.h"
@@ -104,6 +105,25 @@ bool BRWPopupTargetAllowed(const std::string& target_url, const std::string& ope
   return false;
 }
 
+// An extension's own page asking for another page of the same extension: an
+// action popup's fallback when action.openPopup fails is to window.open its
+// own pages. That is no web destination, so it is outside
+// BRWPopupTargetAllowed; the app shows it itself (CEFExtensionRuntime), and
+// it never becomes a window Chromium makes. Only the extension's own frame
+// may ask: a web page cannot name an extension's page this way.
+bool BRWIsSameExtensionPage(const std::string& target_url, const std::string& opener_frame_url) {
+  CefURLParts target, opener;
+  if (!CefParseURL(target_url, target) || !CefParseURL(opener_frame_url, opener)) {
+    return false;
+  }
+  const std::string target_scheme = ToLowerASCII(CefString(&target.scheme).ToString());
+  const std::string opener_scheme = ToLowerASCII(CefString(&opener.scheme).ToString());
+  const std::string target_host = ToLowerASCII(CefString(&target.host).ToString());
+  const std::string opener_host = ToLowerASCII(CefString(&opener.host).ToString());
+  return target_scheme == "chrome-extension" && opener_scheme == "chrome-extension" && !target_host.empty() &&
+         target_host == opener_host;
+}
+
 // Every handler constructed but not yet OnBeforeClose'd. Only ever touched on
 // the CEF UI thread (== main thread, given this app's single-threaded,
 // external-message-pump CefSettings), so no locking is needed.
@@ -113,8 +133,10 @@ std::set<BRWClientHandler*>& Registry() {
 }
 }  // namespace
 
-BRWClientHandler::BRWClientHandler(NSView* host_view, const std::string& profile_name)
-    : host_view_(host_view), profile_name_(profile_name) {
+BRWClientHandler::BRWClientHandler(NSView* host_view,
+                                   const std::string& profile_name,
+                                   const std::string& profile_id)
+    : host_view_(host_view), profile_name_(profile_name), profile_id_(profile_id) {
   Registry().insert(this);
 }
 
@@ -126,6 +148,10 @@ void BRWClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
     pending_close_ = false;
     RequestClose();
     return;
+  }
+
+  if (auto_resize_set_) {
+    browser_->GetHost()->SetAutoResizeEnabled(auto_resize_enabled_, auto_resize_min_, auto_resize_max_);
   }
 
   // The CEF-created native view doesn't track our host view's size on its
@@ -151,6 +177,52 @@ void BRWClientHandler::LoadURLWhenReady(const std::string& url) {
     // than silently dropping a navigation requested in that window.
     pending_url_ = url;
   }
+}
+
+void BRWClientHandler::SetAutoResize(bool enabled, const CefSize& min_size, const CefSize& max_size) {
+  CEF_REQUIRE_UI_THREAD();
+  auto_resize_set_ = true;
+  auto_resize_enabled_ = enabled;
+  auto_resize_min_ = min_size;
+  auto_resize_max_ = max_size;
+  if (browser_) {
+    browser_->GetHost()->SetAutoResizeEnabled(enabled, min_size, max_size);
+  }
+}
+
+bool BRWClientHandler::OnAutoResize(CefRefPtr<CefBrowser> browser, const CefSize& new_size) {
+  CEF_REQUIRE_UI_THREAD();
+  if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidAutoResizeToSize:)]) {
+    [delegate_ browserDidAutoResizeToSize:NSMakeSize(new_size.width, new_size.height)];
+    return true;
+  }
+  return false;
+}
+
+void BRWClientHandler::OnResourceRedirect(CefRefPtr<CefBrowser> browser,
+                                          CefRefPtr<CefFrame> frame,
+                                          CefRefPtr<CefRequest> request,
+                                          CefRefPtr<CefResponse> response,
+                                          CefString& new_url) {
+  if (BRWIsExtensionBridgeURL(new_url)) {
+    NSLog(@"Browser: refused a redirect into the extension bridge");
+    new_url = BRWExtensionBridgeRedirectRefusedURL();
+  }
+}
+
+CefRefPtr<CefResourceRequestHandler> BRWClientHandler::GetResourceRequestHandler(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    bool is_navigation,
+    bool is_download,
+    const CefString& request_initiator,
+    bool& disable_default_handling) {
+  if (CefRefPtr<CefResourceRequestHandler> bridge =
+          BRWExtensionBridgeHandlerForRequest(profile_id_, request, request_initiator, disable_default_handling)) {
+    return bridge;
+  }
+  return this;
 }
 
 void BRWClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
@@ -200,7 +272,8 @@ bool BRWClientHandler::OnBeforePopup(
   // which Chromium's own block on page-initiated top-level data: loads
   // doesn't cover -- so the scheme is checked here.
   const std::string opener_url = frame ? frame->GetURL().ToString() : std::string();
-  if (!BRWPopupTargetAllowed(target_url.ToString(), opener_url)) {
+  if (!BRWPopupTargetAllowed(target_url.ToString(), opener_url) &&
+      !BRWIsSameExtensionPage(target_url.ToString(), opener_url)) {
     NSLog(@"Browser: refused a page-opened window for a disallowed URL scheme");
     return true;
   }

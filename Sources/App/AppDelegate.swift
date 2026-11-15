@@ -94,6 +94,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Before initialize(), so no browser can ever exist with the engine
         // still pointed at the default ~/Downloads (browser-5kq.14).
         Engines.setDownloadDirectory(CommandLineArgs.downloadsDirectory())
+        Engines.setExtensionStorageDirectory(ExtensionsCoordinator.storageDirectory(profileId:))
+        Engines.setFollowerExtensionRuntimesTurnedOn(ChromiumTabExtensionsPreference.isOnThisLaunch)
+        Engines.setFollowerExtensionRuntimesNextLaunch { ChromiumTabExtensionsPreference.isOn }
         guard Engines.initialize(profilesRootPath: profilesRootPath) else {
             NSLog("Browser: engine failed to initialize (root_cache_path=%@)", profilesRootPath)
             NSApp.terminate(nil)

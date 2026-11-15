@@ -22,7 +22,8 @@ import AppKit
 ///   windows are already closed by then.
 /// - Every process-wide setting (downloads folder, blocking lists, threat
 ///   lists, background-tab policy) goes to both engines.
-/// - Extensions are WebKit's only; CEF 150 Alloy has none.
+/// - Extensions have one install list, WebKit's. Chromium runs the same
+///   list in CEF tabs (`CEFExtensionRuntime`), and `extensions` covers both.
 enum Engines {
     static func engine(_ choice: EngineChoice) -> BrowserEngine.Type {
         switch choice {
@@ -92,8 +93,36 @@ enum Engines {
         EngineChoice.allCases.forEach { engine($0).updateThreatBlocking(domains: domains, profileSettings: profileSettings) }
     }
 
-    /// The one extension system, where this OS has it.
+    /// The one extension system, where this OS has it: the engine that owns
+    /// the install list, with every engine that runs the same list beside it
+    /// (see CombinedExtensionManager).
     static var extensions: EngineExtensionManager? {
-        EngineChoice.allCases.lazy.compactMap { engine($0).extensions }.first
+        CombinedExtensionManager.wrapping(EngineChoice.allCases.lazy.compactMap { engine($0).extensions }.first)
+    }
+
+    /// Where each profile's extension install list and packages live (see
+    /// ExtensionsCoordinator.storageDirectory). Before `initialize`: an
+    /// engine that runs the install list reads it before it starts.
+    static func setExtensionStorageDirectory(_ directory: @escaping (String) -> URL?) {
+        EngineChoice.allCases.forEach { engine($0).extensionRuntime?.setStorageDirectory(directory) }
+    }
+
+    /// Whether engines that run another engine's install list run it at all
+    /// in this session. Before `initialize`; fixed until the app quits.
+    static func setFollowerExtensionRuntimesTurnedOn(_ on: Bool) {
+        EngineChoice.allCases.forEach { engine($0).extensionRuntime?.setTurnedOn(on) }
+    }
+
+    /// The same switch as the next launch will read it, for what an install
+    /// consent says about those engines.
+    static func setFollowerExtensionRuntimesNextLaunch(_ isOn: @escaping () -> Bool) {
+        EngineChoice.allCases.forEach { engine($0).extensionRuntime?.setNextLaunchSetting(isOn) }
+    }
+
+    /// Whether every tab of `engine` in the profile runs the profile's
+    /// extensions in this session, with no way to keep a single tab out.
+    /// A page that must not meet them (an agent's) cannot open there.
+    static func extensionsReachEveryTab(engine: EngineChoice, profileId: String) -> Bool {
+        (extensions as? CombinedExtensionManager)?.extensionsReachEveryTab(engine: engine, profileId: profileId) ?? false
     }
 }

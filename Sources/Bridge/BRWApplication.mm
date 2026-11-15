@@ -3,6 +3,7 @@
 #include "include/cef_application_mac.h"
 
 #import "BRWEngine.h"
+#import "BRWExtensionsInternal.h"
 
 @interface BRWApplication () <CefAppProtocol> {
   BOOL _handlingSendEvent;
@@ -27,6 +28,27 @@
 - (void)sendEvent:(NSEvent *)event {
   CefScopedSendingEvent sendingEventScoper;
   [super sendEvent:event];
+}
+
+// Chromium activates the app when it shows a Chrome-style window of its own,
+// which the bridge closes at once (BRWUnmanagedBrowserClient). Activating for
+// it would take the keyboard from whatever app the user is in.
+- (void)activateIgnoringOtherApps:(BOOL)flag {
+  if (BRWExtensionsShouldSuppressActivation()) {
+    NSLog(@"Browser: ignored an activation request from a window Chromium opened on its own");
+    return;
+  }
+  [super activateIgnoringOtherApps:flag];
+}
+
+- (void)activate {
+  if (BRWExtensionsShouldSuppressActivation()) {
+    NSLog(@"Browser: ignored an activation request from a window Chromium opened on its own");
+    return;
+  }
+  if (@available(macOS 14.0, *)) {
+    [super activate];
+  }
 }
 
 // Requesting secure restorable state avoids macOS re-restoring windows

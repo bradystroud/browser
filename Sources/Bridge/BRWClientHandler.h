@@ -41,7 +41,10 @@ class BRWClientHandler : public CefClient,
   // this browser's requests -- see OnBeforeResourceLoad below
   // (browser-12m.5.1). Matches the same profile name BRWBrowser passes to
   // BRWGetOrCreateProfileContext for its CefRequestContext.
-  BRWClientHandler(NSView* host_view, const std::string& profile_name);
+  // `profile_id` is the profile whose request context the browser uses,
+  // and empty for a private window: it is what the extension bridge reports
+  // as a request's profile, and empty refuses the bridge outright.
+  BRWClientHandler(NSView* host_view, const std::string& profile_name, const std::string& profile_id);
 
   void SetDelegate(id<BRWBrowserDelegate> delegate) { delegate_ = delegate; }
   // Lets OnBeforePopup through without a user gesture; see
@@ -55,6 +58,10 @@ class BRWClientHandler : public CefClient,
   // arrives in that window must not be silently dropped: it's queued here and
   // flushed as soon as OnAfterCreated fires.
   void LoadURLWhenReady(const std::string& url);
+
+  // CefBrowserHost::SetAutoResizeEnabled, applied in OnAfterCreated when the
+  // browser does not exist yet. See -[BRWBrowser setAutoResizeEnabled:...].
+  void SetAutoResize(bool enabled, const CefSize& min_size, const CefSize& max_size);
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -144,6 +151,9 @@ class BRWClientHandler : public CefClient,
   // 150.0.14 headers (cef_display_handler.h) rather than assumed; no
   // fake/eased animation needed.
   void OnLoadingProgressChange(CefRefPtr<CefBrowser> browser, double progress) override;
+  // Reports the content's preferred size while auto-resize is on; the
+  // delegate resizes the host view, so CEF's own handling is skipped.
+  bool OnAutoResize(CefRefPtr<CefBrowser> browser, const CefSize& new_size) override;
 
   // CefDownloadHandler methods:
   bool OnBeforeDownload(CefRefPtr<CefBrowser> browser,
@@ -239,7 +249,9 @@ class BRWClientHandler : public CefClient,
   // CefRequestHandler methods:
   // Returning `this` means OnBeforeResourceLoad below (this same object,
   // via CefResourceRequestHandler) is called for every resource this
-  // browser loads -- content-blocker enforcement (browser-12m.5.1). Called
+  // browser loads -- content-blocker enforcement (browser-12m.5.1). The one
+  // exception is a request to the extension bridge's reserved host, which
+  // the bridge answers itself (BRWExtensionBridgeHandlerForRequest). Called
   // on the IO thread.
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
       CefRefPtr<CefBrowser> browser,
@@ -248,9 +260,7 @@ class BRWClientHandler : public CefClient,
       bool is_navigation,
       bool is_download,
       const CefString& request_initiator,
-      bool& disable_default_handling) override {
-    return this;
-  }
+      bool& disable_default_handling) override;
 
   // CefResourceRequestHandler methods:
   // Called on the IO thread, once per resource request this browser makes.
@@ -267,6 +277,14 @@ class BRWClientHandler : public CefClient,
                                     CefRefPtr<CefFrame> frame,
                                     CefRefPtr<CefRequest> request,
                                     CefRefPtr<CefCallback> callback) override;
+
+  // A redirect to the extension bridge's host is sent to a URL the bridge
+  // refuses (BRWExtensionBridgeRedirectRefusedURL). IO thread.
+  void OnResourceRedirect(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefFrame> frame,
+                          CefRefPtr<CefRequest> request,
+                          CefRefPtr<CefResponse> response,
+                          CefString& new_url) override;
 
   CefRefPtr<CefBrowser> GetBrowser() { return browser_; }
   NSView* GetHostView() const { return host_view_; }
@@ -332,7 +350,13 @@ class BRWClientHandler : public CefClient,
   // this handler's lifetime (matches BRWBrowser: a tab's profile is fixed
   // at creation).
   std::string profile_name_;
+  // Set once at construction; read on the IO thread. See the constructor.
+  const std::string profile_id_;
   CefRefPtr<CefBrowser> browser_;
+  bool auto_resize_set_ = false;
+  bool auto_resize_enabled_ = false;
+  CefSize auto_resize_min_;
+  CefSize auto_resize_max_;
   bool closed_ = false;
   // Set by RequestClose() when it runs before OnAfterCreated has fired for
   // this handler (CreateBrowser is asynchronous) -- there's no CefBrowser

@@ -59,11 +59,12 @@ enum WebKitExtensionInstaller {
 
     /// Downloads `id`, checks its signature against the id, and unpacks it
     /// into a fresh staging folder inside `directory`. The caller moves the
-    /// folder into place or deletes it.
-    static func downloadAndStage(id: String, in directory: URL) async throws -> URL {
+    /// folder into place or deletes it. `publicKey`, when given, receives the
+    /// developer key the signature check proved (see `CRXPublicKeySink`).
+    static func downloadAndStage(id: String, in directory: URL, publicKey: CRXPublicKeySink? = nil) async throws -> URL {
         let crx = try await fetchPackage(id: id)
         return try await Task.detached(priority: .userInitiated) {
-            let zip = try Crx3.verifiedArchive(crx, expectedID: id)
+            let zip = try CRXPublicKeySink.verifiedArchive(crx, expectedID: id, keepingKeyIn: publicKey)
             let staged = directory.appendingPathComponent(".staging-\(id)-\(UUID().uuidString)", isDirectory: true)
             try unpack(zip, into: staged)
             return staged
