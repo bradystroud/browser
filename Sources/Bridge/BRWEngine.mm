@@ -4,14 +4,17 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include "include/cef_app.h"
+#include "include/cef_cookie.h"
 #include "include/cef_request_context.h"
 #include "include/wrapper/cef_library_loader.h"
 
 #import "BRWCefApp.h"
 #import "BRWClientHandler.h"
 #import "BRWEngineInternal.h"
+#import "BRWExtensionsInternal.h"
 #include "BRWMessagePump.h"
 #import "BRWStringUtil.h"
 
@@ -54,9 +57,78 @@ ShutdownCompletionBlock __strong &PendingShutdownCompletion() {
   return completion;
 }
 
+// A Chrome-style browser Chromium made on its own (see
+// BRWUnmanagedBrowserClient) is closed at once and normally gone in well
+// under a second. One that never reports closed must not hold quit up for
+// ever, so quitting waits this long for such browsers only, then exits
+// without CefShutdown, which CEF does not allow while a browser is alive.
+// The app's own browsers are always waited for.
+constexpr CFAbsoluteTime kUnmanagedShutdownWaitSeconds = 5.0;
+CFAbsoluteTime g_shutdown_requested_at = 0;
+bool g_skip_cef_shutdown = false;
+
+// The longest the skip path waits for the cookie stores to flush.
+constexpr int64_t kCookieFlushWaitMilliseconds = 2000;
+
+class FlushCallback : public CefCompletionCallback {
+ public:
+  explicit FlushCallback(void (^done)(void)) : done_([done copy]) {}
+  void OnComplete() override { done_(); }
+
+ private:
+  void (^done_)(void);
+  IMPLEMENT_REFCOUNTING(FlushCallback);
+};
+
+// CefShutdown is what writes Chromium's state at quit, so the path that skips
+// it first flushes what CEF lets the app flush: every profile's cookie store
+// and the global one. `then` runs once, on the main thread, when all have
+// reported or after kCookieFlushWaitMilliseconds.
+void FlushCookieStoresThen(void (^then)(void)) {
+  __block bool finished = false;
+  __block int pending = 0;
+  void (^finish)(void) = ^{
+    if (!finished) {
+      finished = true;
+      then();
+    }
+  };
+  void (^one_done)(void) = ^{
+    if (--pending == 0) {
+      finish();
+    }
+  };
+  std::vector<CefRefPtr<CefCookieManager>> managers;
+  for (const auto &entry : ProfileContexts()) {
+    if (CefRefPtr<CefCookieManager> manager = entry.second->GetCookieManager(nullptr)) {
+      managers.push_back(manager);
+    }
+  }
+  if (CefRefPtr<CefCookieManager> global = CefCookieManager::GetGlobalManager(nullptr)) {
+    managers.push_back(global);
+  }
+  pending = static_cast<int>(managers.size()) + 1;
+  for (const auto &manager : managers) {
+    // The callback runs on the UI thread, which is the main thread here.
+    if (!manager->FlushStore(new FlushCallback(one_done))) {
+      one_done();
+    }
+  }
+  one_done();
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, kCookieFlushWaitMilliseconds * NSEC_PER_MSEC),
+                 dispatch_get_main_queue(), finish);
+}
+
 void CheckShutdownCompletion() {
   if (!PendingShutdownCompletion() || BRWClientHandler::LiveCount() > 0) {
     return;
+  }
+  if (BRWUnmanagedBrowserLiveCount() > 0) {
+    if (CFAbsoluteTimeGetCurrent() - g_shutdown_requested_at < kUnmanagedShutdownWaitSeconds) {
+      return;
+    }
+    NSLog(@"Browser: quitting without engine shutdown; a window Chromium opened on its own never closed");
+    g_skip_cef_shutdown = true;
   }
   // CefShutdown inside a CefDoMessageLoopWork() tick trips a CEF CHECK. The
   // pump checks again the moment that tick returns.
@@ -65,7 +137,11 @@ void CheckShutdownCompletion() {
   }
   ShutdownCompletionBlock completion = PendingShutdownCompletion();
   PendingShutdownCompletion() = nil;
-  completion();
+  if (g_skip_cef_shutdown) {
+    FlushCookieStoresThen(completion);
+  } else {
+    completion();
+  }
 }
 
 // Set via +setWindowCloseHandler:. See that method's doc comment.
@@ -90,9 +166,27 @@ CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &pro
   CefString(&settings.cache_path) = cache_path;
 
   CefRefPtr<CefRequestContext> context =
-      CefRequestContext::CreateContext(settings, nullptr);
+      CefRequestContext::CreateContext(settings, BRWCreateExtensionContextHandler(profile_id));
+  // At once, not only when the context reports initialized: an extension's
+  // worker can start before that, and its first bridge request must not go
+  // out to DNS.
+  BRWRegisterExtensionBridgeSchemeHandler(context, profile_id);
   contexts[profile_id] = context;
   return context;
+}
+
+// Declared in BRWEngineInternal.h.
+bool BRWProfileIdForRequestContext(CefRefPtr<CefRequestContext> context, std::string *profile_id) {
+  if (!context) {
+    return false;
+  }
+  for (const auto &entry : ProfileContexts()) {
+    if (entry.second->IsSame(context) || entry.second->IsSharingWith(context)) {
+      *profile_id = entry.first;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Declared in BRWEngineInternal.h -- BRWBrowser.mm is the other caller.
@@ -105,7 +199,12 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   // same profile, but a private window's context is used exactly once, by
   // exactly the one CefBrowser it backs.
   CefRequestContextSettings settings;
-  return CefRequestContext::CreateContext(settings, nullptr);
+  // A handler with no profile id: no extension runs here, and a request to
+  // the extension bridge's reserved host is refused, never sent out.
+  CefRefPtr<CefRequestContext> context =
+      CefRequestContext::CreateContext(settings, BRWCreateExtensionContextHandler(std::string()));
+  BRWRegisterExtensionBridgeSchemeHandler(context, std::string());
+  return context;
 }
 
 @implementation BRWEngine
@@ -150,8 +249,11 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   if (PendingShutdownCompletion()) {
     return;  // Already shutting down (e.g. a second Cmd+Q while quitting).
   }
+  g_shutdown_requested_at = CFAbsoluteTimeGetCurrent();
   PendingShutdownCompletion() = [^{
-    [BRWEngine shutdown];
+    if (!g_skip_cef_shutdown) {
+      [BRWEngine shutdown];
+    }
     if (completion) {
       completion();
     }
@@ -165,6 +267,7 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
     WindowCloseHandler()();
   }
   BRWClientHandler::CloseAll();
+  BRWCloseUnmanagedBrowsers();
   // CloseAll() may not have needed to touch CEF at all (no open browsers),
   // in which case the message pump's next tick could be arbitrarily far
   // off (or never come, if the caller relies on this to signal quitting) --
@@ -173,6 +276,11 @@ CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext() {
   // SIGTERM with [NSApp terminate:] from there), and with no browser left
   // a synchronous check would run CefShutdown inside it.
   dispatch_async(dispatch_get_main_queue(), ^{
+    CheckShutdownCompletion();
+  });
+  // The pump may be idle when that wait runs out.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)((kUnmanagedShutdownWaitSeconds + 0.1) * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
     CheckShutdownCompletion();
   });
 }

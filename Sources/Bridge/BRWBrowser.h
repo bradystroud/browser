@@ -323,6 +323,12 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// itself, in the last container it was embedded in, or CEF's own separate
 /// window if it never was.
 - (void)browserDidRequestInspectElementAtPoint:(NSPoint)point;
+
+/// While auto-resize is on (-setAutoResizeEnabled:minSize:maxSize:), the
+/// page's preferred size changed. `size` is in points, within the min and
+/// max given. The delegate resizes the host view to fit; the bridge does not.
+/// Implementing this is what tells CEF the resize is handled.
+- (void)browserDidAutoResizeToSize:(NSSize)size;
 @end
 
 /// What Chromium recorded about how the visible page arrived, read from its
@@ -476,6 +482,21 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// delivery.
 - (void)setAutomationEventHandler:(nullable void (^)(NSString *method, NSString *paramsJSON))handler
     NS_SWIFT_NAME(setAutomationEventHandler(_:));
+
+/// CEF's identifier for this browser, which is also the `tabId` Chromium's
+/// extension APIs use for it (`sender.tab.id`, `tabs.get`). 0 until the
+/// engine has created the browser, which happens asynchronously after init.
+@property (nonatomic, readonly) NSInteger browserIdentifier;
+
+/// Sizes the page to its content, for an extension's action popup: CEF lays
+/// the page out at its preferred size between `minSize` and `maxSize` (in
+/// points) and reports each change through -browserDidAutoResizeToSize:.
+/// May be called before the browser exists; it applies once it does. NO
+/// turns it off. Main thread only.
+- (void)setAutoResizeEnabled:(BOOL)enabled
+                     minSize:(NSSize)minSize
+                     maxSize:(NSSize)maxSize
+    NS_SWIFT_NAME(setAutoResize(enabled:minSize:maxSize:));
 
 /// Lets the page open new tabs with no user gesture: from script, a timer,
 /// or several from one click. Scheme checks still apply. Only agent pages

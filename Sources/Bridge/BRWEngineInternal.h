@@ -30,3 +30,8 @@ CefRefPtr<CefRequestContext> BRWGetOrCreateProfileContext(const std::string &pro
 /// deliberately no profile identity for a private window to look this back
 /// up by.
 CefRefPtr<CefRequestContext> BRWCreateEphemeralRequestContext();
+
+/// The profile id whose context `context` is (or shares storage with), for a
+/// context BRWGetOrCreateProfileContext made. False for any other context: a
+/// private window's, or Chromium's own default one. UI thread only.
+bool BRWProfileIdForRequestContext(CefRefPtr<CefRequestContext> context, std::string *profile_id);

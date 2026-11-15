@@ -183,7 +183,7 @@ bool IsCertStatusError(cef_cert_status_t status) {
     // name-keyed) content-blocking snapshot lookup -- see BRWBrowser.h's
     // doc comment on this initializer for why the cache-path lookup just
     // below deliberately uses profileId instead.
-    _handler = new BRWClientHandler(hostView, ToStdString(profileName));
+    _handler = new BRWClientHandler(hostView, ToStdString(profileName), ToStdString(profileId));
 
     CefWindowInfo window_info;
     CefRect bounds(0, 0, (int)hostView.bounds.size.width, (int)hostView.bounds.size.height);
@@ -211,7 +211,7 @@ bool IsCertStatusError(cef_cert_status_t status) {
     // ContentBlockerCoordinator.swift, which publishes a matching "private"
     // entry so private windows still get content-blocking applied instead of
     // silently no-oping for lack of a snapshot entry).
-    _handler = new BRWClientHandler(hostView, "private");
+    _handler = new BRWClientHandler(hostView, "private", std::string());
 
     CefWindowInfo window_info;
     CefRect bounds(0, 0, (int)hostView.bounds.size.width, (int)hostView.bounds.size.height);
@@ -291,6 +291,17 @@ bool IsCertStatusError(cef_cert_status_t status) {
     _automation = new BRWAutomationChannel();
   }
   _automation->SetEventHandler(handler);
+}
+
+- (NSInteger)browserIdentifier {
+  return (_handler && _handler->GetBrowser()) ? _handler->GetBrowser()->GetIdentifier() : 0;
+}
+
+- (void)setAutoResizeEnabled:(BOOL)enabled minSize:(NSSize)minSize maxSize:(NSSize)maxSize {
+  if (_handler) {
+    _handler->SetAutoResize(enabled, CefSize((int)lround(minSize.width), (int)lround(minSize.height)),
+                            CefSize((int)lround(maxSize.width), (int)lround(maxSize.height)));
+  }
 }
 
 - (void)setAllowsPopupsWithoutGesture:(BOOL)allow {
