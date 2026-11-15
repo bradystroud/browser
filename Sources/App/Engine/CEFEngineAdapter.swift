@@ -30,7 +30,9 @@ enum CEFEngine: BrowserEngine {
         BRWEngine.initialize(withProfilesRootPath: profilesRootPath)
     }
 
-    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
+    /// `runsExtensions` has nothing to switch off: this engine runs no
+    /// extensions (`webExtensions: false`).
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) -> EngineTab {
         CEFTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
     }
 

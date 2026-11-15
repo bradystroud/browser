@@ -124,7 +124,9 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitExtensions.swift
   Engine/WebKitExtensionAdapters.swift
   Engine/WebKitExtensionInstaller.swift
+  Engine/WebKitExtensionPageWindow.swift
   Engine/WebKitNativeMessaging.swift
+  Engine/ExtensionSettingsProvider.swift
   Routing/RoutingRulesStore.swift
   EngineRules/EngineRulesStore.swift
   EngineRules/EngineRulesPaneController.swift
@@ -157,6 +159,7 @@ set(BROWSER_SWIFT_SRCS
   Furniture/ReadingListCoordinator.swift
   Furniture/ReadingListWindowController.swift
   Extensions/ExtensionsCoordinator.swift
+  Extensions/ExtensionControlledSettingsCenter.swift
   Extensions/ExtensionsToolbarController.swift
   Extensions/ExtensionsWindowController.swift
   Extensions/ExtensionsPaneController.swift
@@ -171,6 +174,7 @@ set(BROWSER_SWIFT_SRCS
   Passwords/SensitivePasteboard.swift
   Passwords/PasswordManagerCoordinator.swift
   Passwords/PasswordsPaneController.swift
+  Passwords/ICloudPasswordsSection.swift
   Autofill/PaymentAddressDetectionScript.swift
   Autofill/AutofillFillScript.swift
   Autofill/AddressStoreManager.swift
@@ -290,6 +294,9 @@ source_group(RoutingCore FILES ${BROWSER_ROUTING_CORE_SRCS})
 set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/Database.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/JSONFile.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ExtensionControlledSettings.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/PasswordSavePrompt.swift
+  ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ExtensionSettingsMessages.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/NativeMessaging.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/ProfilesRootResolver.swift
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/KeychainNamespace.swift
@@ -387,9 +394,14 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebAuthnRequest.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CredentialScope.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExternalSchemePolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExtensionIsolationPolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionPackage.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionCompatibility.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PreparedExtensionCopy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebExtensionsFolder.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionUpdate.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ICloudPasswordsExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ZipArchive.swift
   )
 source_group(WebEngineCore FILES ${BROWSER_WEBENGINE_CORE_SRCS})

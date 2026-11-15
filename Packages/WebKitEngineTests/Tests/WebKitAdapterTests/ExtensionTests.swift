@@ -34,12 +34,13 @@ final class ExtensionManagerTests: XCTestCase {
         host = FakeHost()
         let root = root!
         manager.activate(host: host, storageDirectory: { id in
-            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("Extensions", isDirectory: true)
+            id.hasPrefix("private-") ? nil : root.appendingPathComponent(id).appendingPathComponent("WebExtensions", isDirectory: true)
         })
         profileId = UUID().uuidString
     }
 
     override func tearDown() async throws {
+        WebKitExtensionInstaller.fetchOverride = nil
         try? FileManager.default.removeItem(at: root)
     }
 
@@ -84,7 +85,7 @@ final class ExtensionManagerTests: XCTestCase {
         XCTAssertTrue(running.hasAccess(to: URL(string: "https://example.com/page")!))
         XCTAssertFalse(running.hasAccess(to: URL(string: "https://other.test/")!))
 
-        let listed = InstalledWebExtensionList.load(from: root.appendingPathComponent(profileId).appendingPathComponent("Extensions/installed.json"))
+        let listed = InstalledWebExtensionList.load(from: root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions/installed.json"))
         XCTAssertEqual(listed.extensions.map(\.id), [id])
         XCTAssertEqual(listed.extensions.first?.grants, ["host:https://example.com/*", "perm:storage"])
     }
@@ -139,15 +140,15 @@ final class ExtensionManagerTests: XCTestCase {
         } catch WebKitExtensionError.unavailable {}
         XCTAssertTrue(host.asked.isEmpty)
         let base = WKWebViewConfiguration()
-        let configured = manager.configuration(for: base, profileId: "private-x", initialURL: "https://example.com/")
+        let configured = manager.configuration(for: base, profileId: "private-x", initialURL: "https://example.com/", runsExtensions: true)
         XCTAssertNil(configured.webExtensionController)
     }
 
     func testTabsGetTheirProfilesController() throws {
-        let configured = manager.configuration(for: WKWebViewConfiguration(), profileId: profileId, initialURL: "https://example.com/")
+        let configured = manager.configuration(for: WKWebViewConfiguration(), profileId: profileId, initialURL: "https://example.com/", runsExtensions: true)
         XCTAssertNotNil(configured.webExtensionController)
         XCTAssertTrue(configured.webExtensionController === manager.profile(for: profileId)?.controller)
-        let other = manager.configuration(for: WKWebViewConfiguration(), profileId: UUID().uuidString, initialURL: "https://example.com/")
+        let other = manager.configuration(for: WKWebViewConfiguration(), profileId: UUID().uuidString, initialURL: "https://example.com/", runsExtensions: true)
         XCTAssertFalse(other.webExtensionController === configured.webExtensionController, "each profile has its own")
     }
 
@@ -207,6 +208,502 @@ final class ExtensionManagerTests: XCTestCase {
         try FileManager.default.removeItem(at: profileFolder)
         await manager.checkForUpdates(profileId: profileId, force: true)
         XCTAssertFalse(FileManager.default.fileExists(atPath: profileFolder.path))
+    }
+
+    // MARK: - The Chrome compatibility layer
+
+    /// An MV3 worker that, like iCloud Passwords, reads `chrome.privacy`
+    /// and `webNavigation.onHistoryStateUpdated` at its top level, then
+    /// sets its badge -- which it only reaches if neither read threw.
+    private func writeChromeOnlyExtension(at folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "manifest_version": 3, "name": "Chrome Only", "version": "1.0",
+            "permissions": ["privacy", "webNavigation", "storage"],
+            "background": ["service_worker": "background.js"],
+            "action": ["default_title": "Chrome Only"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
+        try Data("""
+        chrome.privacy.services.passwordSavingEnabled.onChange.addListener(function () {});
+        chrome.webNavigation.onHistoryStateUpdated.addListener(function () {});
+        chrome.webNavigation.onTabReplaced.addListener(function () {});
+        chrome.privacy.services.passwordSavingEnabled.get({}).then(function (d) {
+          chrome.action.setBadgeText({ text: d.levelOfControl === "not_controllable" ? "ran" : "odd" });
+        });
+        """.utf8).write(to: folder.appendingPathComponent("background.js"))
+    }
+
+    private func badge(of id: String, within seconds: Double) async -> String? {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let text = manager.action(extensionId: id, profileId: profileId, tab: nil)?.badgeText, !text.isEmpty { return text }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return manager.action(extensionId: id, profileId: profileId, tab: nil)?.badgeText
+    }
+
+    /// A store install from before the layer existed is prepared when it
+    /// loads, and its worker then runs to the end in real WebKit.
+    func testStoreExtensionNeedingChromeAPIsRunsOnceLoaded() async throws {
+        let id = String(repeating: "c", count: 32)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
+        let folder = extensions.appendingPathComponent(id, isDirectory: true)
+        try writeChromeOnlyExtension(at: folder)
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Chrome Only", version: "1.0",
+                                           grants: ["perm:privacy", "perm:storage", "perm:webNavigation"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+
+        manager.loadExtensions(profileId: profileId)
+
+        let text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "ran", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        let copy = extensions.appendingPathComponent("webkit/\(id)", isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.appendingPathComponent(ChromeExtensionCompatibility.shimFile).path),
+                      "WebKit runs its prepared copy")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), ["background.js", "manifest.json"],
+                       "the package's own folder is left as it unpacked")
+    }
+
+    /// A store install made when the layer was written into the package's
+    /// own folder: on its first load the folder becomes the package again,
+    /// and the extension runs from WebKit's copy.
+    func testPackagePreparedInPlaceIsRestoredAndStillRuns() async throws {
+        let id = String(repeating: "d", count: 32)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
+        let folder = extensions.appendingPathComponent(id, isDirectory: true)
+        try writeChromeOnlyExtension(at: folder)
+        let worker = try Data(contentsOf: folder.appendingPathComponent("background.js"))
+        try ChromeExtensionCompatibility.prepare(folder: folder)
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Chrome Only", version: "1.0",
+                                           grants: ["perm:privacy", "perm:storage", "perm:webNavigation"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+
+        manager.loadExtensions(profileId: profileId)
+
+        let text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "ran", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        XCTAssertFalse(ChromeExtensionCompatibility.isPrepared(folder: folder))
+        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("background.js")), worker)
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("manifest.json"))) as? [String: Any])
+        XCTAssertEqual((manifest["background"] as? [String: Any])?["service_worker"] as? String, "background.js")
+        XCTAssertTrue(ChromeExtensionCompatibility.isPrepared(folder: extensions.appendingPathComponent("webkit/\(id)")))
+        let recordNow = try XCTUnwrap(manager.profile(for: profileId)?.record(id))
+        XCTAssertEqual(WebExtensionsFolder.packageState(of: recordNow, packageFolder: folder, in: extensions), .whole,
+                       "recorded after the layer came out, so the next load does not take the reversal for damage")
+    }
+
+    /// An extension's storage belongs to its id and stable origin, not to
+    /// the folder WebKit read it from: one that moves from its package
+    /// folder to WebKit's copy (here, because an update starts to need the
+    /// layer) still finds what it stored.
+    func testStorageSurvivesTheMoveToWebKitsCopy() async throws {
+        let id = String(repeating: "e", count: 32)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
+        let folder = extensions.appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        func writeManifest(permissions: [String]) throws {
+            let manifest: [String: Any] = [
+                "manifest_version": 3, "name": "Counter", "version": "1.0", "permissions": permissions,
+                "background": ["service_worker": "background.js"], "action": ["default_title": "Counter"],
+            ]
+            try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
+        }
+        try writeManifest(permissions: ["storage"])
+        try Data("""
+        chrome.storage.local.get("count").then(function (stored) {
+          var count = (stored.count || 0) + 1;
+          return chrome.storage.local.set({ count: count }).then(function () {
+            chrome.action.setBadgeText({ text: String(count) });
+          });
+        });
+        """.utf8).write(to: folder.appendingPathComponent("background.js"))
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Counter", version: "1.0",
+                                           grants: ["perm:privacy", "perm:storage"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+
+        manager.loadExtensions(profileId: profileId)
+        let first = await badge(of: id, within: 10)
+        XCTAssertEqual(first, "1")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: extensions.appendingPathComponent("webkit/\(id)").path),
+                       "an extension the layer does not apply to runs from its package")
+
+        manager.unloadProfile(profileId: profileId)
+        // As an update leaves it: the new package, and the record of it.
+        try writeManifest(permissions: ["storage", "privacy"])
+        try WebExtensionsFolder.recordContents(of: folder, id: id, in: extensions)
+        manager.loadExtensions(profileId: profileId)
+
+        let second = await badge(of: id, within: 10)
+        XCTAssertEqual(second, "2", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        XCTAssertTrue(ChromeExtensionCompatibility.isPrepared(folder: extensions.appendingPathComponent("webkit/\(id)")))
+    }
+
+    /// The control for the test above: the same extension loaded from a
+    /// developer's folder is left as it is, and its worker stops at the
+    /// first API WebKit lacks.
+    func testUnpackedExtensionIsNeverWrittenTo() async throws {
+        let folder = root.appendingPathComponent("dev-chrome-only-\(UUID().uuidString)", isDirectory: true)
+        try writeChromeOnlyExtension(at: folder)
+        let before = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        host.answers = [true]
+        try await manager.loadUnpacked(folder: folder, profileId: profileId)
+        let id = try XCTUnwrap(manager.extensions(profileId: profileId).first?.id)
+        try await manager.reload(extensionId: id, profileId: profileId)
+
+        let text = await badge(of: id, within: 3)
+        XCTAssertTrue(text?.isEmpty ?? true, "the worker stopped at chrome.privacy, so it never set a badge")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted(), before)
+    }
+
+    // MARK: - Settings an extension may hold
+
+    /// The app's provider, with the real store and message handling but no
+    /// app around it.
+    private final class StoreProvider: ExtensionSettingsProvider {
+        let store = ExtensionControlledSettings(fileURL: nil)
+        var requests: [String] = []
+        func handle(_ request: Any, from extensionId: String, profileId: String) -> [String: Any] {
+            requests.append((request as? [String: Any])?["op"] as? String ?? "?")
+            return ExtensionSettingsMessages.handle(request, from: extensionId, in: store) { _ in true }.reply
+        }
+        func subscribe(extensionId: String, profileId: String, send: @escaping ([String: Any]) -> Void) -> NSObjectProtocol { NSObject() }
+        func unsubscribe(_ token: NSObjectProtocol) {}
+        func release(extensionId: String, profileId: String) { store.release(extensionId: extensionId) }
+        func forget(profileId: String) {}
+    }
+
+    /// iCloud Passwords' own logic in a worker: read the setting and, when it
+    /// may, set it to false; the badge then says what the browser reports.
+    private func writeSettingsTaker(at folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "manifest_version": 3, "name": "Taker", "version": "1.0", "permissions": ["privacy", "nativeMessaging"],
+            "background": ["service_worker": "background.js"], "action": ["default_title": "Taker"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
+        try Data("""
+        const setting = chrome.privacy.services.passwordSavingEnabled;
+        setting.get({}).then(function (d) {
+          if (d.levelOfControl === "not_controllable") return d;
+          return setting.set({ value: false }).then(function () { return setting.get({}); });
+        }).then(function (d) {
+          chrome.action.setBadgeText({ text: d.levelOfControl + ":" + d.value });
+        });
+        """.utf8).write(to: folder.appendingPathComponent("background.js"))
+    }
+
+    /// A store install of the taker. `grants` nil records what a real
+    /// install records -- the grants computed from the package by
+    /// `WebKitExtensionManager.grants(for:)`; a list stands for the record
+    /// an older version of the app wrote.
+    private func installSettingsTaker(grants: [String]? = nil) async throws -> String {
+        let id = String(repeating: "f", count: 32)
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
+        let folder = extensions.appendingPathComponent(id, isDirectory: true)
+        try writeSettingsTaker(at: folder)
+        let recorded: [String]
+        if let grants {
+            recorded = grants
+        } else {
+            recorded = WebKitExtensionManager.grants(for: try await WKWebExtension(resourceBaseURL: folder))
+        }
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Taker", version: "1.0", grants: recorded)
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+        return id
+    }
+
+    private func record(_ id: String) -> InstalledWebExtension? {
+        manager.profile(for: profileId)?.record(id)
+    }
+
+    /// WebKit does not know `privacy`; the grant an install records still
+    /// carries it, read from the manifest.
+    func testInstallGrantsIncludeThePrivacyPermissionWebKitDoesNotKnow() async throws {
+        let folder = root.appendingPathComponent("taker-\(UUID().uuidString)", isDirectory: true)
+        try writeSettingsTaker(at: folder)
+        let found = try await WKWebExtension(resourceBaseURL: folder)
+        XCTAssertFalse(found.requestedPermissions.map(\.rawValue).contains("privacy"), "WebKit leaves privacy out")
+        XCTAssertEqual(WebKitExtensionManager.grants(for: found), ["perm:nativeMessaging", "perm:privacy"])
+        XCTAssertTrue(WebKitExtensionManager.describe(WebKitExtensionManager.grants(for: found)).contains("Change your privacy settings"))
+    }
+
+    /// The consent an install shows names it, and the record keeps it.
+    func testLoadingAnExtensionThatAsksForPrivacyAsksForItAndRecordsIt() async throws {
+        let folder = root.appendingPathComponent("taker-\(UUID().uuidString)", isDirectory: true)
+        try writeSettingsTaker(at: folder)
+        host.answers = [true]
+        try await manager.loadUnpacked(folder: folder, profileId: profileId)
+        XCTAssertEqual(host.asked.count, 1)
+        XCTAssertTrue(host.asked[0].message.contains("Change your privacy settings"), host.asked[0].message)
+        let id = try XCTUnwrap(manager.extensions(profileId: profileId).first?.id)
+        XCTAssertTrue(record(id)?.grants.contains("perm:privacy") == true)
+    }
+
+    func testAWorkerTakesPasswordSavingAndTurningItOffGivesItBack() async throws {
+        let provider = StoreProvider()
+        ExtensionSettingsHost.provider = provider
+        defer { ExtensionSettingsHost.provider = nil }
+        let id = try await installSettingsTaker()
+
+        manager.loadExtensions(profileId: profileId)
+        let text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "controlled_by_this_extension:false", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        XCTAssertTrue(host.asked.isEmpty, "an install's own grants need no second question")
+        XCTAssertEqual(provider.store.holder(of: .passwordSavingEnabled), id, "held under the id WebKit names, from no message")
+        XCTAssertEqual(provider.requests, ["get", "set", "get"])
+        let context = try XCTUnwrap(context(id))
+        XCTAssertTrue(WebKitNativeMessaging.hostProcessIdentifiers(for: context).isEmpty, "the settings host is no process")
+
+        manager.setEnabled(false, extensionId: id, profileId: profileId)
+        XCTAssertNil(provider.store.holder(of: .passwordSavingEnabled), "turned off, it holds nothing")
+    }
+
+    func testRemovingTheExtensionGivesTheSettingBack() async throws {
+        let provider = StoreProvider()
+        ExtensionSettingsHost.provider = provider
+        defer { ExtensionSettingsHost.provider = nil }
+        let id = try await installSettingsTaker()
+        manager.loadExtensions(profileId: profileId)
+        _ = await badge(of: id, within: 10)
+        XCTAssertEqual(provider.store.holder(of: .passwordSavingEnabled), id)
+
+        manager.remove(extensionId: id, profileId: profileId)
+        let released = expectation(description: "released")
+        func poll() {
+            if provider.store.holder(of: .passwordSavingEnabled) == nil { released.fulfill() } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() }
+            }
+        }
+        poll()
+        await fulfillment(of: [released], timeout: 10)
+    }
+
+    /// The record an older version of the app wrote for iCloud Passwords
+    /// has no `perm:privacy`. Loading asks for it once; yes turns the
+    /// settings link on.
+    func testAnOlderRecordIsAskedForPrivacyOnceAndYesTurnsTheLinkOn() async throws {
+        let provider = StoreProvider()
+        ExtensionSettingsHost.provider = provider
+        defer { ExtensionSettingsHost.provider = nil }
+        let id = try await installSettingsTaker(grants: ["perm:nativeMessaging"])
+        host.answers = [true]
+
+        manager.loadExtensions(profileId: profileId)
+        let text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "controlled_by_this_extension:false")
+        XCTAssertEqual(host.asked.map(\.title), ["“Taker” wants more access"])
+        XCTAssertEqual(WebKitExtensionManager.describe(["perm:privacy"]), ["Change your privacy settings"])
+        XCTAssertTrue(host.asked[0].message.contains("Change your privacy settings"), host.asked[0].message)
+        XCTAssertEqual(record(id)?.grants, ["perm:nativeMessaging", "perm:privacy"])
+        XCTAssertNil(record(id)?.declinedGrants)
+        XCTAssertEqual(provider.store.holder(of: .passwordSavingEnabled), id)
+    }
+
+    /// No leaves the setting `not_controllable`, is kept, and is not asked
+    /// again on the next load; a manual Reload asks once more.
+    func testANoIsRememberedAndOnlyAReloadAsksAgain() async throws {
+        let provider = StoreProvider()
+        ExtensionSettingsHost.provider = provider
+        defer { ExtensionSettingsHost.provider = nil }
+        let id = try await installSettingsTaker(grants: ["perm:nativeMessaging"])
+        host.answers = [false]
+
+        manager.loadExtensions(profileId: profileId)
+        var text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "not_controllable:true", "refused, the extension still runs, without the link")
+        XCTAssertEqual(host.asked.count, 1)
+        XCTAssertEqual(record(id)?.declinedGrants, ["perm:privacy"])
+        XCTAssertEqual(record(id)?.grants, ["perm:nativeMessaging"])
+        XCTAssertEqual(provider.requests, [], "the request never reached the browser's settings")
+
+        manager.unloadProfile(profileId: profileId)
+        manager.loadExtensions(profileId: profileId)
+        text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "not_controllable:true")
+        XCTAssertEqual(host.asked.count, 1, "the next launch does not ask again")
+        XCTAssertEqual(record(id)?.declinedGrants, ["perm:privacy"], "the refusal is kept on disk")
+
+        host.answers = [true]
+        try await manager.reload(extensionId: id, profileId: profileId)
+        XCTAssertEqual(host.asked.count, 2, "a manual Reload asks again")
+        text = await badge(of: id, within: 10)
+        XCTAssertEqual(text, "controlled_by_this_extension:false")
+        XCTAssertTrue(record(id)?.grants.contains("perm:privacy") == true)
+        XCTAssertNil(record(id)?.declinedGrants)
+    }
+
+    // MARK: - WebExtensions/ and missing packages
+
+    /// fixture-hello.crx: a real, signed CRX3 (WebEngineCore's fixture).
+    private static let fixtureID = "pgmnddkfhcbihfijmfgancppilgkimei"
+    private static func fixturePackage() throws -> Data {
+        let packages = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        return try Data(contentsOf: packages.appendingPathComponent("WebEngineCore/Tests/WebEngineCoreTests/Fixtures/fixture-hello.crx"))
+    }
+
+    /// What Chromium's collector leaves: the list names a store extension
+    /// whose package folder is gone.
+    private func recordWithoutPackage() throws -> URL {
+        let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
+        try FileManager.default.createDirectory(at: extensions, withIntermediateDirectories: true)
+        let record = InstalledWebExtension(id: Self.fixtureID, source: .webStore, name: "Fixture Hello", version: "1.2.3",
+                                           grants: ["host:https://example.com/*", "perm:storage"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
+        return extensions
+    }
+
+    func testAMissingPackageIsDownloadedAgainWithTheGrantsOnRecord() async throws {
+        let extensions = try recordWithoutPackage()
+        var fetched: [String] = []
+        WebKitExtensionInstaller.fetchOverride = { id in fetched.append(id); return try Self.fixturePackage() }
+        defer { WebKitExtensionInstaller.fetchOverride = nil }
+
+        manager.loadExtensions(profileId: profileId)
+        let loaded = expectation(description: "loaded")
+        func poll() {
+            if context(Self.fixtureID) != nil { loaded.fulfill() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() } }
+        }
+        poll()
+        await fulfillment(of: [loaded], timeout: 10)
+
+        XCTAssertEqual(fetched, [Self.fixtureID], "through the verified download, for the id on record")
+        XCTAssertTrue(host.asked.isEmpty, "nothing beyond the grants on record, so nothing to ask")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: extensions.appendingPathComponent("\(Self.fixtureID)/manifest.json").path))
+        XCTAssertEqual(manager.profile(for: profileId)?.record(Self.fixtureID)?.grants, ["host:https://example.com/*", "perm:storage"])
+        XCTAssertEqual(try XCTUnwrap(context(Self.fixtureID)).baseURL.absoluteString, "chrome-extension://\(Self.fixtureID)/")
+        XCTAssertEqual(WebExtensionsFolder.packageState(of: try XCTUnwrap(manager.profile(for: profileId)?.record(Self.fixtureID)),
+                                                        packageFolder: extensions.appendingPathComponent(Self.fixtureID), in: extensions),
+                       .whole, "what was downloaded is recorded, so the next load can check it")
+    }
+
+    /// The fixture unpacked where an install puts it, with a record of its
+    /// contents only if `recorded` (an older version of the app kept none).
+    private func unpackedFixture(recorded: Bool) throws -> URL {
+        let extensions = try recordWithoutPackage()
+        let folder = extensions.appendingPathComponent(Self.fixtureID, isDirectory: true)
+        try ZipArchive.extract(try Crx3.verifiedArchive(Self.fixturePackage(), expectedID: Self.fixtureID), into: folder)
+        if recorded { try WebExtensionsFolder.recordContents(of: folder, id: Self.fixtureID, in: extensions) }
+        return folder
+    }
+
+    private func waitForLoad(_ id: String) async {
+        let loaded = expectation(description: "\(id) loaded")
+        func poll() {
+            if context(id) != nil { loaded.fulfill() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() } }
+        }
+        poll()
+        await fulfillment(of: [loaded], timeout: 10)
+    }
+
+    /// What Chromium's collector leaves of a folder for an id it knows: its
+    /// manifest, without the rest. It is recognized and fetched again.
+    func testAPackageMissingFilesIsFetchedAgain() async throws {
+        let folder = try unpackedFixture(recorded: true)
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("popup.html"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path))
+        var fetched = 0
+        WebKitExtensionInstaller.fetchOverride = { _ in fetched += 1; return try Self.fixturePackage() }
+
+        manager.loadExtensions(profileId: profileId)
+        await waitForLoad(Self.fixtureID)
+        XCTAssertEqual(fetched, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("popup.html").path))
+    }
+
+    /// A package from a version that kept no record loads as found, with no
+    /// download, and is recorded then, so it is checked from the next load.
+    func testAPackageWithNoRecordLoadsAsFoundAndIsRecorded() async throws {
+        let folder = try unpackedFixture(recorded: false)
+        let extensions = folder.deletingLastPathComponent()
+        var fetched = 0
+        WebKitExtensionInstaller.fetchOverride = { _ in fetched += 1; return try Self.fixturePackage() }
+
+        manager.loadExtensions(profileId: profileId)
+        await waitForLoad(Self.fixtureID)
+        XCTAssertEqual(fetched, 0, "nothing is downloaded for it")
+        let record = try XCTUnwrap(manager.profile(for: profileId)?.record(Self.fixtureID))
+        XCTAssertEqual(WebExtensionsFolder.packageState(of: record, packageFolder: folder, in: extensions), .whole)
+
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("popup.html"))
+        manager.unloadProfile(profileId: profileId)
+        manager.loadExtensions(profileId: profileId)
+        await waitForLoad(Self.fixtureID)
+        XCTAssertEqual(fetched, 1, "from then on, damage is seen and repaired")
+    }
+
+    /// A failed download keeps the record and says why; the next launch
+    /// tries again.
+    func testAFailedDownloadKeepsTheRecordAndTriesAgainNextLaunch() async throws {
+        _ = try recordWithoutPackage()
+        WebKitExtensionInstaller.fetchOverride = { _ in throw URLError(.notConnectedToInternet) }
+        defer { WebKitExtensionInstaller.fetchOverride = nil }
+
+        manager.loadExtensions(profileId: profileId)
+        let failed = expectation(description: "error shown")
+        func poll() {
+            if manager.extensions(profileId: profileId).first?.errors.isEmpty == false { failed.fulfill() } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { poll() }
+            }
+        }
+        poll()
+        await fulfillment(of: [failed], timeout: 10)
+        let summary = try XCTUnwrap(manager.extensions(profileId: profileId).first)
+        XCTAssertFalse(summary.isLoaded)
+        XCTAssertTrue(summary.errors.contains { $0.contains("could not be downloaded again") }, "\(summary.errors)")
+        XCTAssertEqual(InstalledWebExtensionList.load(from: root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions/installed.json"))
+                        .extensions.map(\.id), [Self.fixtureID], "the record is kept")
+
+        WebKitExtensionInstaller.fetchOverride = { _ in try Self.fixturePackage() }
+        manager.unloadProfile(profileId: profileId)
+        manager.loadExtensions(profileId: profileId)
+        let loaded = expectation(description: "loaded on the next launch")
+        func pollLoaded() {
+            if context(Self.fixtureID) != nil { loaded.fulfill() } else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { pollLoaded() } }
+        }
+        pollLoaded()
+        await fulfillment(of: [loaded], timeout: 10)
+    }
+
+    /// An extension an earlier version kept in the profile's Extensions/
+    /// moves to WebExtensions/ and keeps its storage and its origin.
+    func testStorageSurvivesTheMoveOutOfChromiumsFolder() async throws {
+        let id = String(repeating: "g", count: 32)
+        let profileDirectory = root.appendingPathComponent(profileId, isDirectory: true)
+        let old = profileDirectory.appendingPathComponent("Extensions", isDirectory: true)
+        let folder = old.appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let manifest: [String: Any] = [
+            "manifest_version": 3, "name": "Counter", "version": "1.0", "permissions": ["storage"],
+            "background": ["service_worker": "background.js"], "action": ["default_title": "Counter"],
+        ]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
+        try Data("""
+        chrome.storage.local.get("count").then(function (stored) {
+          var count = (stored.count || 0) + 1;
+          return chrome.storage.local.set({ count: count }).then(function () {
+            chrome.action.setBadgeText({ text: String(count) + " " + location.origin });
+          });
+        });
+        """.utf8).write(to: folder.appendingPathComponent("background.js"))
+        let record = InstalledWebExtension(id: id, source: .webStore, name: "Counter", version: "1.0", grants: ["perm:storage"])
+        try InstalledWebExtensionList(extensions: [record]).save(to: old.appendingPathComponent("installed.json"))
+
+        // As an earlier version ran it, from Extensions/.
+        manager.activate(host: host, storageDirectory: { _ in old })
+        manager.loadExtensions(profileId: profileId)
+        let first = await badge(of: id, within: 10)
+        XCTAssertEqual(first, "1 chrome-extension://\(id)")
+
+        manager.unloadProfile(profileId: profileId)
+        manager.activate(host: host, storageDirectory: { _ in WebExtensionsFolder.prepared(inProfile: profileDirectory) })
+        manager.loadExtensions(profileId: profileId)
+        let second = await badge(of: id, within: 10)
+        XCTAssertEqual(second, "2 chrome-extension://\(id)", "errors: \(manager.extensions(profileId: profileId).first?.errors ?? [])")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.appendingPathComponent("installed.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: profileDirectory.appendingPathComponent("WebExtensions/\(id)/manifest.json").path))
     }
 
     func testUnknownPermissionsAreNamedNotHidden() {

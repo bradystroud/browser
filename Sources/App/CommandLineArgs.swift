@@ -118,6 +118,23 @@ enum CommandLineArgs {
         return dir
     }
 
+    /// `--allow-agent-extensions`: agent pages (`browser page`) run the
+    /// profile's extensions, as normal tabs do. Honored only together with a
+    /// `--profiles-root` that is not the real data directory -- see
+    /// ExtensionIsolationPolicy. Read once: the launch arguments never change.
+    static let allowsAgentExtensions: Bool = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let realData = [
+            ProfilesRootResolver.sessionAndProfilesMetadataDirectory(arguments: [], appSupportDirectory: appSupport.path),
+            ProfilesRootResolver.profilesRootPath(arguments: [], appSupportDirectory: appSupport.path),
+        ]
+        let real = realData + realData.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+        return ExtensionIsolationPolicy.agentPagesMayRunExtensions(
+            arguments: CommandLine.arguments,
+            profilesRootOverride: ProfilesRootResolver.explicitOverride(arguments: CommandLine.arguments),
+            realDataDirectories: real)
+    }()
+
     /// The engine a tab uses when no site rule decides: an explicit
     /// `--engine cef|webkit` launch argument if given (browser-n50),
     /// otherwise the Settings preference (browser-2a7), otherwise webkit. Any

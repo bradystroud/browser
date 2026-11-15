@@ -50,10 +50,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         didSet {
             (window as? BrowserWindow)?.permitsOffscreenAgentSizing = agentPresentation != nil
             if agentPresentation != nil, agentIndicator == nil { installAgentIndicator() }
+            tabs.forEach { $0.matchExtensionAccess() }
             guard agentPresentation != nil, tabStripOrientation != .horizontal else { return }
             tabStripOrientation = .horizontal
             applyChromeLayout()
         }
+    }
+
+    /// Whether the profile's extensions reach this window: its tabs are
+    /// built with them, and extensions are told the window and its tabs
+    /// exist. Never for a private window, and never for an agent's window
+    /// unless this launch allows it (see ExtensionIsolationPolicy).
+    var runsExtensions: Bool {
+        !isPrivate && (agentPresentation == nil || CommandLineArgs.allowsAgentExtensions)
     }
 
     /// The strip that marks an agent's window; nil for every other window.
@@ -1596,6 +1605,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // is the same guard reloadAfterReorder uses for the same reason.
         let activeTabObject = activeTab
         tab.delegate = self
+        tab.matchExtensionAccess()
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
         // Before activateTab, so the new tab's view is framed into the
@@ -2213,6 +2223,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     func tabShowsStartPage(_ tab: Tab) -> Bool {
         agentPresentation == nil
+    }
+
+    func tabRunsExtensions(_ tab: Tab) -> Bool {
+        runsExtensions
     }
 
     func tabDidChangeDisplayState(_ tab: Tab) {

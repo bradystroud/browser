@@ -20,7 +20,9 @@ import Foundation
 /// `autocomplete` names `email` or `username`, whose name/id/placeholder/
 /// aria-label mentions e-mail, or which is Microsoft's `loginfmt`. The
 /// focus message also says whether the field's form has a password field,
-/// so the native side can stand aside for the password manager there.
+/// so the native side can stand aside for the password manager there, and
+/// whether the field itself looks like a sign-in user name, where a
+/// password-manager extension shows its own list.
 ///
 /// Nothing reported here is trusted for where the page is: the native side
 /// only ever uses the engine's verified origin and URL.
@@ -58,6 +60,22 @@ enum EmailFieldDetectionScript {
         return !!scope.querySelector('input[type="password"]');
       }
 
+      // A user-name field of a sign-in, the kind a password-manager
+      // extension offers its accounts on: it says so in autocomplete, or its
+      // name, id, placeholder or label calls it a user name or login.
+      var USERNAME_LABEL = /user ?-?_?(name|id)|login|log-in|sign-?in|identifier|loginfmt/;
+      function isUsernameLike(el) {
+        var autocomplete = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\\s+/);
+        if (autocomplete.indexOf('username') !== -1) { return true; }
+        var label = '';
+        if (el.labels) {
+          for (var i = 0; i < el.labels.length; i++) { label += ' ' + (el.labels[i].textContent || ''); }
+        }
+        var haystack = ((el.getAttribute('name') || '') + ' ' + (el.getAttribute('id') || '') + ' ' +
+          (el.getAttribute('placeholder') || '') + ' ' + (el.getAttribute('aria-label') || '') + label).toLowerCase();
+        return USERNAME_LABEL.test(haystack);
+      }
+
       function box(el) {
         var r = el.getBoundingClientRect();
         return { x: r.left, y: r.top, width: r.width, height: r.height,
@@ -74,7 +92,10 @@ enum EmailFieldDetectionScript {
         var payload = box(el);
         payload.type = type;
         payload.value = el.value || '';
-        if (type === 'emailFieldFocused') { payload.hasPasswordField = hasPasswordField(el); }
+        if (type === 'emailFieldFocused') {
+          payload.hasPasswordField = hasPasswordField(el);
+          payload.usernameLike = isUsernameLike(el);
+        }
         send(payload);
       }
 

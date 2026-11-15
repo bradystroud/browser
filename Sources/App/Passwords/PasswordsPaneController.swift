@@ -19,6 +19,8 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     private lazy var listButtons = SettingsTablePane.removeOnlyButtons(target: self, action: #selector(listButtonClicked))
     private lazy var revealButton = NSButton(title: "Reveal…", target: self, action: #selector(revealSelectedPassword))
     private let form = SettingsForm()
+    private let iCloudSection = ICloudPasswordsSection()
+    private let offerToSave = OfferToSavePasswordsRow()
 
     private var selectedProfile: Profile?
     private var credentials: [SavedCredential] = []
@@ -59,6 +61,8 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
     /// PrivacyPaneController.reload().
     func reload() {
         selectedProfile = profilePopup.reloadProfiles(keeping: selectedProfile)
+        iCloudSection.setProfile(selectedProfile)
+        offerToSave.setProfile(selectedProfile)
         loadCredentialsForSelectedProfile()
     }
 
@@ -74,6 +78,8 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
         profilePopup.target = self
         profilePopup.action = #selector(profileSelectionChanged)
         form.addRow("Profile:", profilePopup)
+        offerToSave.install(in: form)
+        iCloudSection.install(in: form, hostView: view)
 
         let siteColumn = NSTableColumn(identifier: .init("site"))
         siteColumn.title = "Site"
@@ -139,6 +145,8 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
 
     @objc private func profileSelectionChanged() {
         selectedProfile = profilePopup.selectedItem?.representedObject as? Profile
+        iCloudSection.setProfile(selectedProfile)
+        offerToSave.setProfile(selectedProfile)
         loadCredentialsForSelectedProfile()
     }
 
@@ -203,5 +211,86 @@ final class PasswordsPaneController: NSObject, NSTableViewDataSource, NSTableVie
             text = ""
         }
         return ListAppearance.textCell(in: tableView, identifier: "passwordCell.\(columnIdentifier.rawValue)", text: text)
+    }
+}
+
+/// The profile's "Offer to save passwords" switch. While an extension holds
+/// the setting (ExtensionControlledSettingsCenter), the switch shows the
+/// value in effect, cannot be changed here, and says which extension holds
+/// it, with a way to that extension's options -- where it lets go, as in
+/// Chrome. Removing or turning off the extension also gives it back.
+private final class OfferToSavePasswordsRow: NSObject {
+    private let checkbox = NSButton(checkboxWithTitle: "Offer to save passwords", target: nil, action: nil)
+    private let controlledLabel: NSTextField = {
+        let label = NSTextField(wrappingLabelWithString: "")
+        label.isSelectable = false
+        label.textColor = .secondaryLabelColor
+        label.preferredMaxLayoutWidth = SettingsForm.controlColumnWidth - 100
+        return label
+    }()
+    private let optionsButton = NSButton(title: "Options…", target: nil, action: nil)
+    private var controlledRow: NSGridRow?
+    private var profile: Profile?
+    private var holderId: String?
+    private var observers: [NSObjectProtocol] = []
+
+    deinit {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    func install(in form: SettingsForm) {
+        checkbox.target = self
+        checkbox.action = #selector(toggled)
+        optionsButton.target = self
+        optionsButton.action = #selector(openOptions)
+        form.addRow(nil, checkbox)
+        controlledRow = form.addRow(nil, controlledLabel, optionsButton)
+        for name in [Notification.Name.extensionControlledSettingsDidChange, .browserExtensionsDidChange] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self, (note.object as? String) == self.profile?.id else { return }
+                self.refresh()
+            })
+        }
+        refresh()
+    }
+
+    func setProfile(_ profile: Profile?) {
+        self.profile = profile
+        refresh()
+    }
+
+    private func refresh() {
+        guard let profile else {
+            checkbox.isEnabled = false
+            controlledRow?.isHidden = true
+            return
+        }
+        let center = ExtensionControlledSettingsCenter.shared
+        holderId = center.holder(of: .passwordSavingEnabled, profileId: profile.id)
+        checkbox.state = center.effectiveValue(of: .passwordSavingEnabled, profileId: profile.id) ? .on : .off
+        checkbox.isEnabled = holderId == nil
+        guard let holderId else {
+            controlledRow?.isHidden = true
+            return
+        }
+        let summary = ExtensionsCoordinator.shared.manager?.extensions(profileId: profile.id).first { $0.id == holderId }
+        let holder = summary?.name ?? "an extension"
+        // iCloud Passwords takes the setting as soon as it runs, but only
+        // offers to save once it is paired with the Mac.
+        let saves = holderId == ICloudPasswordsExtension.storeID
+            ? "which saves new passwords after you pair it" : "which saves new passwords itself"
+        controlledLabel.stringValue = "Controlled by \(holder), \(saves). Browser still offers to update a password it already has."
+        optionsButton.isHidden = summary?.hasOptionsPage != true
+        controlledRow?.isHidden = false
+    }
+
+    @objc private func toggled() {
+        guard let profile, holderId == nil else { return refresh() }
+        PasswordSavePreference.setUserValue(checkbox.state == .on, profileId: profile.id)
+    }
+
+    @objc private func openOptions() {
+        guard let profile, let holderId else { return }
+        ExtensionsCoordinator.shared.manager?.openOptionsPage(extensionId: holderId, profileId: profile.id)
     }
 }

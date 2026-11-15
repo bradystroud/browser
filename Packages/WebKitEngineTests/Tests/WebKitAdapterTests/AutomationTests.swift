@@ -200,7 +200,7 @@ final class AutomationTests: WebKitTabTestCase {
             methods.append(method)
             parameters = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
             completion(false, "{\"message\":\"metrics rejected\"}")
-        }, setEventHandler: { _ in })
+        }, setEventHandler: { _ in }, setAllowsPopups: { _ in })
         var failure: EngineAutomationError?
         protocolAutomation.setExactViewport(CGSize(width: 1920, height: 1080)) {
             if case .failure(let error) = $0 { failure = error }
@@ -219,7 +219,7 @@ final class AutomationTests: WebKitTabTestCase {
             XCTAssertEqual(method, "Runtime.evaluate")
             parameters = json.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
             completion(true, "{\"result\":{\"value\":[390,844]}}")
-        }, setEventHandler: { _ in })
+        }, setEventHandler: { _ in }, setAllowsPopups: { _ in })
         let measured = perform("protocol viewport") { protocolAutomation.measureViewport(completion: $0) }
         XCTAssertEqual(measured, CGSize(width: 390, height: 844))
         XCTAssertEqual(parameters?["userGesture"] as? Bool, false)

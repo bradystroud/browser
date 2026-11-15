@@ -729,7 +729,12 @@ protocol BrowserEngine {
     /// kept only for name-keyed, in-memory-only mechanisms (content-blocking
     /// snapshot lookups) that a rename simply rebuilds fresh -- see the CEF
     /// adapter/BRWBrowser.h for exactly where each is used.
-    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab
+    ///
+    /// `runsExtensions` false builds a tab the profile's extensions never
+    /// reach: no content scripts, no extension API, no extension pages (see
+    /// ExtensionIsolationPolicy). The tab decides it (Tab.runsExtensions);
+    /// an engine with extensions must honor it for the tab's whole life.
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) -> EngineTab
 
     /// Creates a tab for a Private Browsing window (browser-12m.1): backed by
     /// an engine context with no persisted profile identity at all -- not

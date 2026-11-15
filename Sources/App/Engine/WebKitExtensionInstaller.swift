@@ -41,7 +41,11 @@ enum WebKitExtensionInstaller {
     /// well below what would fill a disk.
     static let maximumPackageBytes = 256 * 1024 * 1024
 
+    /// Stands in for the Chrome Web Store in tests; nil fetches from it.
+    static var fetchOverride: ((String) async throws -> Data)?
+
     static func fetchPackage(id: String) async throws -> Data {
+        if let fetchOverride { return try await fetchOverride(id) }
         var request = URLRequest(url: ChromeWebStore.downloadURL(for: id))
         request.timeoutInterval = 60
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -87,6 +91,45 @@ enum WebKitExtensionInstaller {
         try files.moveItem(at: scratch, to: folder)
     }
 
+    /// Where WebKit's prepared copies of store extensions live, beside the
+    /// packages in the profile's extensions folder.
+    static func webKitCopies(in directory: URL) -> URL {
+        directory.appendingPathComponent("webkit", isDirectory: true)
+    }
+
+    /// The folder WebKit loads a store extension from. The package's own
+    /// folder, `<extensions>/<id>/`, stays exactly as it unpacked, because
+    /// another engine prepares its own copy from it; WebKit gets
+    /// `<extensions>/webkit/<id>/` with the Chrome compatibility layer
+    /// (`PreparedExtensionCopy`) when the layer applies, and the package
+    /// itself when it does not. A package folder the layer was once written
+    /// into is put back first. Failures are logged, not thrown: the
+    /// extension then loads from what there is, as it did before the layer.
+    ///
+    /// File work only; never on the main thread.
+    static func webKitFolder(forPackage folder: URL, id: String, in directory: URL) -> URL {
+        do {
+            if try PreparedExtensionCopy.restorePristine(folder) {
+                NSLog("Browser: took the Chrome compatibility layer out of extension %@'s package folder", id)
+            }
+        } catch {
+            NSLog("Browser: couldn't restore extension %@'s package folder: %@", id, error.localizedDescription)
+        }
+        do {
+            if let copy = try PreparedExtensionCopy.ensure(pristine: folder, copies: webKitCopies(in: directory), id: id) {
+                return copy
+            }
+        } catch {
+            NSLog("Browser: couldn't prepare extension %@ for WebKit: %@", id, error.localizedDescription)
+        }
+        return folder
+    }
+
+    /// WebKit's copy of a store extension that is being removed.
+    static func removeWebKitCopy(id: String, in directory: URL) {
+        PreparedExtensionCopy.remove(id: id, in: webKitCopies(in: directory))
+    }
+
     /// Puts `staged` where `destination` is. The old folder is kept aside
     /// until the new one is in place, so a failed move leaves the installed
     /// version as it was.
@@ -105,12 +148,15 @@ enum WebKitExtensionInstaller {
         if hadOld { try? files.removeItem(at: aside) }
     }
 
-    /// Staging and set-aside folders a crash or quit left behind.
+    /// Staging and set-aside folders a crash or quit left behind, among the
+    /// packages and among WebKit's copies.
     static func removeLeftovers(in directory: URL) {
         let files = FileManager.default
-        guard let names = try? files.contentsOfDirectory(atPath: directory.path) else { return }
-        for name in names where name.hasPrefix(".staging-") || name.hasPrefix(".previous-") || name.hasPrefix(".unpacking-") {
-            try? files.removeItem(at: directory.appendingPathComponent(name))
+        for folder in [directory, webKitCopies(in: directory)] {
+            guard let names = try? files.contentsOfDirectory(atPath: folder.path) else { continue }
+            for name in names where name.hasPrefix(".staging-") || name.hasPrefix(".previous-") || name.hasPrefix(".unpacking-") {
+                try? files.removeItem(at: folder.appendingPathComponent(name))
+            }
         }
     }
 }

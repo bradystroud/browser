@@ -517,6 +517,7 @@ enum AgentPages {
         do { size = try CLIPageSize.parse(args) }
         catch { return completion(.failure(error.localizedDescription)) }
         let url = args["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
+        if let refusal = extensionPageRefusal(url) { return completion(.failure(refusal)) }
         let profile: Profile
         let isPrivate = args["private"] == "true"
         if isPrivate {
@@ -624,6 +625,15 @@ enum AgentPages {
         poll()
     }
 
+    /// Agent pages and the profile's extensions never meet (see
+    /// ExtensionIsolationPolicy); the tab refuses an extension page too, but
+    /// silently, so the command says why first.
+    private static func extensionPageRefusal(_ url: String) -> String? {
+        guard ExtensionIsolationPolicy.isExtensionURL(url), !CommandLineArgs.allowsAgentExtensions else { return nil }
+        return "Agent pages never open extension pages (\(shown(url, limit: 80))), and extensions do not run in them. "
+            + "To test an extension, launch a scratch instance with --profiles-root <dir> \(ExtensionIsolationPolicy.allowAgentExtensionsFlag)."
+    }
+
     /// Closes the page's tab, or its whole window when no other page is in it.
     private static func close(_ page: AgentPage, completion: @escaping Completion) {
         page.recorder?.cancel()
@@ -652,6 +662,7 @@ enum AgentPages {
 
     private static func navigate(_ page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let url = args["url"], !url.isEmpty, let tab = page.tab else { return completion(.failure("navigate requires a url")) }
+        if let refusal = extensionPageRefusal(url) { return completion(.failure(refusal)) }
         let before = tab.browser?.mainDocumentLoad?.sequence
         tab.load(url: url)
         guard args["no-wait"] != "true" else { return completion(CLIResponse(ok: true, message: "Loading \(url).", page: info(page))) }
@@ -1244,6 +1255,7 @@ enum AgentPages {
     /// the new page, or says which existing tab the name reused.
     private static func popup(from page: AgentPage, _ args: [String: String], completion: @escaping Completion) {
         guard let url = args["url"], !url.isEmpty else { return completion(.failure("popup requires a url")) }
+        if let refusal = extensionPageRefusal(url) { return completion(.failure(refusal)) }
         let name = args["name"] ?? "_blank"
         let known = Set(pages.keys)
         let allowed = page.allowsPopups

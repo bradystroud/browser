@@ -123,8 +123,8 @@ enum WebKitEngine: BrowserEngine {
     // profile never orphans its cookies/storage. Content-blocking and
     // threat-warning state stay keyed by `profileName`, because that is how
     // ContentBlockerCoordinator/ThreatListCoordinator hand them over.
-    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String) -> EngineTab {
-        let tab = WebKitTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL)
+    static func createTab(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) -> EngineTab {
+        let tab = WebKitTab(profileName: profileName, profileId: profileId, hostView: hostView, initialURL: initialURL, runsExtensions: runsExtensions)
         register(tab, profileName: profileName)
         return tab
     }
@@ -291,7 +291,9 @@ final class WebKitTab: NSObject, EnginePopupTab {
 
     private static let pageMessageHandlerName = "brwPageMessage"
 
-    init(profileName: String, profileId: String, hostView: NSView, initialURL: String) {
+    /// `runsExtensions` false leaves the profile's extension controller off
+    /// the configuration, and a web view can never gain one later.
+    init(profileName: String, profileId: String, hostView: NSView, initialURL: String, runsExtensions: Bool) {
         self.profileName = profileName
         var config = WKWebViewConfiguration()
         // WKWebsiteDataStore(forIdentifier:) is macOS 14.0+ (see
@@ -307,7 +309,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         }
         config.applicationNameForUserAgent = SafariUserAgent.applicationName
         if #available(macOS 15.4, *) {
-            config = WebKitExtensionManager.shared.configuration(for: config, profileId: profileId, initialURL: initialURL)
+            config = WebKitExtensionManager.shared.configuration(for: config, profileId: profileId, initialURL: initialURL, runsExtensions: runsExtensions)
         }
         webView = WebKitContentView(frame: hostView.bounds, configuration: config)
         super.init()

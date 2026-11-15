@@ -4,13 +4,15 @@ private final class SavePasswordPromptViewController: NSViewController {
     private static let contentSize = NSSize(width: 340, height: 92)
 
     private let messageText: String
+    private let saveTitle: String
     private var saveButton: NSButton?
     private let onSave: () -> Void
     private let onNever: () -> Void
     private let onNotNow: () -> Void
 
-    init(message: String, onSave: @escaping () -> Void, onNever: @escaping () -> Void, onNotNow: @escaping () -> Void) {
+    init(message: String, saveTitle: String, onSave: @escaping () -> Void, onNever: @escaping () -> Void, onNotNow: @escaping () -> Void) {
         self.messageText = message
+        self.saveTitle = saveTitle
         self.onSave = onSave
         self.onNever = onNever
         self.onNotNow = onNotNow
@@ -33,7 +35,7 @@ private final class SavePasswordPromptViewController: NSViewController {
         container.addSubview(label)
 
         let buttonHeight: CGFloat = 24
-        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveTapped))
+        let saveButton = NSButton(title: saveTitle, target: self, action: #selector(saveTapped))
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"
         saveButton.frame = NSRect(x: size.width - margin - 70, y: margin, width: 70, height: buttonHeight)
@@ -95,13 +97,16 @@ final class SavePasswordPromptController: NSObject, NSPopoverDelegate {
 
     var isShowing: Bool { popover?.isShown ?? false }
 
-    func show(origin: String, anchorView: NSView, onSave: @escaping () -> Void, onNever: @escaping () -> Void) {
+    /// `isUpdate`: the browser already holds a different password for this
+    /// site and user name, and Save replaces it.
+    func show(origin: String, isUpdate: Bool = false, anchorView: NSView, onSave: @escaping () -> Void, onNever: @escaping () -> Void) {
         dismiss()
         isPending = true
 
         let host = URL(string: origin)?.host ?? origin
         let content = SavePasswordPromptViewController(
-            message: "Save password for \(host)?",
+            message: isUpdate ? "Update the saved password for \(host)?" : "Save password for \(host)?",
+            saveTitle: isUpdate ? "Update" : "Save",
             onSave: { [weak self] in self?.complete { onSave() } },
             onNever: { [weak self] in self?.complete { onNever() } },
             onNotNow: { [weak self] in self?.complete {} }
