@@ -30,10 +30,16 @@ public struct InstalledWebExtension: Codable, Equatable {
     public var declinedGrants: [String]?
     public var installedAt: Date
     public var lastUpdateCheck: Date?
+    /// The developer's RSA public key (DER, base64) that the id is made
+    /// from, kept from the store package's signature check. The copy that
+    /// runs in CEF tabs needs it as its manifest `key` to keep the store id.
+    /// Nil for an unpacked folder (its manifest pins one or none) and for a
+    /// store install made before the app kept it.
+    public var publicKey: String?
 
     public init(id: String, source: Source, name: String, version: String, enabled: Bool = true, pinned: Bool = false,
                 unpackedPath: String? = nil, grants: [String], declinedGrants: [String]? = nil,
-                installedAt: Date = Date(), lastUpdateCheck: Date? = nil) {
+                installedAt: Date = Date(), lastUpdateCheck: Date? = nil, publicKey: String? = nil) {
         self.id = id
         self.source = source
         self.name = name
@@ -45,6 +51,7 @@ public struct InstalledWebExtension: Codable, Equatable {
         self.declinedGrants = declinedGrants
         self.installedAt = installedAt
         self.lastUpdateCheck = lastUpdateCheck
+        self.publicKey = publicKey
     }
 }
 
