@@ -168,6 +168,11 @@ struct EngineExtensionSummary {
     let errors: [String]
     /// Its state in each other engine that runs the same install list.
     var runtimes: [EngineChoice: EngineExtensionRuntimeStatus] = [:]
+    /// For an extension that needs setting up before it does anything (iCloud
+    /// Passwords until it is paired), whether that is done in this profile;
+    /// nil for every other extension. Its pinned button only shows once
+    /// it is; the extensions menu always lists it.
+    var isSetUp: Bool? = nil
 }
 
 struct EngineExtensionTabChange: OptionSet {
@@ -215,6 +220,11 @@ protocol EngineExtensionManager: AnyObject {
     /// The toolbar button was pressed: shows its popup or tells the
     /// extension it was clicked.
     func performAction(extensionId: String, window: ExtensionHostWindow)
+    /// Opens the extension's own popup in `window` from outside the toolbar
+    /// (Settings > Passwords' "Pair…"), from the engine that owns the install
+    /// list, whatever engine the window's page runs in. Left open when it
+    /// already is; a popup no visible window can show is closed at once.
+    func openPopup(extensionId: String, window: ExtensionHostWindow)
     /// Asks the store for newer versions when the daily check is due, or
     /// always when `force`. Returns how many extensions were updated.
     @MainActor @discardableResult

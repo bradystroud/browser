@@ -62,7 +62,7 @@ final class ExtensionsToolbarController: NSObject {
 
         let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
         let pinned = manager.extensions(profileId: profileId).filter {
-            $0.isPinned && Self.hasButton($0, manager: manager, profileId: profileId, tab: activeTab)
+            $0.isPinned && Self.showsPinnedButton($0, manager: manager, profileId: profileId, tab: activeTab)
         }
         let pinnedIds = Set(pinned.map(\.id))
         for (id, button) in pinnedButtons where !pinnedIds.contains(id) {
@@ -142,13 +142,22 @@ final class ExtensionsToolbarController: NSObject {
         press(id)
     }
 
-    /// Whether the extension gets a button over `tab`: loaded by the engine
-    /// that owns the install list, or, while it is on, given a button for
-    /// this tab by the engine running the tab's page (an extension one
-    /// engine cannot start can still run in the other's tabs).
-    private static func hasButton(_ summary: EngineExtensionSummary, manager: EngineExtensionManager,
-                                  profileId: String, tab: ExtensionHostTab?) -> Bool {
-        summary.isLoaded || (summary.isEnabled && manager.action(extensionId: summary.id, profileId: profileId, tab: tab) != nil)
+    /// Listed in the extensions menu over `tab` (ExtensionToolbarRule).
+    private static func listsInMenu(_ summary: EngineExtensionSummary, manager: EngineExtensionManager,
+                                    profileId: String, tab: ExtensionHostTab?) -> Bool {
+        ExtensionToolbarRule.listsInMenu(
+            isLoaded: summary.isLoaded, isEnabled: summary.isEnabled,
+            hasActionInTab: manager.action(extensionId: summary.id, profileId: profileId, tab: tab) != nil)
+    }
+
+    /// A pinned button over `tab`: hidden while the extension is not set up
+    /// in the profile (ExtensionToolbarRule).
+    private static func showsPinnedButton(_ summary: EngineExtensionSummary, manager: EngineExtensionManager,
+                                          profileId: String, tab: ExtensionHostTab?) -> Bool {
+        ExtensionToolbarRule.showsPinnedButton(
+            isLoaded: summary.isLoaded, isEnabled: summary.isEnabled,
+            hasActionInTab: manager.action(extensionId: summary.id, profileId: profileId, tab: tab) != nil,
+            isSetUp: summary.isSetUp)
     }
 
     /// Why a button does nothing in the selected tab, when it does nothing.
@@ -195,7 +204,7 @@ final class ExtensionsToolbarController: NSObject {
         let menu = NSMenu()
         let activeTab = controller.activeTab.map { ExtensionsCoordinator.shared.tabHandle(for: $0, in: controller) }
         let all = manager.extensions(profileId: profileId)
-        let running = all.filter { Self.hasButton($0, manager: manager, profileId: profileId, tab: activeTab) }
+        let running = all.filter { Self.listsInMenu($0, manager: manager, profileId: profileId, tab: activeTab) }
         if running.isEmpty {
             let empty = NSMenuItem(title: all.isEmpty ? "No Extensions Installed" : "No Extensions Turned On", action: nil, keyEquivalent: "")
             empty.isEnabled = false

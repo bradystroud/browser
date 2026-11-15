@@ -171,6 +171,28 @@ final class ExtensionsCoordinator: NSObject, ExtensionHost, TabLifecycleObserver
         return await task.value
     }
 
+    /// Opens an extension's own popup over a window of `profile` from outside
+    /// the toolbar (Settings > Passwords' "Pair…"): the profile's frontmost
+    /// window, brought forward, or a new one. Nothing is ordered on screen
+    /// while a text field is being edited (see CLAUDE.md on the omnibox).
+    func openPopup(extensionId: String, profile: Profile) {
+        guard let manager else { return }
+        if let key = NSApp.keyWindow, !Self.resignFieldEditor(in: key) {
+            NSLog("Browser: not opening an extension's popup: a text field would not end editing")
+            return
+        }
+        let existing = extensionWindows(profileId: profile.id).first { $0.extensionNSWindow?.isMiniaturized == false }
+        guard let window = existing ?? extensionOpenWindow(profileId: profile.id, urls: [], focused: true) else { return }
+        if existing != nil, let nsWindow = window.extensionNSWindow {
+            guard Self.resignFieldEditor(in: nsWindow) else {
+                NSLog("Browser: not opening an extension's popup: a text field would not end editing")
+                return
+            }
+            nsWindow.makeKeyAndOrderFront(nil)
+        }
+        manager.openPopup(extensionId: extensionId, window: window)
+    }
+
     /// Ends text editing in `window`. True when no field editor is first
     /// responder afterwards: a field's delegate can refuse to end editing,
     /// and nothing may be ordered on screen while it is still editing.
