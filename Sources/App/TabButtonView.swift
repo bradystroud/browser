@@ -494,17 +494,31 @@ final class TabButtonView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isMouseInside = true
-        updateSelectionAppearance()
-        guard !isPinned else { return }
-        closeButton.isHidden = false
-        updateIconState()
+        setMouseInside(true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        isMouseInside = false
+        setMouseInside(false)
+    }
+
+    /// Recomputes hover from where the pointer is now. Tracking areas do not
+    /// reliably send mouseEntered/mouseExited when a scroll moves the row
+    /// under a pointer that stays still, so the strip calls this after every
+    /// scroll -- otherwise a row the list scrolled away keeps its highlight.
+    func syncHoverWithPointer() {
+        guard let window, window.isKeyWindow, !isHidden else {
+            setMouseInside(false)
+            return
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        setMouseInside(visibleRect.contains(point))
+    }
+
+    private func setMouseInside(_ inside: Bool) {
+        guard inside != isMouseInside else { return }
+        isMouseInside = inside
         updateSelectionAppearance()
-        closeButton.isHidden = true
+        closeButton.isHidden = !inside || isPinned
         updateIconState()
     }
 

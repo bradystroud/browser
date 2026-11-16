@@ -422,6 +422,13 @@ final class TabStripView: NSView {
         scrollView.contentView.drawsBackground = false
         scrollView.documentView = stripContentView
         addSubview(scrollView)
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(clipViewBoundsDidChange),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
         addSubview(newTabButton)
@@ -576,6 +583,14 @@ final class TabStripView: NSView {
     /// interleaves group headers and skips collapsed groups' member buttons
     /// entirely, so it no longer lines up 1:1 with tab indices the way the
     /// old flat tabButtons array did before groups existed.
+    @objc private func clipViewBoundsDidChange(_ notification: Notification) {
+        for item in stripItems {
+            if case .tab(let button) = item {
+                button.syncHoverWithPointer()
+            }
+        }
+    }
+
     private func tabButton(forTabIndex index: Int) -> TabButtonView? {
         for item in stripItems {
             if case .tab(let button) = item, button.index == index {
