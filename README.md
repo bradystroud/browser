@@ -39,6 +39,8 @@ browser open https://example.com --profile Work
 browser route-test https://github.com
 ```
 
+For profile creation and agent window cleanup, see [Agent pages](docs/agent-pages.md).
+
 For live commands (`open`, `profiles`, `tabs`, `windows`, `window new`, `focus`, and `page`), the CLI uses `--socket <absolute-path>` first, then `BROWSER_CLI_SOCKET`, then its usual per-user socket discovery. The flag works before or after the command, including nested subcommands:
 
 ```sh

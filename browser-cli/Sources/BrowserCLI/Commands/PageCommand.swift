@@ -41,6 +41,11 @@ public enum PageCommand {
         browser page record stop <id>
         browser page close <id>
 
+        Profiles: open --profile <name> reuses the named profile or creates it when missing, like browser open.
+          Names match exactly; a typo creates another profile. Blank names are refused. The response message
+          marks a new profile with (created). Only the agent window opens; close its last page to close it.
+          The profile and its sign-ins persist, even if a later step of opening the page fails.
+          Without --profile, open uses the configured fallback profile. --private uses a temporary profile.
         Size: --viewport WxH sizes the page host in logical points, excluding browser chrome (200...8192 per
           dimension, at most 16777216 points total). --width/--height retain window-content sizing; supply both.
           resize preserves the page and session, and refuses while recording. JSON reports viewportWidth /
