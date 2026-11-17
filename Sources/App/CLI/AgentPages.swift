@@ -519,15 +519,16 @@ enum AgentPages {
         let url = args["url"].flatMap { $0.isEmpty ? nil : $0 } ?? "about:blank"
         if let refusal = extensionPageRefusal(url) { return completion(.failure(refusal)) }
         let profile: Profile
+        var profileCreationNote = ""
         let isPrivate = args["private"] == "true"
         if isPrivate {
             profile = Profile(id: "\(Profile.privateIdPrefix)\(UUID().uuidString)", name: "Private", colorHex: "#3a3a3c")
         } else if let name = args["profile"] {
-            guard let named = ProfileManager.shared.profile(named: name) else {
-                let names = ProfileManager.shared.profiles.map(\.name).joined(separator: ", ")
-                return completion(.failure("No profile named '\(name)'. Profiles: \(names)."))
+            guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return completion(.failure("--profile requires a non-blank name."))
             }
-            profile = named
+            if ProfileManager.shared.profile(named: name) == nil { profileCreationNote = " (created)" }
+            profile = ProfileManager.shared.profileOrCreate(named: name)
         } else {
             profile = ProfileManager.shared.fallbackProfile
         }
@@ -564,14 +565,14 @@ enum AgentPages {
 
         let finishOpen = {
             guard args["no-wait"] != "true" else {
-                return completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'.", page: info(page)))
+                return completion(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'\(profileCreationNote).", page: info(page)))
             }
             let loaded = reportingLoad(page, since: nil, completion)
             wait(page, args, defaultTimeout: defaultOpenTimeout) { response in
                 guard response.ok else {
                     return loaded(CLIResponse(ok: false, error: "Opened \(page.id), but: \(response.error ?? "the wait failed")", page: info(page)))
                 }
-                loaded(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)': \(shown(info(page).url))", page: info(page)))
+                loaded(CLIResponse(ok: true, message: "Opened \(page.id) in profile '\(profile.name)'\(profileCreationNote): \(shown(info(page).url))", page: info(page)))
             }
         }
         let failViewport: (EngineAutomationError) -> Void = { error in
