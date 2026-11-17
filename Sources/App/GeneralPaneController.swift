@@ -4,8 +4,8 @@ import AppKit
 /// which hosts this alongside the other panes): what new
 /// windows open with plus the homepage (browser-m0x), the omnibox
 /// display-mode preference (browser-0y1), the search engine and its two
-/// opt-in features (browser-0du), tab sleep, and the rendering-engine choice
-/// (browser-2a7). All global rather than per-profile -- see
+/// opt-in features (browser-0du), tab sleep, the rendering-engine choice
+/// (browser-2a7) and software updates. All global rather than per-profile -- see
 /// HomepagePreference, OmniboxDisplayPreference, SearchEnginePreference,
 /// TabSleepPreferences and EnginePreference for each one's own reason -- so unlike the other panes
 /// there's no profile picker here.
@@ -63,6 +63,13 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let engineHelpLabel = SettingsForm.footnote()
     private static let engineOrder: [EngineChoice] = [.webkit, .cef]
 
+    /// Software updates (see UpdateController).
+    private let automaticUpdatesCheckbox = NSButton()
+    private let installedVersionLabel = NSTextField(labelWithString: "")
+    private let checkNowButton = NSButton(title: "Check Now", target: nil, action: nil)
+    private let checkSpinner = NSProgressIndicator()
+    private let updatesHelpLabel = SettingsForm.footnote()
+
     private let backgroundTabsSlider: NSSlider = {
         let slider = NSSlider(value: 1, minValue: 0, maxValue: Double(BackgroundTabPolicy.allCases.count - 1), target: nil, action: nil)
         slider.numberOfTickMarks = BackgroundTabPolicy.allCases.count
@@ -94,6 +101,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         super.init()
         setUpViews()
         reload()
+        observers.append(NotificationCenter.default.addObserver(
+            forName: .updateStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateUpdatesRows() }
+        })
     }
 
     func reload() {
@@ -133,10 +145,12 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         let policy = BackgroundTabPolicyPreference.current
         backgroundTabsSlider.integerValue = BackgroundTabPolicy.allCases.firstIndex(of: policy) ?? 1
         updateBackgroundTabsRow(for: policy)
+
+        MainActor.assumeIsolated { updateUpdatesRows() }
     }
 
-    /// Six groups, top to bottom: new windows, the address bar, search,
-    /// the mouse, background tabs, and the engine.
+    /// Seven groups, top to bottom: new windows, the address bar, search,
+    /// the mouse, background tabs, the engine, and updates.
     private func setUpViews() {
         // New windows / homepage (browser-m0x), first because it's the one
         // setting here that changes what ⌘N does.
@@ -291,6 +305,24 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         form.addRow("Default engine:", enginePopup)
         form.addFootnote(engineHelpLabel)
 
+        form.beginSection()
+        automaticUpdatesCheckbox.setButtonType(.switch)
+        automaticUpdatesCheckbox.title = "Check for updates automatically"
+        automaticUpdatesCheckbox.target = self
+        automaticUpdatesCheckbox.action = #selector(automaticUpdatesToggled)
+        form.addRow("Updates:", automaticUpdatesCheckbox)
+        installedVersionLabel.textColor = .secondaryLabelColor
+        installedVersionLabel.isSelectable = true
+        form.addRow("Installed:", installedVersionLabel)
+        checkNowButton.bezelStyle = .rounded
+        checkNowButton.target = self
+        checkNowButton.action = #selector(checkForUpdatesNow)
+        checkSpinner.style = .spinning
+        checkSpinner.controlSize = .small
+        checkSpinner.isDisplayedWhenStopped = false
+        form.addRow(nil, [checkNowButton, checkSpinner])
+        form.addFootnote(updatesHelpLabel)
+
         form.install(in: view)
     }
 
@@ -312,6 +344,59 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             backgroundTabsMaxLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
         return container
+    }
+
+    // MARK: - Updates
+
+    @MainActor
+    private func updateUpdatesRows() {
+        installedVersionLabel.stringValue = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+
+        guard let updates = UpdateCoordinator.shared.controller else {
+            automaticUpdatesCheckbox.isEnabled = false
+            automaticUpdatesCheckbox.state = .off
+            checkNowButton.isEnabled = false
+            checkSpinner.stopAnimation(nil)
+            updatesHelpLabel.stringValue = "Updates are off for this launch: it is a test instance or a build from the build folder."
+            helpTextDidChange()
+            return
+        }
+        automaticUpdatesCheckbox.isEnabled = updates.isReleaseBuild
+        automaticUpdatesCheckbox.state = updates.isReleaseBuild && updates.automaticallyChecks ? .on : .off
+        let checking = updates.status == .checking
+        checkNowButton.isEnabled = !checking
+        if checking { checkSpinner.startAnimation(nil) } else { checkSpinner.stopAnimation(nil) }
+
+        var lines: [String] = []
+        if !updates.isReleaseBuild {
+            lines.append("This copy was built locally, not by the release pipeline, so it never checks or updates itself. Check Now shows the newest release.")
+        } else {
+            lines.append("Checks GitHub for a newer release once a day. An update installs only when you choose Update Now.")
+            lines.append(updates.route == .native
+                ? "Downloads are checked for Apple notarization and this publisher's signature, then installed when Browser restarts or quits."
+                : "This copy cannot replace itself, so updating opens the release page.")
+        }
+        switch updates.status {
+        case .failed(let reason): lines.append("The last check failed: \(reason)")
+        case .upToDate: lines.append("Browser is up to date.")
+        case .available(let release): lines.append("Browser \(release.version) is available.")
+        case .idle, .checking: break
+        }
+        if let checked = updates.lastCheckedAt {
+            lines.append("Last checked \(checked.formatted(date: .abbreviated, time: .shortened)).")
+        }
+        updatesHelpLabel.stringValue = lines.joined(separator: " ")
+        helpTextDidChange()
+    }
+
+    @objc private func automaticUpdatesToggled() {
+        MainActor.assumeIsolated {
+            UpdateCoordinator.shared.controller?.automaticallyChecks = automaticUpdatesCheckbox.state == .on
+        }
+    }
+
+    @objc private func checkForUpdatesNow() {
+        UpdateCoordinator.shared.checkForUpdates(nil)
     }
 
     // MARK: - Layout

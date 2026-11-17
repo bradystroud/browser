@@ -1,116 +1,79 @@
-# Auto-update (Sparkle)
+# Auto-update
 
-Browser is distributed outside the App Store, so nothing updates it unless it
-updates itself. This is how that works, and what a release now requires.
+Browser updates itself from its GitHub releases. It does not use Sparkle or
+an appcast. The design is a port of myterm's updater.
 
-Tracked as beads `browser-wc7`.
+## What the user sees
 
-## Shape of it
+1. Once a day, a release build asks GitHub for the newest release
+   (`api.github.com/repos/bradystroud/browser/releases/latest`).
+2. When that release is newer, a button appears in every window's toolbar.
+   No dialog opens by itself.
+3. The button, or Browser > Check for Updates…, opens the update dialog:
+   Release Notes, Skip This Version, Later and Update Now.
+4. Update Now downloads the release's `Browser-<version>.dmg`, verifies it and
+   stages the app beside the installed one. The installed app does not change.
+5. Restart Now installs the update and opens the new version. Later installs it
+   the next time Browser quits.
 
-- The app embeds **Sparkle 2.9.6** (`third_party/sparkle/`, fetched by
-  `scripts/fetch-sparkle.sh`, gitignored exactly like CEF).
-- It polls **https://bradystroud.github.io/browser/appcast.xml** — the file
-  at `docs/appcast.xml`, which GitHub Pages already serves alongside the
-  landing page. No new hosting.
-- Each appcast entry points at the **GitHub release DMG** for that version.
-- Sparkle refuses any download whose **EdDSA signature** does not verify
-  against the `SUPublicEDKey` baked into the installed app. That is what
-  makes it safe to serve the feed from a static host: a compromised feed
-  cannot make an installed copy run anything Brady did not sign.
+Settings > General > Updates turns the daily check off, shows the installed
+version, and has Check Now.
 
-App-side wiring is `Sources/App/Update/UpdateCoordinator.swift`, started last
-in `AppDelegate.applicationDidFinishLaunching`. Publishing-side logic is
-`Packages/UpdateCore` (`swift test`), driven by `scripts/release.sh`.
+## What is checked
 
-## One-time setup — Brady, by hand, once
+The trust anchor is the code signature, not the download location.
 
-Auto-update is **off in every build** until this is done. `UpdateCoordinator`
-recognises the placeholder key in `Info.plist` and never starts the updater,
-so nothing about a dev build changes in the meantime.
+- The DMG's SHA-256 must equal the `digest` that GitHub's API lists for the
+  asset, and the asset URL must be exactly
+  `github.com/bradystroud/browser/releases/download/<tag>/Browser-<version>.dmg`.
+- The DMG and the app inside it must carry a Developer ID signature from team
+  `AQ6HPWB3D9`, and Gatekeeper must report "Notarized Developer ID" for both.
+- The app must have bundle ID `dev.stroud.browser`, the release's version, the
+  `BRWReleaseBuild` key, an arm64 executable, and a signed install helper.
 
-1. Generate the signing keypair. The private half goes into the login
-   Keychain and must never enter this repo:
+The same checks run again just before the swap.
 
-   ```
-   ./third_party/sparkle/bin/generate_keys
-   ```
+## How it installs
 
-   It prints the public key, as a base64 string.
+The pieces are in `Packages/UpdateCore` (with tests: `cd Packages/UpdateCore && swift test`)
+and `Sources/App/Update/`.
 
-2. Paste that public key into `Sources/App/mac/Info.plist.in`, replacing
-   `REPLACE_WITH_SUPublicEDKey_FROM_generate_keys`:
+- The release is staged in a private folder beside the app:
+  `<Applications>/.browser-update-<UUID>.noindex/` (mode 0700). The folder that
+  holds the app must be writable.
+- `BrowserUpdateAgent` (in `Contents/MacOS`) is copied into that folder. At
+  quit or restart, Browser starts it with the folder's `update.json` and its
+  own PID.
+- The helper waits for Browser to exit, checks everything again, and swaps the
+  two bundles in one step (`renameatx_np` with `RENAME_SWAP`). The previous
+  app stays whole in the staging folder.
+- For a restart, the helper opens the new version and waits up to 120 seconds
+  for it to confirm its startup (`UpdateStartupTrial`). If it does not
+  confirm, the helper stops it, swaps the previous app back and opens that.
+- An install at quit has no one to wait for. The next launch confirms it.
+  Until then the staging folder keeps the previous app.
+- A failure is written to `install-error.txt` in the staging folder. The next
+  launch shows it in the update dialog.
+- Finished staging folders are deleted at launch.
 
-   ```xml
-   <key>SUPublicEDKey</key>
-   <string>...the printed base64 public key...</string>
-   ```
+## Which builds update
 
-3. Commit that change. From this point every build has auto-update live.
+Only builds made by `scripts/release.sh` with a real identity. They carry
+`BRWReleaseBuild` in Info.plist and the helper in `Contents/MacOS`.
 
-**Back the private key up.** Losing it means no already-installed copy can
-ever be updated again — they will reject every future release, and the only
-way out is asking every user to re-download by hand. Export it with
-`./third_party/sparkle/bin/generate_keys -x <file>` and put that file
-somewhere safe and offline. Never in this repo; it is public.
+- A local build (`scripts/build.sh`, the `ship` skill) has the template
+  version from `Info.plist.in`, so it would always look out of date. It never
+  checks by itself, and it never installs. Check Now still shows the newest
+  release and opens its page.
+- A scratch launch (`--profiles-root`) and a bundle in the build folder have
+  updates turned off completely.
 
-## Cutting a release
+## Release requirements
 
-Releases are automatic: every push to `main` that changes the app runs
-`.github/workflows/release.yml`. See `docs/release-automation.md`.
+`scripts/release.sh` signs the DMG before it notarizes it, and the workflow
+uploads `Browser-<version>.dmg`. The updater needs both.
 
-The workflow creates the GitHub release first and pushes the appcast entry
-after it, so the feed never points at a download that does not exist yet.
-It writes an appcast entry only when the `SPARKLE_ED_PRIVATE_KEY` secret is
-set and `Info.plist.in` carries the real public key. Without both, it
-releases without one, and installed copies do not auto-update.
-
-To give CI the private key, export it and store the file's contents as the
-`SPARKLE_ED_PRIVATE_KEY` repository secret:
-
-```
-./third_party/sparkle/bin/generate_keys -x sparkle-private-key.txt
-gh secret set SPARKLE_ED_PRIVATE_KEY < sparkle-private-key.txt
-rm sparkle-private-key.txt
-```
-
-Re-cutting a release that already has an appcast entry is fine: the entry is
-replaced, not duplicated.
-
-## Updates are off for some launches, on purpose
-
-`UpdateCoordinator.disabledReason()` keeps the updater from starting when:
-
-- `--profiles-root` was passed — a scratch/test instance, which is what
-  `scripts/launch-scratch.sh` and every agent produces. Those are throwaway
-  copies under `/tmp`.
-- the bundle is inside the CMake output tree (`build/`, `build-release/`) —
-  Sparkle would otherwise swap the code under development for the last
-  published release.
-- `SUPublicEDKey` is missing or still the placeholder.
-
-Each case logs one line saying which, so "why did it not check?" is
-answerable from the log rather than by reading this file.
-
-## Profiles survive an update
-
-All state lives in `~/Library/Application Support/Browser/` (see
-`BrowserCore`'s `ProfilesRootResolver`) — history, bookmarks, downloads,
-cookies, profile metadata, session. Sparkle replaces only the `.app` bundle,
-so an update cannot touch any of it. This is `browser-le4`'s guard rail #4,
-and it holds structurally rather than by care.
-
-## Signing, and the trap next to it
-
-`scripts/sign.sh` signs Sparkle inside-out before the app itself:
-`Downloader.xpc`, `Installer.xpc`, `Updater.app`, `Autoupdate`, then the
-framework. Every one is separately sealed code that `codesign` will not reach
-on its own, and `release.sh`'s existing gate fails the release if any Mach-O
-in the bundle lacks a Developer ID signature and secure timestamp.
-
-The framework is copied into the bundle with `ditto`, **not** CMake's
-`copy_directory`. `copy_directory` is what leaves the broken self-referential
-symlinks inside the CEF framework that `sign.sh` has to prune — and a broken
-symlink anywhere in the bundle is a Gatekeeper rejection ("invalid
-destination for symbolic link in bundle") that shows up only on a
-*downloaded* copy, never on a locally built one. `ditto` reproduces the
-vendor framework faithfully, so there is nothing to prune.
+A copy installed with Homebrew updates itself the same way. Homebrew's own
+record then shows the old version until `brew upgrade` runs, which is
+harmless. The cask should say `auto_updates true`, so that `brew upgrade`
+does not try to replace an app that already updated itself.

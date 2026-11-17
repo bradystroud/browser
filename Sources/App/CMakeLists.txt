@@ -270,6 +270,9 @@ set(BROWSER_SWIFT_SRCS
   CLI/AgentWindowIndicator.swift
   CLI/AgentPageScript.swift
   Update/UpdateCoordinator.swift
+  Update/UpdateController.swift
+  Update/UpdateWindowController.swift
+  Update/UpdateToolbarController.swift
   )
 source_group(App FILES ${BROWSER_SWIFT_SRCS})
 
@@ -337,6 +340,20 @@ set(BROWSER_BROWSER_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/BrowserCore/Sources/BrowserCore/SQLite/SQLiteConnection.swift
   )
 source_group(BrowserCore FILES ${BROWSER_BROWSER_CORE_SRCS})
+
+# UpdateCore (../../Packages/UpdateCore/Sources/UpdateCore): the release
+# check, download, verification and bundle swap. Compiled straight into the
+# app like BrowserCore above; the same package also builds the install helper
+# (BrowserUpdateAgent), which scripts/bundle-update-agent.sh puts in
+# Contents/MacOS.
+set(BROWSER_UPDATE_CORE_SRCS
+  ${CMAKE_SOURCE_DIR}/Packages/UpdateCore/Sources/UpdateCore/AppVersion.swift
+  ${CMAKE_SOURCE_DIR}/Packages/UpdateCore/Sources/UpdateCore/ReleaseCheck.swift
+  ${CMAKE_SOURCE_DIR}/Packages/UpdateCore/Sources/UpdateCore/ReleaseDownload.swift
+  ${CMAKE_SOURCE_DIR}/Packages/UpdateCore/Sources/UpdateCore/ApplicationUpdate.swift
+  ${CMAKE_SOURCE_DIR}/Packages/UpdateCore/Sources/UpdateCore/UpdateStartupTrial.swift
+  )
+source_group(UpdateCore FILES ${BROWSER_UPDATE_CORE_SRCS})
 
 # BlockListCore's domain trie/parser/settings model
 # (../../Packages/BlockListCore/Sources/BlockListCore) are pure Swift/
@@ -503,6 +520,7 @@ set(BROWSER_SRCS
   ${BROWSER_SEARCH_CORE_SRCS}
   ${BROWSER_SESSION_CORE_SRCS}
   ${BROWSER_GESTURE_CORE_SRCS}
+  ${BROWSER_UPDATE_CORE_SRCS}
   )
 
 set(BROWSER_HELPER_SRCS
@@ -539,18 +557,6 @@ set(CEF_APP "${CEF_TARGET_OUT_DIR}/${CEF_TARGET}.app")
 set(EXECUTABLE_NAME "${CEF_TARGET}")
 set(PRODUCT_NAME "${CEF_TARGET}")
 
-# Sparkle (browser-wc7): the auto-updater framework, fetched by
-# scripts/fetch-sparkle.sh into third_party/sparkle/ (gitignored, exactly
-# like third_party/cef/). scripts/build.sh and scripts/release.sh both run
-# that fetch when it's missing, so a clean checkout still builds with one
-# command -- but a bare `cmake` invocation needs the hint.
-set(SPARKLE_FRAMEWORK_DIR "${CMAKE_SOURCE_DIR}/third_party/sparkle/Sparkle.framework")
-if(NOT EXISTS "${SPARKLE_FRAMEWORK_DIR}")
-  message(FATAL_ERROR
-    "Sparkle.framework not found at ${SPARKLE_FRAMEWORK_DIR}.\n"
-    "Run scripts/fetch-sparkle.sh (scripts/build.sh does this for you).")
-endif()
-
 # Main app bundle target -- Obj-C++ bridge + Swift UI in one CMake/Xcode target.
 add_executable(${CEF_TARGET} MACOSX_BUNDLE ${BROWSER_RESOURCES_MAC_SRCS} ${BROWSER_SRCS})
 SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
@@ -560,42 +566,17 @@ add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
 # WebKit -- not part of CEF_STANDARD_LIBS (see third_party/cef's own
 # cef_variables.cmake), needed only for Engine/WebKitEngineAdapter.swift's
 # `import WebKit` (browser-n50); everything else already links AppKit/Cocoa.
-# Sparkle -- linked, not dlopen'd, so it needs a framework search path at
-# build time and an @executable_path rpath at run time. Unlike the CEF
-# framework (loaded dynamically by the bridge), the Swift `import Sparkle` in
-# Update/UpdateCoordinator.swift is a compile-time dependency.
-target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3 "-framework WebKit" "-framework Sparkle")
+target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} sqlite3 "-framework WebKit")
 set_target_properties(${CEF_TARGET} PROPERTIES
   MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
   XCODE_ATTRIBUTE_SWIFT_OBJC_BRIDGING_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/BrowserApp-Bridging-Header.h"
   XCODE_ATTRIBUTE_SWIFT_VERSION "5.0"
   XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC "YES"
-  XCODE_ATTRIBUTE_FRAMEWORK_SEARCH_PATHS "${CMAKE_SOURCE_DIR}/third_party/sparkle"
   XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "@executable_path/../Frameworks"
   )
 
 # Copy the CEF framework into the Frameworks directory and create the necessary symlinks.
 COPY_MAC_FRAMEWORK("${CEF_TARGET}" "${CEF_BINARY_DIR}" "${CEF_APP}")
-
-# Embed Sparkle.framework (browser-wc7). Deliberately `ditto`, not CMake's
-# own `copy_directory`: the latter is what turns the CEF framework's
-# Versions/Current symlinks into the broken self-referential links
-# scripts/sign.sh has to prune, and a broken symlink anywhere in the bundle
-# is a Gatekeeper rejection ("invalid destination for symbolic link in
-# bundle") that only ever shows on a *downloaded* copy -- see sign.sh's
-# pruning step for the full story. `ditto` reproduces a well-formed
-# framework, so there is nothing to prune here.
-#
-# The destination is removed first because `ditto` merges into an existing
-# directory rather than replacing it, which would leave stale files from a
-# previous Sparkle version inside the signed bundle.
-add_custom_command(
-  TARGET ${CEF_TARGET}
-  POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E rm -rf "${CEF_APP}/Contents/Frameworks/Sparkle.framework"
-  COMMAND ditto "${SPARKLE_FRAMEWORK_DIR}" "${CEF_APP}/Contents/Frameworks/Sparkle.framework"
-  VERBATIM
-  )
 
 # App icon: Info.plist.in's CFBundleIconFile references "AppIcon" (no
 # extension, per Apple convention), so the .icns just needs to land in

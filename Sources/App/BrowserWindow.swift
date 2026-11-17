@@ -24,6 +24,9 @@ final class BrowserWindow: AgentSizeableWindow {
     /// notifications from this window's first tab onward.
     private let downloadsToolbar = DownloadsToolbarController()
 
+    /// The "update available" button, shown while a newer release is known.
+    private let updateToolbar = UpdateToolbarController()
+
     /// Called by BrowserWindowController.applyChromeLayout whenever the web
     /// content area's top edge may have moved (tab strip shown/hidden,
     /// sidebar toggled), so overlays pinned to that edge follow it.
@@ -47,6 +50,7 @@ final class BrowserWindow: AgentSizeableWindow {
         }
         readerMode.attach(to: self)
         downloadsToolbar.attach(to: self)
+        updateToolbar.attach(to: self)
         ExtensionsCoordinator.shared.activate()
         extensionsToolbar.attach(to: self)
         undoCloseTab.window = self
