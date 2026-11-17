@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Browser — a native macOS browser with real profiles</title>
-<meta name="description" content="Browser is a macOS web browser: Chromium rendering inside a native Swift/AppKit shell, with first-class profiles and rules that decide where each link opens. Developer ID signed and notarized.">
-<meta property="og:title" content="Browser — a native macOS browser with real profiles">
-<meta property="og:description" content="Chromium rendering inside a native Swift/AppKit shell, with first-class profiles and rule-based link routing.">
+<title>Browser — the Mac browser your agents can drive</title>
+<meta name="description" content="Browser is a macOS web browser built for AI agents: Claude Code, Codex or any agent with a shell can open, read, click, type, screenshot and record pages in your signed-in profiles, without touching your mouse or keyboard. Chromium or WebKit in a native Swift/AppKit shell.">
+<meta property="og:title" content="Browser — the Mac browser your agents can drive">
+<meta property="og:description" content="Let your coding agent drive real, signed-in browser windows from the terminal, while you keep your mouse and keyboard. Native macOS, Chromium or WebKit.">
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/icon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -136,6 +136,18 @@
   }
   pre .c{color:var(--paper-dim)}
 
+  /* ---------- agents ---------- */
+  .agent-pitch{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:clamp(2rem,5vw,4rem);align-items:start;margin-bottom:clamp(3rem,6vw,4.5rem)}
+  .agent-pitch .big{font-family:var(--serif);font-size:clamp(1.5rem,2.6vw,2.1rem);line-height:1.2;color:var(--paper);margin-bottom:1.4rem}
+  .agent-pitch .big em{color:var(--teal)}
+  pre.term{border-left-color:var(--teal);font-size:.78rem}
+  pre.term .p{color:var(--teal)}
+  pre.term .o{color:var(--paper-dim)}
+  .sub-head{font-family:var(--mono);font-size:.74rem;letter-spacing:.18em;text-transform:uppercase;color:var(--paper-dim);margin:clamp(3rem,6vw,4rem) 0 1.2rem}
+  code{font-family:var(--mono);font-size:.85em;color:var(--paper);white-space:nowrap}
+  .grid.three{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  @media (max-width:820px){.agent-pitch{grid-template-columns:minmax(0,1fr)}}
+
   footer{border-top:1px solid var(--rule);padding-block:3rem 4rem;font-family:var(--mono);font-size:.75rem;color:var(--paper-dim)}
   footer .two{gap:2rem;align-items:start}
   footer a{color:var(--teal)}
@@ -155,6 +167,7 @@
     <div class="topbar">
       <div class="mark"><img src="assets/icon.svg" alt=""> Browser</div>
       <nav>
+        <a href="#agents">Agents</a>
         <a href="#features">Features</a>
         <a href="#under-the-hood">Under the hood</a>
         <a href="#privacy">Privacy</a>
@@ -165,9 +178,9 @@
 
     <div class="hero">
       <div>
-        <div class="eyebrow">macOS · Apple silicon</div>
+        <div class="eyebrow">macOS · built for agents</div>
         <h1>Browser<em>.</em></h1>
-        <p class="lede">Chromium or WebKit rendering inside a <b>native Swift/AppKit shell</b> — with real profiles, and rules that decide where each link opens.</p>
+        <p class="lede">The Mac browser your <b>AI agents can drive</b> — in your real, signed-in profiles, without ever taking your mouse or keyboard. And a fast native browser for you, with real profiles and rules for where each link opens.</p>
       </div>
       <div class="hero-side">
         <a class="cta" href="https://github.com/bradystroud/browser/releases/latest/download/Browser.dmg">
@@ -196,9 +209,91 @@
   </div>
 </header>
 
+<section id="agents">
+  <div class="wrap">
+    <div class="sec-head"><span class="sec-num">01</span><h2>A browser for your agents</h2></div>
+    <div class="agent-pitch">
+      <div class="prose">
+        <p class="big">Your agent gets its own window. <em>You keep your Mac.</em></p>
+        <p><strong>Built in, not bolted on.</strong> Claude Code, Codex, or any agent that can run a shell command drives Browser through <code>browser page</code>, the CLI inside the app. No Playwright install, no Chrome for Testing download, no debugging port left open.</p>
+        <p><strong>Already signed in.</strong> An agent opens its window in the profile you name, with that profile's cookies and sessions — so it can check your dashboard, file the ticket or test the staging site you are logged in to. Or give it <code>--private</code> for an empty cookie jar.</p>
+        <p><strong>Out of your way.</strong> Clicks and keystrokes go straight into the page, never through macOS. The pointer does not move, the app never comes to the front, and the agent's window never takes your typing. Run it <code>--headless</code> and it is off every screen.</p>
+        <p>Tell your agent to run <code>browser page help</code>. That is the whole setup.</p>
+      </div>
+      <div>
+        <pre class="term"><span class="p">$</span> browser page open https://github.com/acme/app/pull/42 \
+    --profile Work --headless --wait-idle
+<span class="o">Opened p1 in profile 'Work': https://github.com/acme/app/pull/42</span>
+
+<span class="p">$</span> browser page snapshot p1
+<span class="o">Fix flaky login test · Pull Request #42 · acme/app
+https://github.com/acme/app/pull/42
+
+Elements:
+  e12 link "Files changed"
+  e31 textbox "Add a comment"
+  e32 button "Comment"
+  …</span>
+
+<span class="p">$</span> browser page type p1 "LGTM, merging" --ref e31
+<span class="p">$</span> browser page click p1 --text Comment --wait-idle
+<span class="p">$</span> browser page screenshot p1 --out review.png
+<span class="p">$</span> browser page close p1</pre>
+      </div>
+    </div>
+
+    <div class="grid three">
+      <div class="cell" style="--dot:var(--teal)">
+        <h3>Reads pages the way agents need</h3>
+        <p><code>snapshot</code> returns the page as roles, names and short refs (<code>e12</code>), not a wall of HTML. Act on a ref, a CSS selector, or the text a person would read — a real link or button wins over a heading.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Waits for the page, not a timer</h3>
+        <p><code>--wait-idle</code> returns once no request is in flight and the DOM has been still for 500&nbsp;ms. Or wait for a selector, some text, a URL or a script to be true.</p>
+      </div>
+      <div class="cell" style="--dot:var(--violet)">
+        <h3>Real input, real events</h3>
+        <p>Click, hover, type, press keys and chords, pick from a select, upload files, answer dialogs, scroll. Pages see trusted events with their default actions, typed on your own keyboard layout.</p>
+      </div>
+      <div class="cell" style="--dot:var(--teal)">
+        <h3>Shows its work</h3>
+        <p>Screenshots, full-page too. <code>record</code> captures a screencast with a drawn cursor where each click landed, ready for ffmpeg — proof for a PR, or a bug report that replays itself.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Runs any script</h3>
+        <p><code>eval</code> takes an expression or a block of statements, awaits a returned promise, and hands back JSON. Every command speaks <code>--json</code>.</p>
+      </div>
+      <div class="cell" style="--dot:var(--violet)">
+        <h3>Chromium or WebKit</h3>
+        <p>Drive the engine your users have. Engine rules pick it per site, and an agent's page keeps that engine for its whole life, so nothing is closed out from under a command.</p>
+      </div>
+    </div>
+
+    <div class="sub-head">Guardrails, on by default</div>
+    <div class="grid">
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Off until you turn it on</h3>
+        <p>Agent control is a switch in Settings → Privacy → Agents. Nothing on the command line can flip it.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Only its own windows</h3>
+        <p>An agent reaches the windows it opened and nothing else — never your tabs. Its windows never take a link from another app and are never saved in your session.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Hands off your passwords</h3>
+        <p>The password manager never fills an agent's page, typing into a password field is refused, and a snapshot never carries a password's value. No command prints a saved password, ever.</p>
+      </div>
+      <div class="cell" style="--dot:var(--amber)">
+        <h3>Local and yours</h3>
+        <p>The CLI talks to the app over a socket only your user account can open. Nothing goes through a server, because there isn't one.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="features">
   <div class="wrap">
-    <div class="sec-head"><span class="sec-num">01</span><h2>What it does</h2></div>
+    <div class="sec-head"><span class="sec-num">02</span><h2>What it does for you</h2></div>
     <div class="grid">
       <div class="cell" style="--dot:var(--teal)">
         <h3>Profiles that are actually separate</h3>
@@ -242,7 +337,7 @@
 
 <section id="under-the-hood">
   <div class="wrap">
-    <div class="sec-head"><span class="sec-num">02</span><h2>Under the hood</h2></div>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Under the hood</h2></div>
     <div class="two">
       <div class="prose">
         <p><strong>Two engines, one shell.</strong> Pages render with Chromium, via CEF — the engine Chrome uses — or with WebKit, the engine Safari uses. Choose in Settings → General. Profiles, rules and the whole interface stay the same; only the rendering changes.</p>
@@ -268,7 +363,7 @@
 
 <section id="privacy">
   <div class="wrap">
-    <div class="sec-head"><span class="sec-num">03</span><h2>Privacy</h2></div>
+    <div class="sec-head"><span class="sec-num">04</span><h2>Privacy</h2></div>
     <div class="two">
       <div class="prose">
         <p><strong>Nothing is collected.</strong> There is no analytics, no telemetry, no crash reporting to a server, and no account. The app does not phone home, and there is no server to phone.</p>
@@ -285,7 +380,7 @@
 
 <section id="install">
   <div class="wrap">
-    <div class="sec-head"><span class="sec-num">04</span><h2>Install</h2></div>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Install</h2></div>
     <div class="two">
       <div class="prose">
         <p>With Homebrew: <span style="font-family:var(--mono);font-size:.85em">brew install --cask bradystroud/tap/browser</span></p>
@@ -301,7 +396,10 @@ Resources/bin/browser" /usr/local/bin/browser
 
 browser profiles
 browser open https://example.com --profile Work
-browser route-test https://github.com</pre>
+browser route-test https://github.com
+
+<span class="c"># for agents: turn on Settings → Privacy → Agents, then</span>
+browser page help</pre>
       </div>
     </div>
   </div>
@@ -309,7 +407,7 @@ browser route-test https://github.com</pre>
 
 <section id="raycast">
   <div class="wrap">
-    <div class="sec-head"><span class="sec-num">05</span><h2>Raycast</h2></div>
+    <div class="sec-head"><span class="sec-num">06</span><h2>Raycast</h2></div>
     <div class="two">
       <div class="prose">
         <p><strong>The commands from the film.</strong> A <a href="https://www.raycast.com/" style="color:var(--teal)">Raycast</a> extension switches to a profile, opens a link or the clipboard's link in the profile you pick, opens a new window in one, and searches history and bookmarks. It drives the CLI already inside Browser.app, so there is nothing else to set up.</p>
