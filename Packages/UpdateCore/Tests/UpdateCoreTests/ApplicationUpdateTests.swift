@@ -49,6 +49,16 @@ final class ApplicationUpdateTests: XCTestCase {
         XCTAssertNoThrow(try ApplicationUpdate.validatePlan(plan, manifest: plan.manifestURL))
     }
 
+    /// `standardizedFileURL` drops a leading `/private`, so a plan saved under
+    /// `/private/tmp` must still match the manifest path the helper is given.
+    func testPlanUnderPrivateValidatesFromTheHelpersManifestPath() throws {
+        guard root.path.hasPrefix("/var/") || root.path.hasPrefix("/tmp/") else { throw XCTSkip("no /private alias") }
+        root = URL(fileURLWithPath: "/private" + root.path, isDirectory: true)
+        let plan = try makePlan()
+        let fromArguments = URL(fileURLWithPath: plan.manifestURL.path).standardizedFileURL
+        XCTAssertNoThrow(try ApplicationUpdate.validatePlan(plan, manifest: fromArguments))
+    }
+
     func testPlanOutsideAPrivateFolderIsRefused() throws {
         let plan = try makePlan()
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: plan.directory.path)
