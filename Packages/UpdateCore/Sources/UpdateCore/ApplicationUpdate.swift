@@ -298,7 +298,7 @@ public enum ApplicationUpdate {
     /// Only an owner-private staging folder beside the app may supply an installation handoff.
     public static func validatePlan(_ plan: ApplicationUpdatePlan, manifest: URL) throws {
         guard isStageName(plan.directory.lastPathComponent),
-              manifest.standardizedFileURL == plan.manifestURL,
+              manifest.standardizedFileURL == plan.manifestURL.standardizedFileURL,
               plan.directory.deletingLastPathComponent().standardizedFileURL.path == plan.target.deletingLastPathComponent().standardizedFileURL.path,
               plan.target.pathExtension == "app", plan.staged.path == plan.directory.appendingPathComponent(appName).path,
               plan.target.standardizedFileURL == plan.target.resolvingSymlinksInPath(),
