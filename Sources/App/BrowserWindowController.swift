@@ -366,8 +366,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private var trailingControlsMinX: CGFloat = 0
 
     /// Registers `view` as the trailing control in `slot` and frames it.
-    /// Slot 0 is Reader, 1 Downloads, 2 the password key, 3 card/address
-    /// autofill, 4 the extensions button and 5... the pinned extensions;
+    /// Slot -1 is the update button, 0 Reader, 1 Downloads, 2 the password
+    /// key, 3 card/address autofill, 4 the extensions button and 5... the
+    /// pinned extensions;
     /// lower slots sit nearer the trailing edge, after the toolbar's own
     /// "+". `view` must already be a subview of the window's contentView.
     /// Calling this again for the same view is cheap and simply re-packs.

@@ -1,20 +1,11 @@
 import Foundation
 
-/// A dotted numeric version, as used by `CFBundleVersion` and by an
-/// appcast's `<sparkle:version>` -- the two values Sparkle compares to decide
-/// whether an update exists.
-///
-/// This type does **not** re-implement that decision: at run time Sparkle's
-/// own `SUStandardVersionComparator` makes it inside the app. What this is
-/// for is the *publishing* side (`appcast-tool`, see this package's
-/// executable target): ordering `<item>` elements newest-first and deciding
-/// whether an entry being added replaces an existing one. Getting that
-/// ordering wrong publishes a feed that offers users the wrong build, so it
-/// is worth having tested rather than done with a shell `sort`.
-public struct AppVersion: Equatable, Comparable, CustomStringConvertible {
+/// A dotted numeric version, as stamped into `CFBundleShortVersionString`
+/// and carried by a release tag (`v0.1.4`). The updater compares the running
+/// app's version against the newest GitHub release with it.
+public struct AppVersion: Hashable, Comparable, Sendable, CustomStringConvertible {
     /// The numeric components, exactly as written. Not normalized: "0.2" and
-    /// "0.2.0" compare equal (see `<`) but each renders back as it was
-    /// given, so a version string round-trips through the appcast unchanged.
+    /// "0.2.0" compare equal (see `<`) but each renders back as it was given.
     public let components: [Int]
 
     private let original: String
@@ -42,9 +33,7 @@ public struct AppVersion: Equatable, Comparable, CustomStringConvertible {
 
         components = parsed
         // Deliberately `body`, not `trimmed`: a "v" accepted from a git tag
-        // is dropped here rather than carried into the appcast, where
-        // Sparkle would compare "v0.2.0" against the app's own bare
-        // CFBundleVersion and find no match.
+        // is dropped, so a tag and the bundle's own version print the same.
         original = body
     }
 
@@ -65,7 +54,15 @@ public struct AppVersion: Equatable, Comparable, CustomStringConvertible {
         !(lhs < rhs) && !(rhs < lhs)
     }
 
-    /// The version as it was written, minus surrounding whitespace -- the
-    /// form that goes back into the appcast.
+    /// Hashes the zero-padded components, so two versions that compare equal
+    /// ("1.2" and "1.2.0") also hash equal.
+    public func hash(into hasher: inout Hasher) {
+        var padded = components
+        while let last = padded.last, last == 0 { padded.removeLast() }
+        hasher.combine(padded)
+    }
+
+    /// The version as it was written, minus surrounding whitespace and any
+    /// leading "v".
     public var description: String { original }
 }

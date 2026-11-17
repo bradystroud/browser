@@ -78,7 +78,7 @@ You need Xcode 27 and CMake.
 ```sh
 git clone https://github.com/bradystroud/browser.git
 cd browser
-./scripts/build.sh      # fetches CEF (~285 MB) and Sparkle, then builds and signs
+./scripts/build.sh      # fetches CEF (~285 MB), then builds and signs
 ./scripts/install.sh    # copies the build to /Applications
 ```
 

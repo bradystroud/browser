@@ -9,9 +9,8 @@ final class AppVersionTests: XCTestCase {
         XCTAssertEqual(AppVersion("  0.2.0  ")?.components, [0, 2, 0])
     }
 
-    /// Release tags in this repo are "v0.1.0" but CFBundleVersion is "0.1.0",
-    /// and the appcast must carry the bare form or Sparkle compares "v0.2.0"
-    /// against "0.1.0" and matches nothing.
+    /// Release tags in this repo are "v0.1.0" but CFBundleShortVersionString
+    /// is "0.1.0", and the two must compare and print the same.
     func testDropsGitTagPrefix() {
         XCTAssertEqual(AppVersion("v0.1.0")?.components, [0, 1, 0])
         XCTAssertEqual(AppVersion("v0.1.0")?.description, "0.1.0")
@@ -37,7 +36,7 @@ final class AppVersionTests: XCTestCase {
     }
 
     /// The comparison that a naive string sort gets wrong: "0.10.0" sorts
-    /// before "0.9.0" lexically, which would publish an appcast offering
+    /// before "0.9.0" lexically, which would make the updater offer
     /// users an older build than the one they have.
     func testStringOrderingWouldBeWrong() {
         XCTAssertTrue("0.10.0" < "0.9.0")

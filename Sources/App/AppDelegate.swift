@@ -187,10 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         DevToolsLaunchOption.applyIfRequested()
 
-        // Last in the launch sequence deliberately (browser-wc7): Sparkle's
-        // first scheduled check can put UI on screen, and it should never do
-        // that ahead of the window this launch was actually asked for. It
-        // no-ops on scratch/dev launches -- see UpdateCoordinator.start().
+        // Last in the launch sequence deliberately: it confirms a just-
+        // installed update's startup, which the install helper waits for, and
+        // that must mean the launch's windows really are up. It no-ops on
+        // scratch/dev launches -- see UpdateCoordinator.start().
         UpdateCoordinator.shared.start()
     }
 

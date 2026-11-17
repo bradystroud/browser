@@ -1,6 +1,6 @@
 # Every push to main that touches the app becomes a signed, notarized release:
-# a GitHub release with the DMG, the Sparkle appcast entry, and the Homebrew
-# cask bump. docs/release-automation.md lists the secrets it needs.
+# a GitHub release with the DMG, which installed copies update from, and the
+# Homebrew cask bump. docs/release-automation.md lists the secrets it needs.
 name: Release
 
 on:
@@ -33,7 +33,7 @@ jobs:
     env:
       SIGNING_IDENTITY: "Developer ID Application: BRADY MATTHEW STROUD (AQ6HPWB3D9)"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -74,12 +74,10 @@ jobs:
           xcodebuild -version
 
       - name: Cache CEF
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: |
-            third_party/cef
-            third_party/sparkle
-          key: third-party-${{ hashFiles('scripts/fetch-cef.sh', 'scripts/fetch-sparkle.sh') }}
+          path: third_party/cef
+          key: third-party-${{ hashFiles('scripts/fetch-cef.sh') }}
 
       - name: Install signing material
         env:
@@ -87,7 +85,6 @@ jobs:
           DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
           NOTARY_API_KEY_BASE64: ${{ secrets.NOTARY_API_KEY_BASE64 }}
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           secrets_dir="${RUNNER_TEMP}/signing"
           mkdir -p "${secrets_dir}" ~/.config/browser
@@ -108,29 +105,16 @@ jobs:
           echo "${NOTARY_API_KEY_BASE64}" | base64 --decode > "${secrets_dir}/notary.p8"
           echo "NOTARY_API_KEY_PATH=${secrets_dir}/notary.p8" >> "$GITHUB_ENV"
 
-          if [[ -n "${SPARKLE_ED_PRIVATE_KEY}" ]]; then
-            printf '%s' "${SPARKLE_ED_PRIVATE_KEY}" > "${secrets_dir}/sparkle.key"
-            echo "SPARKLE_ED_KEY_FILE=${secrets_dir}/sparkle.key" >> "$GITHUB_ENV"
-          fi
-
       - name: Build, sign, notarize and package
         env:
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
           NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # The appcast entry is only useful once Info.plist carries the real
-          # public key, and signing it needs the private key.
-          appcast_args=()
-          if [[ -z "${SPARKLE_ED_KEY_FILE:-}" ]] || grep -q REPLACE_WITH_SUPublicEDKey Sources/App/mac/Info.plist.in; then
-            echo "::warning::Sparkle key not configured -- releasing without an appcast entry, so installed copies will not auto-update."
-            appcast_args=(--skip-appcast)
-          fi
           scripts/release.sh \
             --identity "${SIGNING_IDENTITY}" \
             --format dmg \
-            --version "${VERSION}" \
-            ${appcast_args[@]+"${appcast_args[@]}"}
+            --version "${VERSION}"
 
       - name: Publish the GitHub release
         env:
@@ -139,27 +123,13 @@ jobs:
         run: |
           dmg="dist/Browser-${VERSION}.dmg"
           # A stable name too, so releases/latest/download/Browser.dmg always
-          # serves the newest build. Same bytes, so the Sparkle signature of
-          # the versioned file still holds.
+          # serves the newest build. The app's updater downloads only the
+          # versioned file (ReleaseCheck.assetName).
           cp "${dmg}" dist/Browser.dmg
           gh release create "v${VERSION}" "${dmg}" dist/Browser.dmg \
             --target "${GITHUB_SHA}" \
             --title "Browser ${VERSION}" \
             --generate-notes
-
-      - name: Publish the appcast
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          # Runs after the release exists, so the feed never points at a
-          # download that is not there yet.
-          git diff --quiet docs/appcast.xml && { echo "Appcast unchanged."; exit 0; }
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/appcast.xml
-          git commit -m "Publish Browser ${VERSION} to the appcast"
-          git pull --rebase origin main
-          git push origin HEAD:main
 
       - name: Bump the Homebrew cask
         env:

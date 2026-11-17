@@ -6,12 +6,13 @@ Every push to `main` that changes the app becomes a release.
 1. Picks the next version: major.minor from `Sources/App/mac/Info.plist.in`,
    patch one higher than the newest `v<major>.<minor>.*` tag.
 2. Runs `scripts/release.sh --format dmg --version <version>`: build, sign,
-   notarize, staple, and (when the Sparkle key is set) the appcast entry.
+   notarize and staple. The DMG is signed too, because the app's updater
+   refuses an unsigned one (see `docs/auto-update.md`).
 3. Creates the GitHub release `v<version>` with `Browser-<version>.dmg` and a
    stable-named copy, `Browser.dmg`. The website and README link to
    `releases/latest/download/Browser.dmg`, so they never go stale.
-4. Pushes `docs/appcast.xml`, after the release exists.
-5. Updates the cask in
+   Installed copies find the release through GitHub's API within a day.
+4. Updates the cask in
    [bradystroud/homebrew-tap](https://github.com/bradystroud/homebrew-tap).
 
 Pushes that change only docs, Markdown, `.beads/`, agent config, assets or the
@@ -34,7 +35,6 @@ workflow fails with a list of what is missing.
 | `NOTARY_API_KEY_BASE64` | An App Store Connect API key (`.p8`) for `notarytool` | App Store Connect → Users and Access → Integrations → Team Keys → add a key with the Developer role. Then `base64 -i AuthKey_XXXX.p8 \| gh secret set NOTARY_API_KEY_BASE64` |
 | `NOTARY_API_KEY_ID` | That key's ID | Shown next to the key |
 | `NOTARY_API_ISSUER` | The issuer ID | Shown above the key list |
-| `SPARKLE_ED_PRIVATE_KEY` | Optional. Turns on the appcast entry | See `docs/auto-update.md` |
 | `HOMEBREW_TAP_TOKEN` | Optional. Lets the workflow update the cask | A fine-grained personal access token with Contents: read and write on `bradystroud/homebrew-tap` only |
 
 Delete the exported `.p12` and `.p8` files after you store them.
