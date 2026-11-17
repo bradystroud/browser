@@ -16,12 +16,12 @@ final class ExtensionPopupTests: XCTestCase {
         weak var window: FakeWindow?
         init(_ tab: WebKitTab) { engineTab = tab }
         var extensionEngineTab: EngineTab? { engineTab }
-        var extensionTitle: String { engineTab.webView.title ?? "" }
-        var extensionURL: URL? { engineTab.webView.url }
-        var extensionIsLoading: Bool { engineTab.webView.isLoading }
+        var extensionTitle: String { MainActor.assumeIsolated { engineTab.webView.title ?? "" } }
+        var extensionURL: URL? { MainActor.assumeIsolated { engineTab.webView.url } }
+        var extensionIsLoading: Bool { MainActor.assumeIsolated { engineTab.webView.isLoading } }
         var extensionIsPinned: Bool { false }
         var extensionWindow: ExtensionHostWindow? { window }
-        func extensionLoad(_ url: URL) { engineTab.webView.load(URLRequest(url: url)) }
+        func extensionLoad(_ url: URL) { MainActor.assumeIsolated { _ = engineTab.webView.load(URLRequest(url: url)) } }
         func extensionActivate() {}
         func extensionClose() {}
         func extensionSetPinned(_ pinned: Bool) {}
@@ -93,7 +93,7 @@ final class ExtensionPopupTests: XCTestCase {
 
     // MARK: - Fixture
 
-    private static let files: [String: String] = [
+    nonisolated private static let files: [String: String] = [
         "background.js": """
         self.connects = 0;
         self.disconnects = 0;
@@ -148,7 +148,7 @@ final class ExtensionPopupTests: XCTestCase {
         """,
     ]
 
-    private static let manifest: [String: Any] = [
+    nonisolated(unsafe) private static let manifest: [String: Any] = [
         "manifest_version": 3, "name": "Popup Path", "version": "1.0",
         "background": ["service_worker": "background.js"],
         "action": ["default_title": "Popup Path", "default_popup": "popup.html"],
@@ -244,11 +244,15 @@ final class ExtensionPopupTests: XCTestCase {
         if waitForCompletion { XCTAssertTrue(waitUntil(5) { done }) }
     }
 
-    private var terminations: [Notification] = []
+    /// Process terminations seen since `watchForTermination`.
+    private final class Terminations: @unchecked Sendable { var seen: [Notification] = [] }
+    private let terminationLog = Terminations()
+    private var terminations: [Notification] { terminationLog.seen }
 
     private func watchForTermination() -> NSObjectProtocol {
-        NotificationCenter.default.addObserver(forName: .engineTabContentProcessDidTerminate, object: nil, queue: nil) { [weak self] note in
-            MainActor.assumeIsolated { self?.terminations.append(note) }
+        let log = terminationLog
+        return NotificationCenter.default.addObserver(forName: .engineTabContentProcessDidTerminate, object: nil, queue: .main) { note in
+            log.seen.append(note)
         }
     }
 
@@ -608,6 +612,21 @@ final class ExtensionPopupTests: XCTestCase {
         profile.shownPopover?.close()
 
         XCTAssertTrue(waitUntil(5) { badge() == "d1" }, "the worker never saw the popup's port close: badge \(badge())")
+    }
+
+    /// Settings' "Pair…": the popup opens in the given window, and asking
+    /// again while it is open leaves it open (a toolbar press would close it).
+    func testOpenPopupFromOutsideTheToolbarShowsItAndLeavesItOpen() throws {
+        let window = try openSignInPage()
+        let profile = try XCTUnwrap(manager.profile(for: profileId))
+        manager.openPopup(extensionId: id, window: window)
+        XCTAssertTrue(waitUntil(5) { profile.shownPopover?.isShown == true }, "the popup never showed")
+        let shown = profile.shownPopover
+        manager.openPopup(extensionId: id, window: window)
+        _ = waitUntil(0.5) { false }
+        XCTAssertTrue(shown?.isShown == true)
+        XCTAssertTrue(profile.shownPopover === shown)
+        XCTAssertTrue(profile.shownPopover?.contentViewController?.view.window?.parent === nsWindow)
     }
 
     /// A popup that no window can show is closed at once, so its page does

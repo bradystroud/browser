@@ -147,9 +147,12 @@ enum WebKitNativeMessaging {
         host.onMessage = { [weak port] message in
             port?.sendMessage(message) { _ in }
         }
-        host.onExit = { [weak port, weak host] reason in
+        host.onExit = { [weak port, weak host, weak context] reason in
             if let reason, let host { logExit(of: host, reason) }
-            if connections[key]?.host === host { connections[key] = nil }
+            if connections[key]?.host === host {
+                connections[key] = nil
+                announce(context)
+            }
             guard let port, !port.isDisconnected else { return }
             port.disconnect(throwing: reason.map { error($0) })
         }
@@ -162,8 +165,11 @@ enum WebKitNativeMessaging {
                 host.stop()
             }
         }
-        port.disconnectHandler = { _ in
-            connections.removeValue(forKey: key)?.host.stop()
+        port.disconnectHandler = { [weak context] _ in
+            if let removed = connections.removeValue(forKey: key) {
+                removed.host.stop()
+                announce(context)
+            }
             updateKeepAlive()
         }
         let background = backgroundWebView(of: context)
@@ -176,6 +182,18 @@ enum WebKitNativeMessaging {
             throw Self.error(error)
         }
         updateKeepAlive()
+        announce(context)
+    }
+
+    /// Told, on a later turn, whenever a context's set of running hosts
+    /// changed (`hostProcessIdentifiers(for:)`).
+    static var hostsDidChange: ((WKWebExtensionContext) -> Void)?
+
+    private static func announce(_ context: WKWebExtensionContext?) {
+        DispatchQueue.main.async { [weak context] in
+            guard let context else { return }
+            MainActor.assumeIsolated { hostsDidChange?(context) }
+        }
     }
 
     /// Stops every host started for `context`, for an extension being
@@ -262,6 +280,7 @@ enum WebKitNativeMessaging {
                   connection.host.name, connection.host.processIdentifier, reason)
             connection.host.stop()
             if let port = connection.port, !port.isDisconnected { port.disconnect() }
+            announce(connection.context)
         }
     }
 
