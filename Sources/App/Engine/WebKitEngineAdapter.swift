@@ -277,6 +277,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
     private let findFrames = WebKitFindFrameRegistry()
     let navigationState = WebKitNavigationState()
     let audioMute = WebKitAudioMute()
+    private let passkeyRequests = WebKitPasskeyRequests()
     let siteStyleSheets = WebKitSiteStyleSheets()
     /// Non-nil only while Responsive Design Mode is on.
     private(set) var responsiveDesign: WebKitResponsiveDesign?
@@ -383,6 +384,7 @@ final class WebKitTab: NSObject, EnginePopupTab {
         }
         installPageMessageBridge(into: config.userContentController, handlerName: WebKitTab.pageMessageHandlerName)
         audioMute.install(into: config.userContentController)
+        passkeyRequests.install(into: config.userContentController)
         findFrames.install(into: config.userContentController)
         installDevTools()
         hostView?.addSubview(webView)
@@ -488,6 +490,12 @@ final class WebKitTab: NSObject, EnginePopupTab {
     }
     func stopLoading() { webView.stopLoading() }
     func close() {
+        // The completion keeps the web view, and so its page, alive until
+        // the page has ended its passkey requests: a closing web view runs
+        // no pagehide, and a request left open blocks every other passkey
+        // request in the app (WebKitPasskeyRequests).
+        let closingWebView = webView
+        passkeyRequests.endAll(in: closingWebView) { withExtendedLifetime(closingWebView) {} }
         observations.forEach { $0.invalidate() }
         observations.removeAll()
         webView.navigationDelegate = nil
