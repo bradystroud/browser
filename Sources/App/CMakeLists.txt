@@ -115,6 +115,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitTab+Scripts.swift
   Engine/WebKitFindScript.swift
   Engine/WebKitMuteScript.swift
+  Engine/WebKitPasskeyRequests.swift
   Engine/WebKitPageSheetGuard.swift
   Engine/WebKitInspector.swift
   Engine/WebKitResponsiveDesign.swift
