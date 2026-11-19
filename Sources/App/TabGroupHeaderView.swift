@@ -30,6 +30,27 @@ final class TabGroupHeaderView: NSView {
         }
     }
 
+    /// The width the header's content is laid out for when that is not its
+    /// own width, as for TabButtonView.contentLayoutWidth: the slim strip
+    /// narrows the header to a tile around its colour dot, and the name and
+    /// chevron keep their full-row places, clipped away.
+    var contentLayoutWidth: CGFloat? {
+        didSet {
+            guard oldValue != contentLayoutWidth else { return }
+            layer?.masksToBounds = contentLayoutWidth != nil
+            needsLayout = true
+        }
+    }
+
+    /// True while the header is only its colour dot in the slim strip.
+    /// `fade` animates the name in or out; nil changes it at once.
+    func setCompact(_ compact: Bool, fade: CFTimeInterval? = nil, delay: CFTimeInterval = 0) {
+        toolTip = compact ? nameLabel.stringValue : nil
+        for view in [nameLabel, chevronView, countBadgeLabel] as [NSView] {
+            ChromeMotion.setAlpha(view, to: compact ? 0 : 1, duration: fade, delay: delay, slide: compact ? 0 : -8)
+        }
+    }
+
     var memberCount = 0 {
         didSet {
             guard oldValue != memberCount else { return }
@@ -79,6 +100,8 @@ final class TabGroupHeaderView: NSView {
         contentContainer.addSubview(chevronView)
 
         contentContainer.addSubview(countBadgeLabel)
+        // Their own layers, so the slim strip can fade them (ChromeMotion).
+        for view in [nameLabel, chevronView, countBadgeLabel] as [NSView] { view.wantsLayer = true }
 
         contentContainer.frame = bounds
         contentContainer.autoresizingMask = [.width, .height]
@@ -119,10 +142,11 @@ final class TabGroupHeaderView: NSView {
         let dotSize: CGFloat = 8
         let margin: CGFloat = 8
         let chevronSize: CGFloat = 10
+        let rowWidth = contentLayoutWidth ?? bounds.width
 
         colorDotView.frame = NSRect(x: margin, y: (bounds.height - dotSize) / 2, width: dotSize, height: dotSize)
         chevronView.frame = NSRect(
-            x: bounds.width - chevronSize - 6,
+            x: rowWidth - chevronSize - 6,
             y: (bounds.height - chevronSize) / 2,
             width: chevronSize,
             height: chevronSize
@@ -138,7 +162,7 @@ final class TabGroupHeaderView: NSView {
         if isCollapsed {
             let badgeWidth: CGFloat = 18
             countBadgeLabel.frame = NSRect(
-                x: bounds.width - chevronSize - badgeWidth - 8, y: (bounds.height - labelHeight) / 2,
+                x: rowWidth - chevronSize - badgeWidth - 8, y: (bounds.height - labelHeight) / 2,
                 width: badgeWidth, height: labelHeight
             )
             trailingReserved += badgeWidth + 2
@@ -147,7 +171,7 @@ final class TabGroupHeaderView: NSView {
         }
         nameLabel.frame = NSRect(
             x: labelX, y: (bounds.height - labelHeight) / 2,
-            width: max(0, bounds.width - labelX - trailingReserved), height: labelHeight
+            width: max(0, rowWidth - labelX - trailingReserved), height: labelHeight
         )
     }
 

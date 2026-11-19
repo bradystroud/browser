@@ -13,6 +13,9 @@ extension Notification.Name {
     /// Posted whenever SidebarLayoutPreference's edge or hidden state
     /// changes, for the same every-window-follows reason.
     static let sidebarLayoutPreferenceDidChange = Notification.Name("SidebarLayoutPreferenceDidChange")
+    /// Posted whenever SlimTabsPreference.isEnabled changes, for the same
+    /// every-window-follows reason.
+    static let slimTabsPreferenceDidChange = Notification.Name("SlimTabsPreferenceDidChange")
 }
 
 /// Where the tab strip sits: a horizontal row under the toolbar (the default,
@@ -127,7 +130,15 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
             item.representedObject = layout.rawValue
             menu.addItem(item)
         }
+        menu.addItem(.separator())
+        let slim = NSMenuItem(title: "Slim Tabs Down the Side", action: #selector(toggleSlimTabs(_:)), keyEquivalent: "")
+        slim.target = self
+        menu.addItem(slim)
         return menu
+    }
+
+    @objc func toggleSlimTabs(_ sender: NSMenuItem) {
+        SlimTabsPreference.isEnabled.toggle()
     }
 
     @objc func chooseLayout(_ sender: NSMenuItem) {
@@ -140,6 +151,10 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
         if menuItem.action == #selector(chooseLayout(_:)) {
             let raw = menuItem.representedObject as? String
             menuItem.state = raw == TabStripOrientationPreference.current.rawValue ? .on : .off
+        }
+        if menuItem.action == #selector(toggleSlimTabs(_:)) {
+            menuItem.state = SlimTabsPreference.isEnabled ? .on : .off
+            return TabStripOrientationPreference.current == .vertical
         }
         return true
     }
@@ -184,6 +199,24 @@ enum SidebarLayoutPreference {
             guard newValue != isHidden else { return }
             AppPreferencesStore.current.set(newValue, forKey: hiddenKey)
             NotificationCenter.default.post(name: .sidebarLayoutPreferenceDidChange, object: nil)
+        }
+    }
+}
+
+/// Slim tabs, for the "Tabs Down the Side" layout only: the tab column is a
+/// narrow strip of favicons that widens to the full list while the pointer
+/// is on it (see SlimTabsChrome). Global, like TabStripOrientationPreference
+/// and for the same reason. The other layouts ignore it, and it keeps its
+/// value while one of them is the choice.
+enum SlimTabsPreference {
+    private static let key = "BrowserSlimVerticalTabs"
+
+    static var isEnabled: Bool {
+        get { AppPreferencesStore.current.bool(forKey: key) }
+        set {
+            guard newValue != isEnabled else { return }
+            AppPreferencesStore.current.set(newValue, forKey: key)
+            NotificationCenter.default.post(name: .slimTabsPreferenceDidChange, object: nil)
         }
     }
 }

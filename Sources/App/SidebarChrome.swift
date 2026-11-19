@@ -332,11 +332,12 @@ final class SidebarChrome {
 
     /// Default run-loop mode only, deliberately: a menu opened from the
     /// sidebar runs in event-tracking mode, and the sidebar must not vanish
-    /// from under a menu that is still open. The timer fires once that menu
+    /// from under a menu that is still open (SlimTabsChrome times its own
+    /// column the same way). The timer fires once that menu
     /// closes and checks the pointer then. Popovers run no tracking loop, so
     /// the timer does fire while one is open: a popover hung from the column
     /// holds the sidebar out instead (holdOpenForNextPopover).
-    private static func makeTimer(after delay: TimeInterval, _ block: @escaping () -> Void) -> Timer {
+    static func makeTimer(after delay: TimeInterval, _ block: @escaping () -> Void) -> Timer {
         let timer = Timer(timeInterval: delay, repeats: false) { _ in block() }
         RunLoop.main.add(timer, forMode: .default)
         return timer
@@ -494,7 +495,7 @@ final class SidebarChrome {
 /// A view that only watches the pointer: it reports entering and leaving its
 /// own bounds and never takes a click, so it can sit anywhere in the window
 /// without getting in the way of what is drawn over it.
-private final class SidebarTrackingView: NSView {
+final class SidebarTrackingView: NSView {
     var onEnter: (() -> Void)?
     var onExit: (() -> Void)?
     private var trackingArea: NSTrackingArea?

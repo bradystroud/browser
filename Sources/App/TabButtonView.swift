@@ -151,7 +151,7 @@ final class TabButtonView: NSView {
             // Pinning always hides the close button; unpinning restores it
             // only if the mouse happens to already be hovering (mouseEntered
             // won't refire just because isPinned changed under the cursor).
-            closeButton.isHidden = isPinned || !isMouseInside
+            closeButton.isHidden = isPinned || isCompact || !isMouseInside
             updateIconState()
             needsLayout = true
         }
@@ -172,6 +172,60 @@ final class TabButtonView: NSView {
             updateIconState()
             needsLayout = true
         }
+    }
+
+    /// The width this row's content is laid out for, when that is not the
+    /// row's own width: the vertical strip's slim presentation (see
+    /// TabStripView.SlimPresentation) narrows a row to a favicon tile and
+    /// widens it again, and the title and close button keep the places they
+    /// have in the full row throughout. The row clips to its rounded shape,
+    /// so widening it uncovers the title instead of reflowing it, and no
+    /// frame inside the row changes while it moves.
+    var contentLayoutWidth: CGFloat? {
+        didSet {
+            guard oldValue != contentLayoutWidth else { return }
+            updateClipping()
+            needsLayout = true
+        }
+    }
+
+    /// A row with a contentLayoutWidth clips to its own rounded shape,
+    /// except the selected row on glass: the glass clips its content itself,
+    /// and a mask on this layer would cut off the soft edge the glass draws
+    /// just outside the pill.
+    private func updateClipping() {
+        let clips = contentLayoutWidth != nil
+        layer?.masksToBounds = clips && glassBackground == nil
+        // The fallback fill is drawn once at the row's real size; pinned
+        // to the leading edge, a row that is still widening uncovers it
+        // instead of stretching it.
+        layerContentsPlacement = clips ? .left : .scaleAxesIndependently
+    }
+
+    /// True while the row is a favicon tile in the slim strip: no title, no
+    /// close button, and the title as its tooltip instead.
+    private(set) var isCompact = false
+
+    /// `fade` animates the title in or out over that long, after `delay`
+    /// (the strip staggers its rows); nil changes it at once.
+    func setCompact(_ compact: Bool, fade: CFTimeInterval? = nil, delay: CFTimeInterval = 0) {
+        isCompact = compact
+        toolTip = compact ? titleLabel.stringValue : nil
+        closeButton.isHidden = compact || isPinned || !isMouseInside
+        ChromeMotion.setAlpha(
+            titleLabel, to: compact ? 0 : 1, duration: fade, delay: delay, slide: compact ? 0 : -8)
+    }
+
+    /// Moves the row, sprung when `spring` is given. The selected row's
+    /// glass is a subview, which a layer animation on the row alone would
+    /// leave at its final size, so it is sprung alongside.
+    func setFrame(_ frame: NSRect, spring: ChromeMotion.Spring?) {
+        let glassFrame = glassBackground?.frame
+        ChromeMotion.setFrame(self, to: frame, spring: spring)
+        guard spring != nil, let glass = glassBackground, let glassFrame, glassFrame != glass.frame else { return }
+        let settled = glass.frame
+        glass.frame = glassFrame
+        ChromeMotion.setFrame(glass, to: settled, spring: spring)
     }
 
     /// Tracked separately from closeButton.isHidden so a pin toggled while
@@ -267,6 +321,8 @@ final class TabButtonView: NSView {
         wantsLayer = true
 
         titleLabel.stringValue = title
+        // Its own layer, so the slim strip can fade it (ChromeMotion).
+        titleLabel.wantsLayer = true
         contentContainer.addSubview(faviconView)
         contentContainer.addSubview(loadingSpinner)
         contentContainer.addSubview(titleLabel)
@@ -355,6 +411,7 @@ final class TabButtonView: NSView {
             addSubview(contentContainer)
         }
         updateSelectionAppearance()
+        updateClipping()
         needsLayout = true
         needsDisplay = true
     }
@@ -368,6 +425,7 @@ final class TabButtonView: NSView {
 
     func setTitle(_ title: String) {
         titleLabel.stringValue = title
+        if isCompact { toolTip = title }
     }
 
     /// `nil` reverts to the generic globe glyph (e.g. a site with no
@@ -413,6 +471,7 @@ final class TabButtonView: NSView {
             return
         }
 
+        let rowWidth = contentLayoutWidth ?? bounds.width
         let faviconLeading: CGFloat = 8
         let iconFrame = NSRect(
             x: faviconLeading,
@@ -431,12 +490,12 @@ final class TabButtonView: NSView {
                 width: closeSize, height: closeSize
             )
             audioButton.frame = NSRect(
-                x: bounds.width - faviconLeading - faviconSize, y: iconFrame.minY,
+                x: rowWidth - faviconLeading - faviconSize, y: iconFrame.minY,
                 width: faviconSize, height: faviconSize
             )
         } else {
             closeButton.frame = NSRect(
-                x: bounds.width - closeSize - 5,
+                x: rowWidth - closeSize - 5,
                 y: (bounds.height - closeSize) / 2,
                 width: closeSize,
                 height: closeSize
@@ -468,13 +527,13 @@ final class TabButtonView: NSView {
             // so a title never reflows on hover.
             titleLabel.frame = NSRect(
                 x: titleInset, y: (bounds.height - titleHeight) / 2,
-                width: max(0, bounds.width - titleInset - closeSize - 12), height: titleHeight
+                width: max(0, rowWidth - titleInset - closeSize - 12), height: titleHeight
             )
             return
         }
         titleLabel.frame = NSRect(
             x: titleInset, y: (bounds.height - titleHeight) / 2,
-            width: max(0, bounds.width - titleInset * 2), height: titleHeight
+            width: max(0, rowWidth - titleInset * 2), height: titleHeight
         )
     }
 
@@ -518,7 +577,7 @@ final class TabButtonView: NSView {
         guard inside != isMouseInside else { return }
         isMouseInside = inside
         updateSelectionAppearance()
-        closeButton.isHidden = !inside || isPinned
+        closeButton.isHidden = !inside || isPinned || isCompact
         updateIconState()
     }
 

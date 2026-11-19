@@ -318,6 +318,19 @@ final class TabStripView: NSView {
         button.toolTip = "New Tab"
         return button
     }()
+    /// The slim strip's New Tab control: the "+" alone, in the place the full
+    /// row's glyph would be. A second button rather than the full row made
+    /// narrow, so the two can cross-fade and neither is ever drawn squeezed.
+    private let compactNewTabButton: NSButton = {
+        let button = NSButton()
+        button.title = ""
+        button.imagePosition = .imageOnly
+        button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New Tab")
+        button.applyChromeAppearance(.glass)
+        button.toolTip = "New Tab"
+        button.isHidden = true
+        return button
+    }()
     /// The item area itself: the scroll view's document view in both
     /// orientations. Every tab pill/group header lives inside it (via
     /// itemHost below), and every slot frame is in its coordinates, so
@@ -352,6 +365,118 @@ final class TabStripView: NSView {
 
     private var isVertical: Bool { orientation == .vertical }
 
+    /// How the vertical strip presents itself when slim tabs are on (see
+    /// SlimTabsChrome). `collapsed` is the narrow column: every row a
+    /// favicon tile, pinned tabs in one column, a group header only its
+    /// colour dot, New Tab only its "+". `expanded` is the ordinary full
+    /// list. In both, everything inside is laid out against the full
+    /// sidebarWidth and the strip clips to whatever width its owner gives
+    /// it, so widening the strip uncovers the list instead of relaying it
+    /// out on every frame.
+    enum SlimPresentation {
+        case off
+        case collapsed
+        case expanded
+    }
+
+    private(set) var slimPresentation: SlimPresentation = .off
+
+    private var isCompact: Bool { isVertical && slimPresentation == .collapsed }
+
+    /// The width the strip's contents are laid out against.
+    private var layoutWidth: CGFloat {
+        isVertical && slimPresentation != .off ? Self.sidebarWidth : bounds.width
+    }
+
+    /// Changes the presentation and moves every item to its place in it,
+    /// sprung when `spring` is given. The owner changes the strip's own
+    /// frame in the same pass, with the same spring.
+    func setSlimPresentation(_ presentation: SlimPresentation, spring: ChromeMotion.Spring?) {
+        guard presentation != slimPresentation else { return }
+        // The dragged pill's slot is about to move from under it.
+        abandonDrag()
+        let wasCompact = isCompact
+        slimPresentation = presentation
+        layer?.masksToBounds = presentation != .off
+        guard isVertical else { return }
+        let fade: CFTimeInterval? = spring == nil || wasCompact == isCompact
+            ? nil : (isCompact ? Self.slimFadeOutDuration : Self.slimFadeInDuration)
+        updateNewTabButtons(fade: fade)
+        applyCompactState(fade: fade)
+        layoutVerticalContainers()
+        let frames = slotFrames()
+        applyContentLayoutWidths()
+        for (position, item) in stripItems.enumerated() {
+            switch item {
+            case .tab(let button): button.setFrame(frames[position], spring: spring)
+            case .groupHeader(let header): ChromeMotion.setFrame(header, to: frames[position], spring: spring)
+            }
+        }
+        needsLayout = true
+    }
+
+    private static let slimFadeInDuration: CFTimeInterval = 0.22
+    private static let slimFadeOutDuration: CFTimeInterval = 0.1
+    /// Each visible row's title starts this much after the one above it as
+    /// the strip widens, up to slimStaggerLimit, so the list fills in from
+    /// the top instead of all at once.
+    private static let slimStaggerStep: CFTimeInterval = 0.014
+    private static let slimStaggerLimit: CFTimeInterval = 0.14
+
+    /// Tells every item whether it is a tile or a full row. With a fade,
+    /// titles coming in are staggered down the visible rows; titles going
+    /// out leave together, ahead of the strip narrowing over them.
+    private func applyCompactState(fade: CFTimeInterval?) {
+        let compact = isCompact
+        let visible = itemHost.visibleRect
+        var row = 0
+        for item in stripItems {
+            var delay: CFTimeInterval = 0
+            if fade != nil, !compact, item.view.frame.intersects(visible) {
+                delay = min(CFTimeInterval(row) * Self.slimStaggerStep, Self.slimStaggerLimit)
+                row += 1
+            }
+            switch item {
+            case .tab(let button): button.setCompact(compact, fade: fade, delay: delay)
+            case .groupHeader(let header): header.setCompact(compact, fade: fade, delay: delay)
+            }
+        }
+    }
+
+    /// Every row's content keeps its full-row layout whatever the row's
+    /// current width (see TabButtonView.contentLayoutWidth).
+    private func applyContentLayoutWidths() {
+        let full: [NSRect]? = isVertical && slimPresentation != .off ? verticalSlotFrames(compact: false) : nil
+        for (position, item) in stripItems.enumerated() {
+            switch item {
+            case .tab(let button): button.contentLayoutWidth = button.isPinned ? nil : full?[position].width
+            case .groupHeader(let header): header.contentLayoutWidth = full?[position].width
+            }
+        }
+    }
+
+    /// Which of the two New Tab controls shows. The one going away fades
+    /// first and is hidden after, because a transparent button still takes
+    /// clicks.
+    private func updateNewTabButtons(fade: CFTimeInterval?) {
+        let showsFull = isVertical && !isCompact
+        let showsCompact = isCompact
+        if showsFull { newTabButton.isHidden = false }
+        if showsCompact { compactNewTabButton.isHidden = false }
+        ChromeMotion.setAlpha(newTabButton, to: showsFull ? 1 : 0, duration: fade)
+        ChromeMotion.setAlpha(compactNewTabButton, to: showsCompact ? 1 : 0, duration: fade)
+        let settle = { [weak self] in
+            guard let self else { return }
+            self.newTabButton.isHidden = !(self.isVertical && !self.isCompact)
+            self.compactNewTabButton.isHidden = !self.isCompact
+        }
+        if let fade {
+            DispatchQueue.main.asyncAfter(deadline: .now() + fade, execute: settle)
+        } else {
+            settle()
+        }
+    }
+
     /// Gap between adjacent pills. Unselected tabs have no background, so
     /// this mostly separates hover washes and the selected tab's glass
     /// from its neighbours' titles; it has to clear the soft edge
@@ -370,6 +495,11 @@ final class TabStripView: NSView {
     /// Between Safari's ~220 and Arc's ~240: wide enough that a real page
     /// title survives truncation, narrow enough not to eat the content area.
     static let sidebarWidth: CGFloat = 240
+    /// The slim strip's width (SlimPresentation.collapsed): a full row's
+    /// leading padding, favicon and the same padding again, so the favicons
+    /// are centred in it exactly where the full list has them and do not
+    /// move as the strip widens.
+    static let slimWidth: CGFloat = 50
     private static let verticalRowHeight: CGFloat = 32
     private static let verticalGroupHeaderHeight: CGFloat = 26
     /// Tighter than the horizontal strip's own tabSpacing: rows share their
@@ -384,6 +514,10 @@ final class TabStripView: NSView {
     /// own sidebar -- the horizontal strip has no room for this and relies on
     /// adjacency alone, which a vertical list makes ambiguous.
     private static let verticalGroupIndent: CGFloat = 14
+    /// A group header in the slim strip: twice the distance from the
+    /// header's leading edge to the centre of its colour dot, so the dot
+    /// sits on the column's centre line.
+    private static let slimGroupMarkerWidth: CGFloat = 24
     /// Pinned tabs render as a compact favicon grid at the top of the
     /// sidebar (Safari's treatment) rather than as full-width rows: a pinned
     /// tab has no title to show, so a full-width row for each would be a
@@ -432,6 +566,9 @@ final class TabStripView: NSView {
         newTabButton.target = self
         newTabButton.action = #selector(newTabTapped)
         addSubview(newTabButton)
+        compactNewTabButton.target = self
+        compactNewTabButton.action = #selector(newTabTapped)
+        addSubview(compactNewTabButton)
         configureHierarchyForOrientation()
     }
 
@@ -627,6 +764,7 @@ final class TabStripView: NSView {
             button.siteHost = info.siteHost
             button.availableGroups = availableGroups
             button.isVerticalLayout = isVertical
+            button.setCompact(isCompact)
             button.isSelected = index == selectedIndex
             button.dragDelegate = self
             button.onSelect = { [weak self] in
@@ -693,6 +831,7 @@ final class TabStripView: NSView {
             let header = TabGroupHeaderView(groupId: group.id, name: group.name, colorHex: group.colorHex)
             header.isCollapsed = group.isCollapsed
             header.isVerticalLayout = isVertical
+            header.setCompact(isCompact)
             let members = indexed.filter { !$0.element.isPinned && $0.element.groupId == group.id }
             header.memberCount = members.count
             header.onToggleCollapse = { [weak self] in
@@ -745,6 +884,7 @@ final class TabStripView: NSView {
             case .groupHeader(let header): header.isVerticalLayout = isVertical
             }
         }
+        applyCompactState(fade: nil)
         configureHierarchyForOrientation()
         needsLayout = true
         // configureHierarchyForOrientation scrolls back to the start.
@@ -755,7 +895,7 @@ final class TabStripView: NSView {
         // The horizontal strip has no "+" of its own: BrowserWindowController
         // keeps one in the toolbar row, because the strip itself is hidden
         // whenever a window has a single tab and "+" must stay reachable.
-        newTabButton.isHidden = !isVertical
+        updateNewTabButtons(fade: nil)
         scrollView.hasVerticalScroller = isVertical
         scrollView.hasHorizontalScroller = !isVertical
         scrollView.verticalScrollElasticity = isVertical ? .automatic : .none
@@ -809,18 +949,22 @@ final class TabStripView: NSView {
     /// and the bottom "New Tab" row.
     private func layoutVerticalContainers() {
         let rowBand = Self.verticalNewTabRowHeight
+        let width = layoutWidth
         setFrameIfNeeded(scrollView, to: NSRect(
-            x: 0, y: rowBand, width: bounds.width, height: max(0, bounds.height - rowBand)
+            x: 0, y: rowBand, width: width, height: max(0, bounds.height - rowBand)
         ))
         setFrameIfNeeded(stripContentView, to: NSRect(
-            x: 0, y: 0, width: bounds.width,
+            x: 0, y: 0, width: width,
             height: max(scrollView.contentSize.height, verticalContentHeight())
         ))
         let inset = Self.verticalPadding
-        newTabButton.frame = NSRect(
-            x: inset, y: (rowBand - Self.verticalRowHeight) / 2,
-            width: max(0, bounds.width - inset * 2), height: Self.verticalRowHeight
-        )
+        let rowY = (rowBand - Self.verticalRowHeight) / 2
+        setFrameIfNeeded(newTabButton, to: NSRect(
+            x: inset, y: rowY, width: max(0, width - inset * 2), height: Self.verticalRowHeight
+        ))
+        setFrameIfNeeded(compactNewTabButton, to: NSRect(
+            x: inset, y: rowY, width: Self.slimWidth - inset * 2, height: Self.verticalRowHeight
+        ))
     }
 
     /// Assigning a frame inside `layout()` can re-enter it (an NSScrollView
@@ -833,6 +977,7 @@ final class TabStripView: NSView {
 
     private func layoutTabs() {
         let frames = slotFrames()
+        applyContentLayoutWidths()
         for (position, item) in stripItems.enumerated() {
             let view = item.view
             if let session = drag, session.didMove, view === session.button {
@@ -1080,9 +1225,16 @@ final class TabStripView: NSView {
     /// property the horizontal pass has, and for the same reason -- the drag
     /// compares against fixed slot geometry that must stay valid while items
     /// are reordered underneath it.
-    private func verticalSlotFrames() -> [NSRect] {
+    ///
+    /// `compact` asks for the slim column's geometry or the full list's
+    /// whatever the strip currently shows; nil means the current one. In the
+    /// slim column every row is a tile as wide as the column allows, with no
+    /// group indent, and a group header is a narrower tile centred on its
+    /// colour dot.
+    private func verticalSlotFrames(compact: Bool? = nil) -> [NSRect] {
+        let compact = compact ?? isCompact
         let inset = Self.verticalPadding
-        let contentWidth = max(0, bounds.width - inset * 2)
+        let contentWidth = max(0, (compact ? Self.slimWidth : layoutWidth) - inset * 2)
         var frames: [NSRect] = []
         frames.reserveCapacity(stripItems.count)
         var y = Self.verticalPadding
@@ -1099,12 +1251,15 @@ final class TabStripView: NSView {
         if pinnedCount > 0 {
             let tile = Self.verticalPinnedTileSize
             let gap = Self.verticalPinnedSpacing
-            let perRow = max(1, Int((contentWidth + gap) / (tile + gap)))
+            // One centred column in the slim strip, which is narrower than
+            // a tile plus the padding either side.
+            let perRow = compact ? 1 : max(1, Int((contentWidth + gap) / (tile + gap)))
+            let pinnedInset = compact ? (Self.slimWidth - tile) / 2 : inset
             for offset in 0..<pinnedCount {
                 let row = offset / perRow
                 let column = offset % perRow
                 frames.append(NSRect(
-                    x: inset + CGFloat(column) * (tile + gap),
+                    x: pinnedInset + CGFloat(column) * (tile + gap),
                     y: y + CGFloat(row) * (tile + gap),
                     width: tile, height: tile
                 ))
@@ -1122,10 +1277,13 @@ final class TabStripView: NSView {
                 if position > 0 {
                     y += Self.verticalSectionSpacing - Self.verticalRowSpacing
                 }
-                frames.append(NSRect(x: inset, y: y, width: contentWidth, height: Self.verticalGroupHeaderHeight))
+                let markerInset = (Self.slimWidth - Self.slimGroupMarkerWidth) / 2
+                frames.append(compact
+                    ? NSRect(x: markerInset, y: y, width: Self.slimGroupMarkerWidth, height: Self.verticalGroupHeaderHeight)
+                    : NSRect(x: inset, y: y, width: contentWidth, height: Self.verticalGroupHeaderHeight))
                 y += Self.verticalGroupHeaderHeight + Self.verticalRowSpacing
             case .tab(let button):
-                let indent = button.groupId == nil ? 0 : Self.verticalGroupIndent
+                let indent = button.groupId == nil || compact ? 0 : Self.verticalGroupIndent
                 frames.append(NSRect(
                     x: inset + indent, y: y,
                     width: max(0, contentWidth - indent), height: Self.verticalRowHeight
