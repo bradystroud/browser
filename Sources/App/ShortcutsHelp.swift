@@ -44,9 +44,7 @@ enum ShortcutsHelp {
         #selector(BrowserWindowController.selectPreviousTab(_:)): .tabs,
         #selector(BrowserWindowController.showTabOverview(_:)): .tabs,
         #selector(BrowserWindowController.togglePinActiveTab(_:)): .tabs,
-        #selector(BrowserWindowController.toggleTabSidebar(_:)): .tabs,
-        #selector(TabLayoutMenuTarget.toggleTabsHidden(_:)): .tabs,
-        #selector(TabLayoutMenuTarget.toggleSlimTabs(_:)): .tabs,
+        #selector(TabLayoutMenuTarget.toggleSidebarHidden(_:)): .tabs,
         #selector(BrowserWindowController.duplicateTab(_:)): .tabs,
         #selector(BrowserWindowController.pasteAndGo(_:)): .links,
         #selector(BrowserWindowController.focusOmnibox(_:)): .navigation,
@@ -114,9 +112,7 @@ enum ShortcutsHelp {
         if let mainMenu = NSApp.mainMenu {
             for topItem in mainMenu.items {
                 guard let submenu = topItem.submenu else { continue }
-                // One level of nested menus too (View > Tab Layout).
-                let items = submenu.items.flatMap { [$0] + ($0.submenu?.items ?? []) }
-                for item in items {
+                for item in submenu.items {
                     guard !item.keyEquivalent.isEmpty, !item.isHidden, let action = item.action,
                           let category = categoryBySelector[action] else { continue }
                     entries[category, default: []].append(

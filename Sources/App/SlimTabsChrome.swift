@@ -1,7 +1,8 @@
 import AppKit
 
-/// The slim and hidden tab columns of the "Tabs Down the Side" layout
-/// (VerticalTabsPresentation): the column is a narrow strip of favicons, or
+/// The compact and hidden tab columns of the "Tabs on Side" layout
+/// (CompactTabsPreference, TabsHiddenPreference): the column is a narrow
+/// strip of favicons, or
 /// only a few points of margin at the window's edge, and it widens to the
 /// full list while the pointer is on it.
 ///
@@ -44,7 +45,7 @@ final class SlimTabsChrome {
 
     /// Holds the column's material at its full width and shows as much of it
     /// as the column is wide. The window controller keeps the material here
-    /// for the whole "Tabs Down the Side" layout, slim or not, so the change
+    /// for the whole "Tabs on Side" layout, slim or not, so the change
     /// between the two can be sprung as well. A material view resized on every frame would
     /// redraw its backdrop on every frame; a clip that changes size costs
     /// nothing.

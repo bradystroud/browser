@@ -10,12 +10,15 @@ extension Notification.Name {
     /// Posted whenever AlwaysShowTabBarPreference.isEnabled changes, for the
     /// same every-window-follows reason.
     static let alwaysShowTabBarDidChange = Notification.Name("AlwaysShowTabBarDidChange")
-    /// Posted whenever SidebarLayoutPreference's edge or hidden state
-    /// changes, for the same every-window-follows reason.
+    /// Posted whenever SidebarLayoutPreference.edge changes, for the same
+    /// every-window-follows reason.
     static let sidebarLayoutPreferenceDidChange = Notification.Name("SidebarLayoutPreferenceDidChange")
-    /// Posted whenever VerticalTabsPresentationPreference.current changes,
-    /// for the same every-window-follows reason.
-    static let verticalTabsPresentationDidChange = Notification.Name("VerticalTabsPresentationDidChange")
+    /// Posted whenever TabsHiddenPreference.isHidden changes, for the same
+    /// every-window-follows reason.
+    static let tabsHiddenDidChange = Notification.Name("TabsHiddenDidChange")
+    /// Posted whenever CompactTabsPreference.isEnabled changes, for the same
+    /// every-window-follows reason.
+    static let compactTabsDidChange = Notification.Name("CompactTabsDidChange")
     /// Posted whenever VerticalTabsWidthPreference.width changes, for the
     /// same every-window-follows reason.
     static let verticalTabsWidthDidChange = Notification.Name("VerticalTabsWidthDidChange")
@@ -55,8 +58,8 @@ enum TabStripOrientation: String, CaseIterable {
     /// choice.
     var layoutTitle: String {
         switch self {
-        case .horizontal: return "Tabs Across the Top"
-        case .vertical: return "Tabs Down the Side"
+        case .horizontal: return "Tabs on Top"
+        case .vertical: return "Tabs on Side"
         case .sidebar: return "Sidebar"
         }
     }
@@ -95,33 +98,23 @@ enum TabStripOrientationPreference {
         }
     }
 
-    /// What the View menu item drives. Kept here rather than in the window
-    /// controller so every window ends up in the same mode: the controllers
-    /// all react to the notification above, and none of them owns the value.
-    /// In the sidebar layout the same chord hides and shows the sidebar
-    /// instead: that layout has nowhere else for the tabs to go.
-    static func toggle() {
-        switch current {
-        case .horizontal: current = .vertical
-        case .vertical: current = .horizontal
-        case .sidebar: SidebarLayoutPreference.isHidden.toggle()
-        }
-    }
-
-    /// Choosing a layout from Settings or the View menu. Picking the sidebar
-    /// layout always shows the sidebar, even if it was hidden the last time
-    /// that layout was used -- otherwise the choice would appear to do nothing.
+    /// Choosing a layout from Settings or the View menu. A layout picked
+    /// while the tabs are hidden shows them: otherwise the choice would
+    /// appear to do nothing, or to take the tabs away.
     static func choose(_ layout: TabStripOrientation) {
-        if layout == .sidebar, current != .sidebar {
-            SidebarLayoutPreference.isHidden = false
-        }
+        if layout != current { TabsHiddenPreference.isHidden = false }
         current = layout
     }
 }
 
-/// View > Tab Layout: one radio item per layout. Its own target rather than
-/// the window controller, because the choice is app-wide and has to work
-/// with no browser window key.
+/// View > Tab Layout, one radio item per layout, and View > Hide Sidebar.
+/// Its own target rather than the window controller, because both are
+/// app-wide and have to work with no browser window key.
+///
+/// "Sidebar" is the one name for the column at the side of the window in
+/// both layouts that have one, whether it holds the tabs alone or the
+/// address bar too. No command changes the layout by a shortcut: the layout
+/// is a choice made once.
 final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
     static let shared = TabLayoutMenuTarget()
 
@@ -133,36 +126,15 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
             item.representedObject = layout.rawValue
             menu.addItem(item)
         }
-        menu.addItem(.separator())
-        for item in makeTabColumnItems() { menu.addItem(item) }
         return menu
     }
 
-    /// "Hide Tabs" (⌘S) and "Collapse Tabs" (⌥⌘S); validateMenuItem gives
-    /// each its current title. Also the tab column button's context menu.
-    func makeTabColumnItems() -> [NSMenuItem] {
-        let hide = NSMenuItem(title: "Hide Tabs", action: #selector(toggleTabsHidden(_:)), keyEquivalent: "s")
-        hide.target = self
-        let slim = NSMenuItem(title: "Collapse Tabs", action: #selector(toggleSlimTabs(_:)), keyEquivalent: "s")
-        slim.keyEquivalentModifierMask = [.command, .option]
-        slim.target = self
-        return [hide, slim]
-    }
-
-    /// The same chord hides the tabs in both layouts that have a column. In
-    /// the sidebar layout that is the whole sidebar, which has its own
-    /// hidden state.
-    @objc func toggleTabsHidden(_ sender: Any?) {
-        switch TabStripOrientationPreference.current {
-        case .vertical: VerticalTabsPresentationPreference.toggleHidden()
-        case .sidebar: SidebarLayoutPreference.isHidden.toggle()
-        case .horizontal: break
-        }
-    }
-
-    @objc func toggleSlimTabs(_ sender: Any?) {
-        guard TabStripOrientationPreference.current == .vertical else { return }
-        VerticalTabsPresentationPreference.toggleSlim()
+    /// ⌘S, as in Arc. validateMenuItem makes it "Show Sidebar" while the
+    /// sidebar is hidden.
+    func makeHideSidebarItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Hide Sidebar", action: #selector(toggleSidebarHidden(_:)), keyEquivalent: "s")
+        item.target = self
+        return item
     }
 
     @objc func chooseLayout(_ sender: NSMenuItem) {
@@ -171,27 +143,26 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
         TabStripOrientationPreference.choose(layout)
     }
 
+    @objc func toggleSidebarHidden(_ sender: Any?) {
+        guard TabStripOrientationPreference.current != .horizontal else { return }
+        TabsHiddenPreference.isHidden.toggle()
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(chooseLayout(_:)) {
-            let raw = menuItem.representedObject as? String
-            menuItem.state = raw == TabStripOrientationPreference.current.rawValue ? .on : .off
-        }
         let layout = TabStripOrientationPreference.current
-        let presentation = VerticalTabsPresentationPreference.current
-        if menuItem.action == #selector(toggleTabsHidden(_:)) {
-            let isHidden = layout == .sidebar ? SidebarLayoutPreference.isHidden : presentation == .hidden
-            menuItem.title = layout != .horizontal && isHidden ? "Show Tabs" : "Hide Tabs"
-            // Across the top there is no column to hide, and changing the
-            // whole layout from this command would be a surprise.
+        switch menuItem.action {
+        case #selector(chooseLayout(_:)):
+            let raw = menuItem.representedObject as? String
+            menuItem.state = raw == layout.rawValue ? .on : .off
+            return true
+        case #selector(toggleSidebarHidden(_:)):
+            // Tabs on top have no sidebar to hide.
+            let isHidden = layout != .horizontal && TabsHiddenPreference.isHidden
+            menuItem.title = isHidden ? "Show Sidebar" : "Hide Sidebar"
             return layout != .horizontal
+        default:
+            return true
         }
-        if menuItem.action == #selector(toggleSlimTabs(_:)) {
-            let showsFull = presentation == .full
-                || (presentation == .hidden && VerticalTabsPresentationPreference.shown == .full)
-            menuItem.title = showsFull ? "Collapse Tabs" : "Expand Tabs"
-            return layout == .vertical
-        }
-        return true
     }
 }
 
@@ -208,14 +179,10 @@ enum SidebarEdge: String, CaseIterable {
     }
 }
 
-/// The sidebar layout's own settings: which edge it sits on, and whether it
-/// is hidden (it then slides back in while the pointer is at that edge -- see
-/// SidebarChrome). Global, like TabStripOrientationPreference and for the same
-/// reason; hiding it in one window hides it in all of them, so ⌘N never opens
-/// a window in the other state.
+/// The sidebar layout's own setting: which edge it sits on. Global, like
+/// TabStripOrientationPreference and for the same reason.
 enum SidebarLayoutPreference {
     private static let edgeKey = "BrowserSidebarLayoutEdge"
-    private static let hiddenKey = "BrowserSidebarLayoutHidden"
 
     static var edge: SidebarEdge {
         get {
@@ -227,103 +194,83 @@ enum SidebarLayoutPreference {
             NotificationCenter.default.post(name: .sidebarLayoutPreferenceDidChange, object: nil)
         }
     }
+}
+
+/// Whether the tabs are hidden, in both layouts that keep them in a column
+/// ("Tabs on Side" and "Sidebar"): the column goes away, and comes back out
+/// while the pointer rests at its edge of the window (SlimTabsChrome,
+/// SidebarChrome). One flag for the two layouts, so the one command means
+/// the same thing in both and survives a change between them. "Tabs on Top"
+/// ignores it. Global, like TabStripOrientationPreference and for the same
+/// reason: hiding the tabs in one window hides them in all, so ⌘N never
+/// opens a window in the other state.
+enum TabsHiddenPreference {
+    private static let key = "BrowserTabsHidden"
 
     static var isHidden: Bool {
-        get { AppPreferencesStore.current.bool(forKey: hiddenKey) }
-        set {
-            guard newValue != isHidden else { return }
-            AppPreferencesStore.current.set(newValue, forKey: hiddenKey)
-            NotificationCenter.default.post(name: .sidebarLayoutPreferenceDidChange, object: nil)
-        }
-    }
-}
-
-/// How the tab column of the "Tabs Down the Side" layout shows itself.
-enum VerticalTabsPresentation: String, CaseIterable {
-    /// The whole list, at the user's width (VerticalTabsWidthPreference).
-    case full
-    /// A narrow strip of favicons that widens to the full list while the
-    /// pointer is on it.
-    case slim
-    /// No column: the page has the window's width, and the full list comes
-    /// out while the pointer rests at the window's leading edge.
-    case hidden
-
-    var title: String {
-        switch self {
-        case .full: return "Full"
-        case .slim: return "Slim"
-        case .hidden: return "Hidden"
-        }
-    }
-}
-
-/// One setting with three values rather than a "slim" and a "hidden"
-/// switch: the three are exclusive, and two switches would make "slim and
-/// hidden" expressible. Global, like TabStripOrientationPreference and for
-/// the same reason. The other layouts ignore it, and it keeps its value
-/// while one of them is the choice. See SlimTabsChrome for how slim and
-/// hidden columns come out.
-enum VerticalTabsPresentationPreference {
-    private static let key = "BrowserVerticalTabsPresentation"
-    /// The setting this one replaced: a boolean, true for slim. Read only
-    /// while nothing is stored under `key`.
-    private static let legacySlimKey = "BrowserSlimVerticalTabs"
-    private static let shownKey = "BrowserVerticalTabsShownPresentation"
-
-    static var current: VerticalTabsPresentation {
         get {
             let store = AppPreferencesStore.current
-            if let stored = store.string(forKey: key).flatMap(VerticalTabsPresentation.init(rawValue:)) {
-                return stored
-            }
-            return store.bool(forKey: legacySlimKey) ? .slim : .full
+            if store.object(forKey: key) != nil { return store.bool(forKey: key) }
+            return LegacyTabColumnSettings.isHidden
         }
         set {
-            guard newValue != current else { return }
-            if newValue != .hidden { shown = newValue }
-            AppPreferencesStore.current.set(newValue.rawValue, forKey: key)
-            NotificationCenter.default.post(name: .verticalTabsPresentationDidChange, object: nil)
-        }
-    }
-
-    /// Full or slim, whichever the column last was while it showed: what
-    /// un-hiding it goes back to.
-    private(set) static var shown: VerticalTabsPresentation {
-        get {
-            let stored = AppPreferencesStore.current.string(forKey: shownKey)
-                .flatMap(VerticalTabsPresentation.init(rawValue:))
-            if let stored, stored != .hidden { return stored }
-            return current == .slim ? .slim : .full
-        }
-        set { AppPreferencesStore.current.set(newValue.rawValue, forKey: shownKey) }
-    }
-
-    /// Hide the column, or bring it back as it was.
-    static func toggleHidden() {
-        let before = current
-        if before == .hidden {
-            current = shown
-        } else {
-            shown = before
-            current = .hidden
-        }
-    }
-
-    /// Slim or full. A hidden column comes back as the other of the two it
-    /// was last, so the command always changes what is on screen.
-    static func toggleSlim() {
-        switch current {
-        case .full: current = .slim
-        case .slim: current = .full
-        case .hidden: current = shown == .slim ? .full : .slim
+            guard newValue != isHidden else { return }
+            AppPreferencesStore.current.set(newValue, forKey: key)
+            NotificationCenter.default.post(name: .tabsHiddenDidChange, object: nil)
         }
     }
 }
 
-/// How wide the tab column is in the "Tabs Down the Side" layout: the user
+/// Compact tabs, for the "Tabs on Side" layout only: the column is a narrow
+/// strip of favicons that widens to the full list while the pointer is on it
+/// (see SlimTabsChrome). Independent of TabsHiddenPreference, which wins
+/// while both are on. Global, like TabStripOrientationPreference and for the
+/// same reason; it keeps its value while another layout is the choice.
+enum CompactTabsPreference {
+    private static let key = "BrowserCompactTabs"
+
+    static var isEnabled: Bool {
+        get {
+            let store = AppPreferencesStore.current
+            if store.object(forKey: key) != nil { return store.bool(forKey: key) }
+            return LegacyTabColumnSettings.isCompact
+        }
+        set {
+            guard newValue != isEnabled else { return }
+            AppPreferencesStore.current.set(newValue, forKey: key)
+            NotificationCenter.default.post(name: .compactTabsDidChange, object: nil)
+        }
+    }
+}
+
+/// What TabsHiddenPreference and CompactTabsPreference say until each is
+/// first written: the answer the settings they replaced would have given.
+/// Those were a three-way value for "Tabs on Side" (full, slim or hidden,
+/// with the last shown one of the first two kept beside it), a boolean for
+/// slim before that, and a separate hidden flag for the sidebar layout.
+private enum LegacyTabColumnSettings {
+    private static var store: UserDefaults { AppPreferencesStore.current }
+    private static var sidePresentation: String? { store.string(forKey: "BrowserVerticalTabsPresentation") }
+
+    static var isHidden: Bool {
+        TabStripOrientationPreference.current == .sidebar
+            ? store.bool(forKey: "BrowserSidebarLayoutHidden")
+            : sidePresentation == "hidden"
+    }
+
+    static var isCompact: Bool {
+        switch sidePresentation {
+        case "slim": return true
+        case "full": return false
+        case "hidden": return store.string(forKey: "BrowserVerticalTabsShownPresentation") == "slim"
+        default: return store.bool(forKey: "BrowserSlimVerticalTabs")
+        }
+    }
+}
+
+/// How wide the tab column is in the "Tabs on Side" layout: the user
 /// drags the column's edge (see TabColumnResizeHandle). It is also how wide
-/// a slim column becomes while the pointer is on it. Global, like
+/// a compact or hidden column becomes while the pointer is on it. Global, like
 /// TabStripOrientationPreference and for the same reason. The sidebar layout
 /// has its own fixed width (SidebarChrome.width).
 enum VerticalTabsWidthPreference {
@@ -352,7 +299,7 @@ enum VerticalTabsWidthPreference {
     }
 }
 
-/// View > Always Show Tab Bar. Off (the default), the horizontal strip is
+/// Settings > General > Always show tab bar. Off (the default), the horizontal strip is
 /// hidden while a window has a single tab, Safari-style, and the web content
 /// moves up under the toolbar; on, it shows regardless of tab count. Has no
 /// effect on the vertical sidebar. Global rather than per-profile for the
@@ -367,9 +314,5 @@ enum AlwaysShowTabBarPreference {
             AppPreferencesStore.current.set(newValue, forKey: key)
             NotificationCenter.default.post(name: .alwaysShowTabBarDidChange, object: nil)
         }
-    }
-
-    static func toggle() {
-        isEnabled.toggle()
     }
 }

@@ -295,27 +295,7 @@ final class MainMenuBuilder {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Tab Overview", action: #selector(BrowserWindowController.showTabOverview(_:)), keyEquivalent: "\\")
             .keyEquivalentModifierMask = [.command, .shift]
-        // Vertical tab sidebar (browser-vts). The title is a STARTING value,
-        // not a fixed one: BrowserWindowController.validateMenuItem flips it to
-        // "Hide Tab Sidebar" while the sidebar is showing, the same way Pin
-        // Tab/Unpin Tab already does.
-        //
-        // Ctrl-Cmd-S: Safari ships no default chord for its own sidebar toggle,
-        // so there is nothing to match here. Cmd-S is free in this app but
-        // reads as "Save" to everyone; Shift-Cmd-L is Safari's *old*
-        // bookmark-sidebar chord and Cmd-L is already Show Address Bar here, so
-        // a shifted sibling would invite mistakes. Ctrl-Cmd is this app's
-        // established chrome-layout modifier -- Switch Profile uses Ctrl-Cmd-N.
-        menu.addItem(
-            withTitle: "Show Tab Sidebar",
-            action: #selector(BrowserWindowController.toggleTabSidebar(_:)),
-            keyEquivalent: "s"
-        ).keyEquivalentModifierMask = [.command, .control]
-        menu.addItem(
-            withTitle: "Always Show Tab Bar",
-            action: #selector(BrowserWindowController.toggleAlwaysShowTabBar(_:)),
-            keyEquivalent: ""
-        )
+        menu.addItem(TabLayoutMenuTarget.shared.makeHideSidebarItem())
         let tabLayoutItem = NSMenuItem(title: "Tab Layout", action: nil, keyEquivalent: "")
         tabLayoutItem.submenu = TabLayoutMenuTarget.shared.makeMenu()
         menu.addItem(tabLayoutItem)
