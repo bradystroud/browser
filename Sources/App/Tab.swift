@@ -327,6 +327,28 @@ final class Tab: NSObject, EngineTabDelegate {
     /// the page deliberately).
     var needsInitialOmniboxFocus = true
 
+    /// What the user typed in this tab's omnibox and did not submit, kept
+    /// while another tab is active (Safari keeps it the same way). Nil while
+    /// this tab is active: the text is then in the field itself.
+    var omniboxDraft: String?
+
+    /// Gives keyboard focus to the engine's view inside this tab, so Space
+    /// and the arrow keys scroll the page. Returns false while that view
+    /// does not exist yet (a tab that is asleep or not yet created).
+    @discardableResult
+    func focusPage(in window: NSWindow) -> Bool {
+        guard let view = Self.firstFocusableView(in: devTools.pageView) else { return false }
+        return window.makeFirstResponder(view)
+    }
+
+    private static func firstFocusableView(in root: NSView) -> NSView? {
+        for subview in root.subviews where !subview.isHidden {
+            if subview.acceptsFirstResponder { return subview }
+            if let found = firstFocusableView(in: subview) { return found }
+        }
+        return nil
+    }
+
     /// Nil until FaviconLoader resolves one; the tab strip falls back to a
     /// generic glyph until then (or forever, if the site has none/it fails
     /// to load) -- see TabButtonView.

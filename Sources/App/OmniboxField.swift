@@ -80,6 +80,21 @@ final class OmniboxField: NSTextField {
         return accepted
     }
 
+    /// Safari's first click into the address bar selects the whole URL, even
+    /// though becomeFirstResponder above already selected it: AppKit hands
+    /// the same click on to the new field editor, which puts the caret where
+    /// the pointer is. super.mouseDown runs the editor's own tracking until
+    /// the button comes up, so after it returns the click is over. A drag
+    /// that selected part of the URL is kept, and a click while the field is
+    /// already being edited never reaches this method (the field editor
+    /// takes it), so a second click still places the caret.
+    override func mouseDown(with event: NSEvent) {
+        let wasEditing = currentEditor() != nil
+        super.mouseDown(with: event)
+        guard !wasEditing, let editor = currentEditor(), editor.selectedRange.length == 0 else { return }
+        editor.selectAll(nil)
+    }
+
     override func textDidEndEditing(_ notification: Notification) {
         super.textDidEndEditing(notification)
         onDisplayChange?()
