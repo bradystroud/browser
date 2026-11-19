@@ -28,9 +28,8 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let sidebarEdgePopup = NSPopUpButton()
     private var sidebarEdgeRow: NSGridRow?
     /// Only shown while "Tabs Down the Side" is the choice, the one layout
-    /// slim tabs apply to.
-    private let slimTabsCheckbox = NSButton(
-        checkboxWithTitle: "Slim tabs: show favicons only, and widen on hover", target: nil, action: nil)
+    /// with a tab column that can be slim or hidden.
+    private let tabColumnPopup = NSPopUpButton()
     private var slimTabsRow: NSGridRow?
     private let tabLayoutHelpLabel = SettingsForm.footnote()
     private var observers: [NSObjectProtocol] = []
@@ -196,14 +195,17 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         sidebarEdgePopup.target = self
         sidebarEdgePopup.action = #selector(sidebarEdgeChanged)
         sidebarEdgeRow = form.addRow("Sidebar position:", sidebarEdgePopup)
-        slimTabsCheckbox.target = self
-        slimTabsCheckbox.action = #selector(slimTabsChanged)
-        slimTabsRow = form.addRow(nil, slimTabsCheckbox)
+        for presentation in VerticalTabsPresentation.allCases {
+            tabColumnPopup.menu?.addItem(NSMenuItem(title: presentation.title, action: nil, keyEquivalent: ""))
+        }
+        tabColumnPopup.target = self
+        tabColumnPopup.action = #selector(slimTabsChanged)
+        slimTabsRow = form.addRow("Tab column:", tabColumnPopup)
         form.addFootnote(tabLayoutHelpLabel)
         // The View menu changes these too, while this pane may be open.
         for name in [
             Notification.Name.tabStripOrientationDidChange, .sidebarLayoutPreferenceDidChange,
-            .slimTabsPreferenceDidChange,
+            .verticalTabsPresentationDidChange,
         ] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.updateTabLayoutRows()
@@ -532,7 +534,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     }
 
     @objc private func slimTabsChanged() {
-        SlimTabsPreference.isEnabled = slimTabsCheckbox.state == .on
+        let presentations = VerticalTabsPresentation.allCases
+        let index = tabColumnPopup.indexOfSelectedItem
+        guard presentations.indices.contains(index) else { return }
+        VerticalTabsPresentationPreference.current = presentations[index]
     }
 
     private func updateTabLayoutRows() {
@@ -547,15 +552,23 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         sidebarEdgeRow?.isHidden = layout != .sidebar
         let slimWasHidden = slimTabsRow?.isHidden
         slimTabsRow?.isHidden = layout != .vertical
-        slimTabsCheckbox.state = SlimTabsPreference.isEnabled ? .on : .off
+        let presentation = VerticalTabsPresentationPreference.current
+        if let index = VerticalTabsPresentation.allCases.firstIndex(of: presentation) {
+            tabColumnPopup.selectItem(at: index)
+        }
         let help: String
         switch layout {
         case .horizontal:
             help = "Tabs run in a row under the toolbar."
         case .vertical:
-            help = SlimTabsPreference.isEnabled
-                ? "Tabs run down a narrow strip of icons beside the page. Move the pointer onto the strip to see the full list."
-                : "Tabs run down a sidebar beside the page, under the toolbar."
+            switch presentation {
+            case .full:
+                help = "Tabs run down a sidebar beside the page. Drag its edge to resize it. Press ⌥⌘S to collapse it or ⌘S to hide it."
+            case .slim:
+                help = "Tabs run down a narrow strip of icons beside the page. Move the pointer onto the strip to see the full list. Press ⌥⌘S to expand it."
+            case .hidden:
+                help = "The tabs are hidden. Move the pointer to the left edge of the window to see them, or press ⌘S to bring them back."
+            }
         case .sidebar:
             help = "One sidebar holds the address bar, pinned sites, tab groups, tabs and your profile, with no toolbar. Press ⌃⌘S to hide it; while it is hidden, move the pointer to that edge of the window to bring it back."
         }
