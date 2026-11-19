@@ -277,15 +277,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// hover) and its geometry. Inert in the other two orientations.
     private let sidebarChrome = SidebarChrome()
     /// What only slim tabs have (the narrow column's pointer tracking, its
-    /// material's clip, its edge shadow). Inert unless usesSlimTabs.
+    /// edge shadow). Inert unless usesSlimTabs.
     private let slimTabs = SlimTabsChrome()
 
-    /// Slim tabs apply to "Tabs on Side" alone. An agent's window is
+    /// Compact and slide-out hiding apply to a sidebar that holds the tabs
+    /// alone (the `vertical` orientation). An agent's window is
     /// always horizontal (see agentPresentation), so it never has them and
     /// its page never moves under the agent.
     private var usesSlimTabs: Bool { hidesTabColumn || compactsTabColumn }
 
-    /// The two things "Tabs on Side" can do with its column. Hidden wins
+    /// The two things such a sidebar can do. Hidden wins
     /// while both are on. Neither applies in another layout (the sidebar
     /// layout hides through SidebarChrome) or in an agent's window.
     private var hidesTabColumn: Bool {
@@ -342,7 +343,19 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private var tabColumnWidth: CGFloat {
         let chosen = liveTabColumnWidth ?? VerticalTabsWidthPreference.width
         let available = (window?.contentView?.bounds.width ?? .greatestFiniteMagnitude) - Self.minimumPageWidthBesideTabs
-        return max(VerticalTabsWidthPreference.minimum, min(chosen, available))
+        return max(minimumTabColumnWidth, min(chosen, available))
+    }
+
+    /// A sidebar that holds the address bar has the traffic lights, the
+    /// hide button and back/forward on one row at its top, and is never
+    /// narrower than that row: narrower, the hide button would sit on the
+    /// lights. A sidebar of tabs alone has only the general minimum.
+    private var minimumTabColumnWidth: CGFloat {
+        guard tabStripOrientation == .sidebar else { return VerticalTabsWidthPreference.minimum }
+        let lightsMaxX = (window as? BrowserWindow)?.trafficLightsMaxX ?? ChromeMetrics.edgeInset + 60
+        let row = lightsMaxX + ChromeMetrics.controlSpacing + ChromeMetrics.controlHeight
+            + ChromeMetrics.controlSpacing + ChromeMetrics.navigationSegmentWidth * 2 + ChromeMetrics.edgeInset
+        return max(VerticalTabsWidthPreference.minimum, row.rounded(.up))
     }
     private static let minimumPageWidthBesideTabs: CGFloat = 240
     /// A full column dragged this narrow becomes slim, and a slim column
@@ -462,7 +475,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             return
         }
         let toolbarOriginX = toolbarView.frame.minX
-        var minX = contentView.bounds.width - ChromeMetrics.edgeInset
+        // The row's own trailing end: short of the window's where a full
+        // sidebar stands on the right of it.
+        var minX = (toolbarView.isHidden ? contentView.bounds.width : toolbarView.frame.maxX) - ChromeMetrics.edgeInset
         var previousWasBadge = false
         var placedAny = false
 
@@ -653,6 +668,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             window?.makeKeyAndOrderFront(nil)
         }
         linkPeek.windowDidShow()
+        ChromeStateTestHook.windowDidShow(self)
         guard tabs.isEmpty else { return }
 
         if let popup = pendingPopupTab {
@@ -734,14 +750,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// where macOS hides them, and in sidebar mode, where they sit over the
     /// sidebar and the toolbar row starts beside it.
     private var trafficLightReservedWidth: CGFloat {
-        // The slim tab column is narrower than the lights, so the toolbar
-        // row runs the window's full width there and carries them, as it
-        // does over the horizontal strip.
-        guard !isEnteringOrInFullScreen, tabStripOrientation == .horizontal || usesSlimTabs else {
+        guard !isEnteringOrInFullScreen, trafficLightsAreOnToolbarRow else {
             return ChromeMetrics.edgeInset + tabColumnToggleReservedWidth
         }
         let lightsMaxX = (window as? BrowserWindow)?.trafficLightsMaxX ?? ChromeMetrics.edgeInset + 60
         return lightsMaxX + ChromeMetrics.groupSpacing + tabColumnToggleReservedWidth
+    }
+
+    /// The lights lead the toolbar row wherever that row starts at the
+    /// window's leading edge: over the horizontal strip, over a compact or
+    /// hidden sidebar (narrower than the lights), and beside a sidebar on
+    /// the right. Only a full sidebar on the left has them on its own top
+    /// band, and the sidebar that holds the address bar has no toolbar row
+    /// (SidebarChrome places them there).
+    private var trafficLightsAreOnToolbarRow: Bool {
+        switch tabStripOrientation {
+        case .horizontal: return true
+        case .vertical: return usesSlimTabs || SidebarLayoutPreference.edge == .right
+        case .sidebar: return false
+        }
     }
 
     /// A compact column is too narrow for its own toggle button,
@@ -831,7 +858,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         NotificationCenter.default.addObserver(
             forName: .verticalTabsWidthDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, self.tabStripOrientation == .vertical, self.tabColumnDrag == nil else { return }
+            guard let self, self.tabStripOrientation != .horizontal, self.tabColumnDrag == nil else { return }
+            self.applyChromeLayout()
+        }
+        // SidebarChrome relays this itself while the sidebar holds the
+        // address bar.
+        NotificationCenter.default.addObserver(
+            forName: .sidebarLayoutPreferenceDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.tabStripOrientation == .vertical else { return }
+            self.slimTabs.resetExpansion()
             self.applyChromeLayout()
         }
     }
@@ -878,6 +914,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let hairline: CGFloat = 0.5
 
         tabStripView.orientation = tabStripOrientation.stripAxis
+        sidebarChrome.width = tabColumnWidth
         setSidebarLayoutActive(tabStripOrientation == .sidebar)
         setSlimTabsActive(usesSlimTabs)
 
@@ -899,54 +936,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             tabStripView.autoresizingMask = [.width, .minYMargin]
             chromeSeparator.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: hairline)
             contentContainerView.frame = NSRect(x: 0, y: 0, width: width, height: height - chromeHeight)
-        case .vertical where usesSlimTabs:
-            // The toolbar row runs the full width, as it does over the
-            // horizontal strip, and the tab column starts under it.
-            tabStripView.isHidden = false
-            newTabToolbarButton.isHidden = true
-            toolbarView.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
-            chromeBackground.frame = toolbarView.frame
-            chromeSeparator.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: hairline)
-            tabSidebarBackground.isHidden = false
-            tabSidebarSeparator.isHidden = false
-            // Sprung only when the column has just become slim.
-            layoutSlimTabColumn(spring: slimTransitionSpring)
         case .vertical:
-            // The sidebar runs the full height of the window, Safari/Arc
-            // style: its top band, level with the toolbar row, carries the
-            // traffic lights, and the toolbar row starts beside it.
-            tabStripView.isHidden = false
-            newTabToolbarButton.isHidden = true
-            let sidebarWidth = tabColumnWidth
-            let rowWidth = max(0, width - sidebarWidth)
-            // Sprung only when the column has just stopped being slim.
-            let spring = slimTransitionSpring
-            toolbarView.frame = NSRect(x: sidebarWidth, y: height - toolbarHeight, width: rowWidth, height: toolbarHeight)
-            chromeBackground.frame = toolbarView.frame
-            tabSidebarBackground.isHidden = false
-            ChromeMotion.setFrame(
-                slimTabs.backdropClip, to: NSRect(x: 0, y: 0, width: sidebarWidth, height: height), spring: spring)
-            slimTabs.backdropClip.autoresizingMask = [.height, .maxXMargin]
-            tabSidebarBackground.frame = NSRect(
-                x: 0, y: 0, width: sidebarWidth + SlimTabsChrome.backdropOverrun, height: height)
-            tabSidebarBackground.autoresizingMask = [.height]
-            tabSidebarSeparator.isHidden = false
-            ChromeMotion.setFrame(
-                tabSidebarSeparator,
-                to: NSRect(x: sidebarWidth - hairline, y: 0, width: hairline, height: height), spring: spring)
-            tabSidebarSeparator.autoresizingMask = [.height, .maxXMargin]
-            ChromeMotion.setFrame(
-                tabStripView, to: NSRect(x: 0, y: 0, width: sidebarWidth, height: height - toolbarHeight),
-                spring: spring)
-            tabStripView.autoresizingMask = [.height, .maxXMargin]
-            // After the frame: with no slim presentation the strip lays its
-            // rows out against its own width.
-            tabStripView.setSlimPresentation(.off, spring: spring)
-            chromeSeparator.frame = NSRect(x: sidebarWidth, y: height - toolbarHeight, width: rowWidth, height: hairline)
-            ChromeMotion.setFrame(
-                contentContainerView,
-                to: NSRect(x: sidebarWidth, y: 0, width: rowWidth, height: height - toolbarHeight), spring: spring)
-            layoutTabColumnControls(columnWidth: sidebarWidth, columnHeight: height)
+            layoutSidebarAbovePage(spring: slimTransitionSpring)
         }
         if tabStripOrientation != .sidebar {
             toolbarView.autoresizingMask = [.width, .minYMargin]
@@ -985,7 +976,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             guard let self, self.usesSlimTabs else { return }
             let spring: ChromeMotion.Spring? = ChromeMotion.isReduced
                 ? nil : (self.slimTabs.isExpanded ? .expand : .collapse)
-            self.layoutSlimTabColumn(spring: spring)
+            self.layoutSidebarAbovePage(spring: spring)
         }
         slimTabs.isExpansionSuppressed = { [weak self] in self?.tabOverview.isShowing ?? false }
         slimTabs.holdsExpansion = { [weak self] in
@@ -994,49 +985,134 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
     }
 
-    /// Moves the views the tab column borrows into and out of its keeping.
-    /// The column's material sits inside SlimTabsChrome's clip for the whole
-    /// "Tabs on Side" layout, slim or full, so the change between the
-    /// two can spring the clip; it sits directly in the content view for the
-    /// other layouts.
+    /// Puts away what belongs to a layout that is not the current one: the
+    /// resize handle (both sidebar arrangements have it), the compact toggle
+    /// and the strip's compact presentation (only a sidebar that holds the
+    /// tabs alone), and the hover tracking of a compact or hidden sidebar.
     private func setSlimTabsActive(_ active: Bool) {
-        guard let contentView = window?.contentView else { return }
-        let isColumnLayout = tabStripOrientation == .vertical
-        slimTabs.backdropClip.isHidden = !isColumnLayout
-        tabColumnResizeHandle.isHidden = !isColumnLayout
-        tabColumnToggleButton.isHidden = !isColumnLayout
-        if isColumnLayout {
-            if tabSidebarBackground.superview !== slimTabs.backdropClip {
-                slimTabs.backdropClip.addSubview(tabSidebarBackground)
-            }
-        } else {
-            if tabSidebarBackground.superview !== contentView {
-                contentView.addSubview(tabSidebarBackground, positioned: .above, relativeTo: chromeBackground)
-            }
+        tabColumnResizeHandle.isHidden = tabStripOrientation == .horizontal
+        tabColumnToggleButton.isHidden = tabStripOrientation != .vertical
+        if tabStripOrientation == .horizontal {
             tabColumnDrag = nil
             liveTabColumnWidth = nil
-            // The full column's own branch of applyChromeLayout does this
-            // for itself, after it has framed the strip.
-            tabStripView.setSlimPresentation(.off, spring: nil)
         }
+        // layoutSidebarAbovePage does this for itself, after it has framed
+        // the strip.
+        if tabStripOrientation != .vertical { tabStripView.setSlimPresentation(.off, spring: nil) }
         if !active { slimTabs.apply(column: nil) }
     }
 
-    /// The resize handle on the column's trailing edge, inside the column,
-    /// and the slim toggle: at the trailing end of the band the traffic
-    /// lights sit on while the column is full, and on the toolbar row after
-    /// the lights while it is slim (see tabColumnToggleReservedWidth).
-    private func layoutTabColumnControls(columnWidth: CGFloat, columnHeight: CGFloat) {
+    /// The whole Sidebar layout with the address bar above the page: the
+    /// sidebar holds the traffic lights and the tabs, a toolbar row runs
+    /// above the page, and the page is an inset, round-cornered card on the
+    /// sidebar material, which spans the window.
+    ///
+    /// A full sidebar runs the window's height, with the toolbar row beside
+    /// its top band. On the left that band carries the traffic lights; on
+    /// the right the lights stay at the window's leading edge, on the
+    /// toolbar row, and the band holds the compact button alone. A compact or
+    /// hidden one is narrower than the lights, so there the toolbar row runs
+    /// the window's width and carries them, and the sidebar starts under it.
+    ///
+    /// The page is laid out against the sidebar's resting width (full,
+    /// compact strip, or a hidden sidebar's margin) and keeps that size.
+    /// While a compact or hidden sidebar is out on hover only the page's
+    /// origin follows it, so its far edge is past the window's (see
+    /// SlimTabsChrome for why it slides and is not covered or resized). With
+    /// `spring`, the strip, its edge and the page move on it together.
+    private func layoutSidebarAbovePage(spring: ChromeMotion.Spring?) {
         guard let contentView = window?.contentView else { return }
-        let handleWidth = TabColumnResizeHandle.width
-        tabColumnResizeHandle.frame = NSRect(
-            x: columnWidth - handleWidth, y: 0, width: handleWidth, height: columnHeight)
-        tabColumnResizeHandle.autoresizingMask = [.height, .maxXMargin]
-        tabColumnResizeHandle.window?.invalidateCursorRects(for: tabColumnResizeHandle)
+        let width = contentView.bounds.width
+        let height = contentView.bounds.height - chromeTopInset
+        let toolbarHeight = Self.toolbarHeight
+        let inset = SidebarChrome.pageInset
+        let onLeft = SidebarLayoutPreference.edge == .left
+        let collapses = usesSlimTabs
+        let expanded = collapses && slimTabs.isExpanded
+        let fullWidth = tabColumnWidth
+        let restingWidth = collapses ? collapsedTabColumnWidth : fullWidth
+        let columnWidth = expanded ? fullWidth : restingWidth
+        let columnHeight = max(0, height - toolbarHeight)
+        let column = NSRect(
+            x: onLeft ? 0 : width - columnWidth, y: 0, width: columnWidth, height: columnHeight)
+        let pinnedToColumn: NSView.AutoresizingMask = [.height, onLeft ? .maxXMargin : .minXMargin]
 
+        newTabToolbarButton.isHidden = true
+        tabSidebarSeparator.isHidden = true
+        tabSidebarBackground.isHidden = false
+        tabSidebarBackground.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        tabSidebarBackground.autoresizingMask = [.width, .height]
+
+        toolbarView.frame = NSRect(
+            x: collapses || !onLeft ? 0 : fullWidth, y: height - toolbarHeight,
+            width: collapses ? width : max(0, width - fullWidth), height: toolbarHeight)
+        // The lights lead the window on either side: on the sidebar's top
+        // band when it is full and on the left, on the toolbar row otherwise
+        // (see trafficLightsAreOnToolbarRow).
+        (window as? BrowserWindow)?.trafficLightAnchor = .leading
+
+        tabStripView.isHidden = false
+        if collapses {
+            // A hidden sidebar has no favicon strip to turn into: it is the
+            // full list throughout, and widening the strip uncovers it.
+            tabStripView.slimFullWidth = fullWidth
+            tabStripView.setSlimPresentation(expanded || hidesTabColumn ? .expanded : .collapsed, spring: spring)
+            ChromeMotion.setFrame(tabStripView, to: column, spring: spring)
+        } else {
+            // The frame first: with no slim presentation the strip lays its
+            // rows out against its own width.
+            ChromeMotion.setFrame(tabStripView, to: column, spring: spring)
+            tabStripView.setSlimPresentation(.off, spring: spring)
+        }
+        tabStripView.autoresizingMask = pinnedToColumn
+
+        let pageWidth = max(0, width - restingWidth - inset)
+        ChromeMotion.setFrame(
+            contentContainerView,
+            to: NSRect(
+                x: onLeft ? columnWidth : width - columnWidth - pageWidth, y: inset,
+                width: pageWidth, height: max(0, columnHeight - inset)),
+            spring: spring)
+
+        if collapses {
+            let shadowWidth = SlimTabsChrome.edgeShadowWidth
+            slimTabs.edgeShadow.darkensTowardTrailingEdge = onLeft
+            ChromeMotion.setFrame(
+                slimTabs.edgeShadow,
+                to: NSRect(
+                    x: onLeft ? column.maxX - shadowWidth : column.minX, y: 0,
+                    width: shadowWidth, height: columnHeight),
+                spring: spring)
+            slimTabs.edgeShadow.autoresizingMask = pinnedToColumn
+            ChromeMotion.setAlpha(slimTabs.edgeShadow, to: expanded ? 1 : 0, duration: spring == nil ? nil : 0.2)
+            slimTabs.apply(column: column, autoresizingMask: pinnedToColumn)
+        }
+
+        // The handle runs the sidebar's whole inner edge, the lights' band
+        // included when the sidebar has one. A hidden sidebar's edge is the
+        // pointer's way in, not a handle.
+        layoutTabColumnResizeHandle(
+            column: NSRect(x: column.minX, y: 0, width: columnWidth, height: collapses ? columnHeight : height),
+            onLeft: onLeft, isHidden: hidesTabColumn && !expanded)
         layoutTabColumnToggle()
+        logChromeFramesIfRequested()
     }
 
+    /// The resize handle on the sidebar's inner edge, inside the sidebar
+    /// and never on the page.
+    private func layoutTabColumnResizeHandle(column: NSRect, onLeft: Bool, isHidden: Bool) {
+        let handleWidth = TabColumnResizeHandle.width
+        tabColumnResizeHandle.isHidden = isHidden
+        tabColumnResizeHandle.frame = NSRect(
+            x: onLeft ? column.maxX - handleWidth : column.minX, y: column.minY,
+            width: handleWidth, height: column.height)
+        tabColumnResizeHandle.autoresizingMask = [.height, onLeft ? .maxXMargin : .minXMargin]
+        tabColumnResizeHandle.window?.invalidateCursorRects(for: tabColumnResizeHandle)
+    }
+
+    /// The compact toggle: at the trailing end of the band the traffic
+    /// lights sit on while the sidebar is full, and on the toolbar row after
+    /// the lights while it is compact (see tabColumnToggleReservedWidth).
     /// Also run with the leading toolbar controls: on the toolbar row the
     /// button follows the traffic lights, which full screen takes away.
     private func layoutTabColumnToggle() {
@@ -1045,14 +1121,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // and the window's edge bring it back.
         tabColumnToggleButton.isHidden = hidesTabColumn
         let compact = compactsTabColumn
+        let onLeft = SidebarLayoutPreference.edge == .left
         let size = ChromeMetrics.controlHeight
         let rowMidY = contentView.bounds.height - chromeTopInset - Self.toolbarHeight / 2
-        tabColumnToggleButton.frame = NSRect(
-            x: compact
-                ? trafficLightReservedWidth - tabColumnToggleReservedWidth
-                : tabColumnWidth - ChromeMetrics.edgeInset - size,
-            y: (rowMidY - size / 2).rounded(), width: size, height: size)
-        tabColumnToggleButton.autoresizingMask = [.maxXMargin, .minYMargin]
+        let x: CGFloat
+        if compact {
+            x = trafficLightReservedWidth - tabColumnToggleReservedWidth
+        } else {
+            x = (onLeft ? tabColumnWidth : contentView.bounds.width) - ChromeMetrics.edgeInset - size
+        }
+        tabColumnToggleButton.frame = NSRect(x: x, y: (rowMidY - size / 2).rounded(), width: size, height: size)
+        tabColumnToggleButton.autoresizingMask = [compact || onLeft ? .maxXMargin : .minXMargin, .minYMargin]
         let label = compact ? "Expand Sidebar" : "Compact Sidebar"
         tabColumnToggleButton.toolTip = label
         tabColumnToggleButton.setAccessibilityLabel(label)
@@ -1065,14 +1144,22 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     // MARK: - Resizing the tab column
 
     private func tabColumnDragBegan(at x: CGFloat) {
-        guard tabStripOrientation == .vertical else { return }
+        guard tabStripOrientation != .horizontal else { return }
         let collapsed = usesSlimTabs && !slimTabs.isExpanded
         tabColumnDrag = TabColumnDrag(anchorX: x, anchorWidth: collapsed ? collapsedTabColumnWidth : tabColumnWidth)
     }
 
     private func tabColumnDragged(to x: CGFloat) {
         guard let drag = tabColumnDrag else { return }
-        let proposed = drag.anchorWidth + (x - drag.anchorX)
+        // Away from the window's edge widens the sidebar, on either side.
+        let outward: CGFloat = SidebarLayoutPreference.edge == .left ? 1 : -1
+        let proposed = drag.anchorWidth + outward * (x - drag.anchorX)
+        // A sidebar that holds the address bar has no compact state to snap
+        // into.
+        guard tabStripOrientation == .vertical else {
+            requestTabColumnWidth(proposed)
+            return
+        }
         if usesSlimTabs {
             // Out on hover, the edge resizes the width the column hovers
             // out to; the page only slides, and the column stays slim.
@@ -1106,11 +1193,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             self.pendingTabColumnWidth = nil
             guard self.tabColumnDrag != nil, width != self.tabColumnWidth else { return }
             self.liveTabColumnWidth = width
-            if self.usesSlimTabs {
-                self.layoutSlimTabColumn(spring: nil)
-            } else {
-                self.applyChromeLayout()
-            }
+            self.applyChromeLayout()
         }
     }
 
@@ -1136,57 +1219,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
     }
 
-    /// Frames everything that depends on how wide the slim tab column is:
-    /// the strip, its material and edge, and the page. The page keeps one
-    /// size, laid out against the slim width, and only its origin follows
-    /// the column -- widened, its far edge is past the window's (see
-    /// SlimTabsChrome for why it slides and is not covered or resized). With
-    /// `spring`, every one of them moves on it together.
-    private func layoutSlimTabColumn(spring: ChromeMotion.Spring?) {
-        guard let contentView = window?.contentView else { return }
-        let expanded = slimTabs.isExpanded
-        let fullWidth = tabColumnWidth
-        let collapsedWidth = collapsedTabColumnWidth
-        let columnWidth = expanded ? fullWidth : collapsedWidth
-        // A hidden column has no favicon strip to turn into: it is the full
-        // list throughout, and the clip uncovers it.
-        let showsFullList = expanded || hidesTabColumn
-        let columnHeight = max(0, contentView.bounds.height - chromeTopInset - Self.toolbarHeight)
-        let column = NSRect(x: 0, y: 0, width: columnWidth, height: columnHeight)
-        let hairline: CGFloat = 0.5
-        let shadowWidth = SlimTabsChrome.edgeShadowWidth
-        let pinnedToColumn: NSView.AutoresizingMask = [.height, .maxXMargin]
-
-        tabStripView.slimFullWidth = fullWidth
-        tabStripView.setSlimPresentation(showsFullList ? .expanded : .collapsed, spring: spring)
-        ChromeMotion.setFrame(tabStripView, to: column, spring: spring)
-        tabStripView.autoresizingMask = pinnedToColumn
-        ChromeMotion.setFrame(slimTabs.backdropClip, to: column, spring: spring)
-        slimTabs.backdropClip.autoresizingMask = pinnedToColumn
-        tabSidebarBackground.frame = NSRect(
-            x: 0, y: 0, width: fullWidth + SlimTabsChrome.backdropOverrun, height: columnHeight)
-        tabSidebarBackground.autoresizingMask = [.height]
-        ChromeMotion.setFrame(
-            tabSidebarSeparator,
-            to: NSRect(x: columnWidth - hairline, y: 0, width: hairline, height: columnHeight), spring: spring)
-        tabSidebarSeparator.autoresizingMask = pinnedToColumn
-        ChromeMotion.setFrame(
-            slimTabs.edgeShadow,
-            to: NSRect(x: columnWidth - shadowWidth, y: 0, width: shadowWidth, height: columnHeight), spring: spring)
-        slimTabs.edgeShadow.autoresizingMask = pinnedToColumn
-        ChromeMotion.setAlpha(slimTabs.edgeShadow, to: expanded ? 1 : 0, duration: spring == nil ? nil : 0.2)
-        ChromeMotion.setFrame(
-            contentContainerView,
-            to: NSRect(
-                x: columnWidth, y: 0,
-                width: max(0, contentView.bounds.width - collapsedWidth), height: columnHeight),
-            spring: spring)
-        slimTabs.apply(column: column)
-        layoutTabColumnControls(columnWidth: columnWidth, columnHeight: columnHeight)
-        // A hidden column's edge is the pointer's way in, not a handle.
-        tabColumnResizeHandle.isHidden = hidesTabColumn && !expanded
-    }
-
     // MARK: - Chrome geometry report
 
     private static let isChromeFramesReportRequested = CommandLine.arguments.contains("--chrome-frames-report")
@@ -1206,13 +1238,14 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             let top = contentView.bounds.height
             func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value)) }
             func describe(_ name: String, _ view: NSView?) -> String? {
-                guard let view, !view.isHidden, view.superview != nil else { return nil }
+                guard let view, !view.isHiddenOrHasHiddenAncestor, view.superview != nil else { return nil }
                 let r = view.convert(view.bounds, to: nil)
                 return "\(name){x=\(f(r.minX)) maxX=\(f(r.maxX)) top=\(f(top - r.maxY)) h=\(f(r.height)) midFromTop=\(f(top - r.midY))}"
             }
             var parts: [String] = [
                 "orientation=\(self.tabStripOrientation.rawValue)",
                 "windowW=\(f(contentView.bounds.width))",
+                "windowH=\(f(contentView.bounds.height))",
                 "bannerInset=\(f(self.chromeTopInset))",
                 "toolbarMidFromTop=\(f(top - self.toolbarView.frame.midY))",
             ]
@@ -1226,6 +1259,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
                 ("privateBadge", self.privateLabel), ("hairline", self.chromeSeparator),
                 ("siteGlyph", self.siteButton), ("field", self.omniboxField),
                 ("page", self.contentContainerView), ("overflow", self.sidebarChrome.overflowButton),
+                ("strip", self.tabStripView), ("columnToggle", self.tabColumnToggleButton),
+                ("sidebarHide", self.sidebarChrome.hideButton), ("resizeHandle", self.tabColumnResizeHandle),
+                ("share", self.shareButton), ("reload", self.reloadButton),
             ]
             for (name, view) in named {
                 if let entry = describe(name, view) { parts.append(entry) }
@@ -2307,6 +2343,18 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// name/color, creates the group at the end of tabGroups (its section
     /// lands after every existing group, before loose tabs), then moves the
     /// tab into it.
+    /// ChromeStateTestHook's tab group: moveTabToNewGroup without its
+    /// prompt, which nothing could answer in an unattended launch.
+    func groupTabsForTest(at indexes: [Int], name: String, colorHex: String) {
+        let members = indexes.filter(tabs.indices.contains).map { tabs[$0] }
+        let group = TabGroup(name: name, colorHex: colorHex)
+        tabGroups.append(group)
+        for tab in members {
+            guard let index = tabs.firstIndex(where: { $0 === tab }) else { continue }
+            moveTab(at: index, toGroup: group.id)
+        }
+    }
+
     func moveTabToNewGroup(at index: Int) {
         guard tabs.indices.contains(index) else { return }
         guard let result = TabGroupPrompt.run(currentName: "", currentColorHex: nextUnusedGroupColor(), isNew: true) else { return }
@@ -2538,7 +2586,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// legible over vibrancy without needing a fresh contrast check for
     /// every possible glass/vibrancy combination.
     private func updateChromeTint(for tab: Tab) {
-        if tabStripOrientation == .sidebar {
+        if tabStripOrientation != .horizontal {
             applySidebarTint()
             return
         }
@@ -3702,7 +3750,7 @@ extension BrowserWindowController {
         }
         sidebarChrome.isRevealSuppressed = { [weak self] in self?.tabOverview.isShowing ?? false }
         sidebarChrome.onProfileChanged = { [weak self] in
-            guard let self, self.tabStripOrientation == .sidebar else { return }
+            guard let self, self.tabStripOrientation != .horizontal else { return }
             self.applySidebarTint()
         }
     }
@@ -3718,43 +3766,47 @@ extension BrowserWindowController {
         return sidebarChrome.isOverflowed(view) ? sidebarChrome.overflowButton : view
     }
 
-    /// Everything that differs between the sidebar layout and the other two,
-    /// switched both ways, so leaving the layout restores exactly what the
-    /// other orientations expect: the toolbar band and its hairline, the
-    /// private badge's and the trailing controls' toolbar autoresizing,
-    /// square page corners and the traffic lights at the leading edge. The
-    /// profile pill, the private badge and the Share group stay in the
-    /// toolbar view, which is the sidebar's header in this layout.
+    /// Everything that differs between the layouts, switched both ways, so
+    /// leaving one restores exactly what the next expects. `active` is the
+    /// sidebar that holds the address bar: no toolbar row, a footer, its
+    /// own traffic-light placement. Both sidebar arrangements share the
+    /// look -- no toolbar band or hairline, the page as a round-cornered
+    /// card on the sidebar material, the profile's colour over the window
+    /// -- and "Tabs on Top" has none of it. The profile pill, the private
+    /// badge and the Share group stay in the toolbar view throughout; with
+    /// `active` that view is the sidebar's header.
     fileprivate func setSidebarLayoutActive(_ active: Bool) {
-        chromeBackground.isHidden = active
-        chromeSeparator.isHidden = active
+        let hasSidebar = tabStripOrientation != .horizontal
+        chromeBackground.isHidden = hasSidebar
+        chromeSeparator.isHidden = hasSidebar
         toolbarView.isHidden = active && !sidebarChrome.isShown
 
         privateLabel?.autoresizingMask = active ? [] : [.minXMargin]
 
-        contentContainerView.layer?.cornerRadius = active ? SidebarChrome.pageCornerRadius : 0
+        contentContainerView.layer?.cornerRadius = hasSidebar ? SidebarChrome.pageCornerRadius : 0
         contentContainerView.layer?.cornerCurve = .continuous
         if #available(macOS 14.0, *) {
-            contentContainerView.clipsToBounds = active
+            contentContainerView.clipsToBounds = hasSidebar
         } else {
-            contentContainerView.layer?.masksToBounds = active
+            contentContainerView.layer?.masksToBounds = hasSidebar
         }
 
         if let window = window as? BrowserWindow {
+            // layoutSidebarAbovePage places the lights for its own layout.
             window.trafficLightAnchor = active && sidebarChrome.edge == .right
-                ? .trailingColumn(width: SidebarChrome.width) : .leading
+                ? .trailingColumn(width: sidebarChrome.width) : .leading
             window.hidesTrafficLights = active && !sidebarChrome.isShown
         }
         if !active {
             sidebarChrome.apply(nil)
-            tabStripView.backdropTint = nil
             for control in trailingControls.values {
                 control.view?.autoresizingMask = [.minXMargin, .minYMargin]
             }
         }
+        if !hasSidebar { tabStripView.backdropTint = nil }
         if let tab = activeTab {
             updateChromeTint(for: tab)
-        } else if active {
+        } else if hasSidebar {
             applySidebarTint()
         }
     }
@@ -3781,6 +3833,7 @@ extension BrowserWindowController {
         tabStripView.autoresizingMask = column.union(.height)
         contentContainerView.frame = frames.page
         sidebarChrome.apply(frames)
+        layoutTabColumnResizeHandle(column: frames.column, onLeft: sidebarChrome.edge == .left, isHidden: !shown)
     }
 
     /// The footer row: the trailing toolbar controls in a row from the
@@ -3872,7 +3925,7 @@ extension BrowserWindowController {
             segmentX += segment
         }
         trailingGroup.frame = NSRect(
-            x: SidebarChrome.width - ChromeMetrics.edgeInset - segmentX,
+            x: sidebarChrome.width - ChromeMetrics.edgeInset - segmentX,
             y: sidebarChrome.identityRowY(forHeight: size), width: segmentX, height: size
         )
         if profilePillButton != nil {
@@ -3895,7 +3948,8 @@ extension BrowserWindowController {
         )
     }
 
-    /// The whole window takes the profile's colour in the sidebar layout,
+    /// The whole window takes the profile's colour in the sidebar layout
+    /// (wherever the address bar is),
     /// not the page's theme colour: the sidebar is the profile's space, and
     /// it should read as that profile whatever page is open. The tab strip
     /// is told the same colour, so the selected tab's contrast is measured

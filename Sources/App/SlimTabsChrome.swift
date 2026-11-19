@@ -1,14 +1,15 @@
 import AppKit
 
-/// The compact and hidden tab columns of the "Tabs on Side" layout
-/// (CompactTabsPreference, TabsHiddenPreference): the column is a narrow
-/// strip of favicons, or
-/// only a few points of margin at the window's edge, and it widens to the
-/// full list while the pointer is on it.
+/// The compact and hidden states of a sidebar that holds the tabs alone
+/// (CompactTabsPreference, TabsHiddenPreference; the address bar is above
+/// the page): the sidebar is a narrow strip of favicons, or only a few
+/// points of margin at the window's edge, and it widens to the full list
+/// while the pointer is on it.
 ///
 /// The page is never overlapped and never resized. It is laid out against
 /// the slim width for good, and when the column widens the page *slides*
-/// aside by the same amount, its far edge leaving the window. A slide is a
+/// aside by the same amount, its far edge leaving the window (the edge
+/// opposite the sidebar, whichever side that is). A slide is a
 /// change of position only, so the renderer sees no resize, and Core
 /// Animation moves the page's layer by itself -- which is what lets this
 /// reveal be animated when the sidebar layout's cannot (see SidebarChrome).
@@ -20,9 +21,10 @@ import AppKit
 /// BrowserWindowController.contentAreaTopY for why that matters).
 ///
 /// BrowserWindowController owns the strip and the page and frames them; this
-/// type owns what exists for slim tabs alone (the clip the column's material
-/// sits in, the shadow at its edge, the pointer tracker) and decides when
-/// the column is out.
+/// type owns what exists for these states alone (the shadow at the
+/// column's edge, the pointer tracker) and decides when the column is out.
+/// The column's material is the one that spans the window behind the page
+/// card, so widening the column uncovers more of it.
 final class SlimTabsChrome {
     /// How long the pointer has to rest on the strip before it widens, so a
     /// pointer crossing it on the way to the window's edge, or a click on a
@@ -37,25 +39,8 @@ final class SlimTabsChrome {
     /// never reaches that edge, so these points are plain AppKit space the
     /// tracker can watch; a hot zone over the page itself would be an AppKit
     /// view in the page's region, and the page takes the pointer there.
-    static let hiddenEdgeWidth: CGFloat = 6
+    static let hiddenEdgeWidth = SidebarChrome.pageInset
     static let edgeShadowWidth: CGFloat = 14
-    /// How far the column's material runs past its full width, so the
-    /// spring's overshoot uncovers more material and not bare window.
-    static let backdropOverrun: CGFloat = 32
-
-    /// Holds the column's material at its full width and shows as much of it
-    /// as the column is wide. The window controller keeps the material here
-    /// for the whole "Tabs on Side" layout, slim or not, so the change
-    /// between the two can be sprung as well. A material view resized on every frame would
-    /// redraw its backdrop on every frame; a clip that changes size costs
-    /// nothing.
-    let backdropClip: NSView = {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.masksToBounds = true
-        view.isHidden = true
-        return view
-    }()
     /// A soft shadow just inside the widened column's edge, as if the page
     /// were a card lying on it. Inside the column, never on the page.
     let edgeShadow = SlimEdgeShadowView()
@@ -94,37 +79,27 @@ final class SlimTabsChrome {
     /// material's clip under the strip, the shadow over it.
     func install(in contentView: NSView, strip: NSView) {
         contentView.addSubview(tracker, positioned: .below, relativeTo: nil)
-        contentView.addSubview(backdropClip, positioned: .below, relativeTo: strip)
         contentView.addSubview(edgeShadow, positioned: .above, relativeTo: strip)
     }
 
-    private static var testCycleRan = false
+    /// ChromeStateTestHook's `out`: the column comes out by itself, once, and
+    /// stays.
+    private var hasRunTestHook = false
+    private var isHeldForTest = false
 
-    /// `--test-slim-tabs-cycle`: widens the first window's column a few
-    /// seconds after it first shows, holds it, and narrows it again, so an
-    /// agent can screenshot each state without moving the pointer. Once per
-    /// process.
-    private func runTestCycleIfRequested() {
-        guard !Self.testCycleRan, CommandLine.arguments.contains("--test-slim-tabs-cycle") else { return }
-        Self.testCycleRan = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            guard let self, self.isActive else { return }
+    private func bringOutForTestIfRequested() {
+        guard !hasRunTestHook, ChromeStateTestHook.bringsSidebarOut else { return }
+        hasRunTestHook = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + ChromeStateTestHook.sidebarOutDelay) { [weak self] in
+            guard let self, self.isActive, !self.isExpanded else { return }
             self.isHeldForTest = true
             self.expand()
-            NSLog("[slim-tabs] test cycle: widened")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-                self?.isHeldForTest = false
-                self?.collapse()
-                NSLog("[slim-tabs] test cycle: narrowed")
-            }
         }
     }
 
-    private var isHeldForTest = false
-
     /// The column's current frame in the window's contentView, or nil to put
     /// slim tabs away (any other layout, or the preference off).
-    func apply(column: NSRect?) {
+    func apply(column: NSRect?, autoresizingMask: NSView.AutoresizingMask = []) {
         isActive = column != nil
         guard let column else {
             revealTimer?.invalidate()
@@ -137,10 +112,10 @@ final class SlimTabsChrome {
         tracker.isHidden = false
         edgeShadow.isHidden = false
         tracker.frame = column
-        tracker.autoresizingMask = [.height, .maxXMargin]
+        tracker.autoresizingMask = autoresizingMask
         // Unhiding or resizing alone does not reliably re-arm a tracking area.
         tracker.updateTrackingAreas()
-        runTestCycleIfRequested()
+        bringOutForTestIfRequested()
     }
 
     /// Forgets that the column is out without telling anyone, for an owner
@@ -294,6 +269,17 @@ final class SlimEdgeShadowView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// The shadow is darkest at the column's inner edge, the one beside the
+    /// page: the trailing edge of a column on the left, the leading edge of
+    /// one on the right.
+    var darkensTowardTrailingEdge = true {
+        didSet {
+            guard oldValue != darkensTowardTrailingEdge, let gradient = layer as? CAGradientLayer else { return }
+            gradient.startPoint = CGPoint(x: darkensTowardTrailingEdge ? 0 : 1, y: 0.5)
+            gradient.endPoint = CGPoint(x: darkensTowardTrailingEdge ? 1 : 0, y: 0.5)
+        }
+    }
 }
 
 /// Chrome animations that run entirely in the render server.
@@ -321,6 +307,7 @@ enum ChromeMotion {
             animation.stiffness = stiffness
             animation.damping = damping
             animation.duration = animation.settlingDuration
+            animation.speed = Float(1 / ChromeStateTestHook.timeScale)
             animation.isAdditive = true
             return animation
         }
@@ -390,6 +377,7 @@ enum ChromeMotion {
 
     private static func configure(_ animation: CABasicAnimation, duration: CFTimeInterval, start: CFTimeInterval) {
         animation.duration = duration
+        animation.speed = Float(1 / ChromeStateTestHook.timeScale)
         animation.beginTime = start
         // Holds the starting value through the delay.
         animation.fillMode = .backwards

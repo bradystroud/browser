@@ -24,17 +24,22 @@ extension Notification.Name {
     static let verticalTabsWidthDidChange = Notification.Name("VerticalTabsWidthDidChange")
 }
 
-/// Where the tab strip sits: a horizontal row under the toolbar (the default,
-/// unchanged from before this setting existed) or a vertical sidebar down the
-/// window's leading edge, Safari/Arc style -- or the sidebar layout, where
-/// one full-height sidebar carries the toolbar's controls too and there is no
-/// toolbar row at all (see SidebarChrome).
+/// Where a window's chrome lives. The user chooses between two layouts,
+/// "Tabs on Top" and "Sidebar" (TabLayout), and for the sidebar where the
+/// address bar goes (SidebarAddressBar); the three cases here are those
+/// choices as the one value that is stored and that the window lays out
+/// from:
 ///
-/// The sidebar layout is a third case here rather than a separate setting
-/// because the three are mutually exclusive answers to one question, where
-/// the window's chrome lives: as its own on/off setting it would make
-/// "sidebar layout with a horizontal tab strip" expressible, which means
-/// nothing. TabStripView itself only ever sees `stripAxis`.
+/// - horizontal: a row of tabs under the toolbar.
+/// - vertical: the sidebar holds the tabs alone, and the toolbar row, with
+///   the address bar, runs above the page.
+/// - sidebar: the sidebar holds the address bar and every toolbar control
+///   too, and there is no toolbar row (see SidebarChrome).
+///
+/// One stored value rather than a layout and an address-bar setting side by
+/// side, because the three are exclusive answers to one question: two
+/// values would make "address bar in the sidebar, tabs on top" expressible,
+/// which means nothing. TabStripView itself only ever sees `stripAxis`.
 ///
 /// This is a layout choice, not a rendering detail: the sidebar is a real
 /// sibling view that the web content area's frame is shrunk to make room for
@@ -50,16 +55,6 @@ enum TabStripOrientation: String, CaseIterable {
         switch self {
         case .horizontal: return "Horizontal"
         case .vertical: return "Vertical"
-        case .sidebar: return "Sidebar"
-        }
-    }
-
-    /// What the Settings popup and the View > Tab Layout menu call each
-    /// choice.
-    var layoutTitle: String {
-        switch self {
-        case .horizontal: return "Tabs on Top"
-        case .vertical: return "Tabs on Side"
         case .sidebar: return "Sidebar"
         }
     }
@@ -98,12 +93,78 @@ enum TabStripOrientationPreference {
         }
     }
 
+    static var layout: TabLayout { current == .horizontal ? .top : .sidebar }
+
     /// Choosing a layout from Settings or the View menu. A layout picked
-    /// while the tabs are hidden shows them: otherwise the choice would
-    /// appear to do nothing, or to take the tabs away.
-    static func choose(_ layout: TabStripOrientation) {
-        if layout != current { TabsHiddenPreference.isHidden = false }
-        current = layout
+    /// while the sidebar is hidden shows it: otherwise the choice would
+    /// appear to do nothing, or to take the tabs away. The sidebar comes
+    /// back with the address bar where it last was.
+    static func choose(_ layout: TabLayout) {
+        guard layout != self.layout else { return }
+        TabsHiddenPreference.isHidden = false
+        switch layout {
+        case .top:
+            AppPreferencesStore.current.set(addressBar.rawValue, forKey: addressBarKey)
+            current = .horizontal
+        case .sidebar:
+            current = addressBar.orientation
+        }
+    }
+
+    private static let addressBarKey = "BrowserSidebarAddressBar"
+
+    /// Where the sidebar layout keeps the address bar. While that layout is
+    /// the choice, the stored orientation is the answer; the separate key
+    /// only remembers it across a spell of "Tabs on Top".
+    static var addressBar: SidebarAddressBar {
+        get {
+            switch current {
+            case .vertical: return .abovePage
+            case .sidebar: return .inSidebar
+            case .horizontal:
+                return AppPreferencesStore.current.string(forKey: addressBarKey)
+                    .flatMap(SidebarAddressBar.init(rawValue:)) ?? .inSidebar
+            }
+        }
+        set {
+            AppPreferencesStore.current.set(newValue.rawValue, forKey: addressBarKey)
+            if current != .horizontal { current = newValue.orientation }
+        }
+    }
+}
+
+/// The two layouts the user chooses between.
+enum TabLayout: CaseIterable {
+    case top
+    case sidebar
+
+    var title: String {
+        switch self {
+        case .top: return "Tabs on Top"
+        case .sidebar: return "Sidebar"
+        }
+    }
+}
+
+/// Where the sidebar layout keeps the address bar and the toolbar's
+/// controls: in the sidebar itself, above the tabs, or in a toolbar row
+/// above the page, which leaves the sidebar the tabs alone.
+enum SidebarAddressBar: String, CaseIterable {
+    case inSidebar
+    case abovePage
+
+    var title: String {
+        switch self {
+        case .inSidebar: return "In Sidebar"
+        case .abovePage: return "Above Page"
+        }
+    }
+
+    var orientation: TabStripOrientation {
+        switch self {
+        case .inSidebar: return .sidebar
+        case .abovePage: return .vertical
+        }
     }
 }
 
@@ -111,19 +172,18 @@ enum TabStripOrientationPreference {
 /// Its own target rather than the window controller, because both are
 /// app-wide and have to work with no browser window key.
 ///
-/// "Sidebar" is the one name for the column at the side of the window in
-/// both layouts that have one, whether it holds the tabs alone or the
-/// address bar too. No command changes the layout by a shortcut: the layout
+/// "Sidebar" is the one name for the column at the side of the window,
+/// whether it holds the tabs alone or the address bar too. No command changes the layout by a shortcut: the layout
 /// is a choice made once.
 final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
     static let shared = TabLayoutMenuTarget()
 
     func makeMenu() -> NSMenu {
         let menu = NSMenu(title: "Tab Layout")
-        for layout in TabStripOrientation.allCases {
-            let item = NSMenuItem(title: layout.layoutTitle, action: #selector(chooseLayout(_:)), keyEquivalent: "")
+        for (index, layout) in TabLayout.allCases.enumerated() {
+            let item = NSMenuItem(title: layout.title, action: #selector(chooseLayout(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = layout.rawValue
+            item.tag = index
             menu.addItem(item)
         }
         return menu
@@ -138,9 +198,8 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
     }
 
     @objc func chooseLayout(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let layout = TabStripOrientation(rawValue: raw) else { return }
-        TabStripOrientationPreference.choose(layout)
+        guard TabLayout.allCases.indices.contains(sender.tag) else { return }
+        TabStripOrientationPreference.choose(TabLayout.allCases[sender.tag])
     }
 
     @objc func toggleSidebarHidden(_ sender: Any?) {
@@ -152,8 +211,8 @@ final class TabLayoutMenuTarget: NSObject, NSMenuItemValidation {
         let layout = TabStripOrientationPreference.current
         switch menuItem.action {
         case #selector(chooseLayout(_:)):
-            let raw = menuItem.representedObject as? String
-            menuItem.state = raw == layout.rawValue ? .on : .off
+            let chosen = TabLayout.allCases.firstIndex(of: TabStripOrientationPreference.layout)
+            menuItem.state = menuItem.tag == chosen ? .on : .off
             return true
         case #selector(toggleSidebarHidden(_:)):
             // Tabs on top have no sidebar to hide.
@@ -196,11 +255,10 @@ enum SidebarLayoutPreference {
     }
 }
 
-/// Whether the tabs are hidden, in both layouts that keep them in a column
-/// ("Tabs on Side" and "Sidebar"): the column goes away, and comes back out
-/// while the pointer rests at its edge of the window (SlimTabsChrome,
-/// SidebarChrome). One flag for the two layouts, so the one command means
-/// the same thing in both and survives a change between them. "Tabs on Top"
+/// Whether the sidebar is hidden: it goes away, and comes back out while the
+/// pointer rests at its edge of the window (SlimTabsChrome, SidebarChrome).
+/// One flag wherever the address bar is, so the one command means the same
+/// thing in both arrangements and survives a change between them. "Tabs on Top"
 /// ignores it. Global, like TabStripOrientationPreference and for the same
 /// reason: hiding the tabs in one window hides them in all, so ⌘N never
 /// opens a window in the other state.
@@ -221,10 +279,10 @@ enum TabsHiddenPreference {
     }
 }
 
-/// Compact tabs, for the "Tabs on Side" layout only: the column is a narrow
-/// strip of favicons that widens to the full list while the pointer is on it
-/// (see SlimTabsChrome). Independent of TabsHiddenPreference, which wins
-/// while both are on. Global, like TabStripOrientationPreference and for the
+/// A compact sidebar: a narrow strip of favicons that widens to the full list while the pointer is on it
+/// (see SlimTabsChrome). Only for a sidebar that holds the tabs alone
+/// (SidebarAddressBar.abovePage): an address bar cannot be narrowed to an
+/// icon. Independent of TabsHiddenPreference, which wins while both are on. Global, like TabStripOrientationPreference and for the
 /// same reason; it keeps its value while another layout is the choice.
 enum CompactTabsPreference {
     private static let key = "BrowserCompactTabs"
@@ -245,9 +303,10 @@ enum CompactTabsPreference {
 
 /// What TabsHiddenPreference and CompactTabsPreference say until each is
 /// first written: the answer the settings they replaced would have given.
-/// Those were a three-way value for "Tabs on Side" (full, slim or hidden,
-/// with the last shown one of the first two kept beside it), a boolean for
-/// slim before that, and a separate hidden flag for the sidebar layout.
+/// Those were a three-way value for the `vertical` orientation (full, slim
+/// or hidden, with the last shown one of the first two kept beside it), a
+/// boolean for slim before that, and a separate hidden flag for the
+/// `sidebar` orientation.
 private enum LegacyTabColumnSettings {
     private static var store: UserDefaults { AppPreferencesStore.current }
     private static var sidePresentation: String? { store.string(forKey: "BrowserVerticalTabsPresentation") }
@@ -268,11 +327,10 @@ private enum LegacyTabColumnSettings {
     }
 }
 
-/// How wide the tab column is in the "Tabs on Side" layout: the user
-/// drags the column's edge (see TabColumnResizeHandle). It is also how wide
-/// a compact or hidden column becomes while the pointer is on it. Global, like
-/// TabStripOrientationPreference and for the same reason. The sidebar layout
-/// has its own fixed width (SidebarChrome.width).
+/// How wide the sidebar is, wherever the address bar is: the user drags the
+/// sidebar's edge (see TabColumnResizeHandle). It is also how wide a compact
+/// or hidden sidebar becomes while the pointer is on it. Global, like
+/// TabStripOrientationPreference and for the same reason.
 enum VerticalTabsWidthPreference {
     private static let key = "BrowserVerticalTabsWidth"
     /// Narrower than this a title shows only a few characters, and the

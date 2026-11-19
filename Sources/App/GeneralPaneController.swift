@@ -26,9 +26,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     /// plus the sidebar layout's edge (only shown while it is the choice).
     private let tabLayoutPopup = NSPopUpButton()
     private let sidebarEdgePopup = NSPopUpButton()
+    private let addressBarPopup = NSPopUpButton()
+    private var addressBarRow: NSGridRow?
     private var sidebarEdgeRow: NSGridRow?
-    /// Only shown while "Tabs on Side" is the choice, the one layout with
-    /// compact tabs.
+    /// Only shown for a sidebar with the address bar above the page, the one
+    /// arrangement that can be compact.
     private let compactTabsCheckbox = NSButton(
         checkboxWithTitle: "Compact sidebar: icons only, wider on hover", target: nil, action: nil)
     /// Only shown while "Tabs on Top" is the choice, the one layout with a
@@ -189,12 +191,18 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         homepageHelpRow = form.addFootnote(homepageHelpLabel)
 
         form.beginSection()
-        for layout in TabStripOrientation.allCases {
-            tabLayoutPopup.menu?.addItem(NSMenuItem(title: layout.layoutTitle, action: nil, keyEquivalent: ""))
+        for layout in TabLayout.allCases {
+            tabLayoutPopup.menu?.addItem(NSMenuItem(title: layout.title, action: nil, keyEquivalent: ""))
         }
         tabLayoutPopup.target = self
         tabLayoutPopup.action = #selector(tabLayoutChanged)
         form.addRow("Tab layout:", tabLayoutPopup)
+        for place in SidebarAddressBar.allCases {
+            addressBarPopup.menu?.addItem(NSMenuItem(title: place.title, action: nil, keyEquivalent: ""))
+        }
+        addressBarPopup.target = self
+        addressBarPopup.action = #selector(addressBarChanged)
+        addressBarRow = form.addRow("Address bar:", addressBarPopup)
         for edge in SidebarEdge.allCases {
             sidebarEdgePopup.menu?.addItem(NSMenuItem(title: edge.title, action: nil, keyEquivalent: ""))
         }
@@ -525,10 +533,18 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     }
 
     @objc private func tabLayoutChanged() {
-        let layouts = TabStripOrientation.allCases
+        let layouts = TabLayout.allCases
         let index = tabLayoutPopup.indexOfSelectedItem
         guard layouts.indices.contains(index) else { return }
         TabStripOrientationPreference.choose(layouts[index])
+        updateTabLayoutRows()
+    }
+
+    @objc private func addressBarChanged() {
+        let places = SidebarAddressBar.allCases
+        let index = addressBarPopup.indexOfSelectedItem
+        guard places.indices.contains(index) else { return }
+        TabStripOrientationPreference.addressBar = places[index]
         updateTabLayoutRows()
     }
 
@@ -549,19 +565,28 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
 
     private func updateTabLayoutRows() {
         let layout = TabStripOrientationPreference.current
-        if let index = TabStripOrientation.allCases.firstIndex(of: layout) {
+        if let index = TabLayout.allCases.firstIndex(of: TabStripOrientationPreference.layout) {
             tabLayoutPopup.selectItem(at: index)
+        }
+        if let index = SidebarAddressBar.allCases.firstIndex(of: TabStripOrientationPreference.addressBar) {
+            addressBarPopup.selectItem(at: index)
         }
         if let index = SidebarEdge.allCases.firstIndex(of: SidebarLayoutPreference.edge) {
             sidebarEdgePopup.selectItem(at: index)
         }
-        let wasHidden = sidebarEdgeRow?.isHidden
-        sidebarEdgeRow?.isHidden = layout != .sidebar
-        let slimWasHidden = slimTabsRow?.isHidden
-        slimTabsRow?.isHidden = layout != .vertical
+        // Each row shows only where it does something. Compact is for a
+        // sidebar that holds the tabs alone: an address bar cannot be
+        // narrowed to an icon.
+        let rows: [(NSGridRow?, Bool)] = [
+            (addressBarRow, layout != .horizontal), (sidebarEdgeRow, layout != .horizontal),
+            (slimTabsRow, layout == .vertical), (alwaysShowTabBarRow, layout == .horizontal),
+        ]
+        var rowsChanged = false
+        for (row, shows) in rows where row?.isHidden != !shows {
+            row?.isHidden = !shows
+            rowsChanged = true
+        }
         compactTabsCheckbox.state = CompactTabsPreference.isEnabled ? .on : .off
-        let tabBarWasHidden = alwaysShowTabBarRow?.isHidden
-        alwaysShowTabBarRow?.isHidden = layout != .horizontal
         alwaysShowTabBarCheckbox.state = AlwaysShowTabBarPreference.isEnabled ? .on : .off
         var help: String
         switch layout {
@@ -569,14 +594,15 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
             help = "Tabs run in a row under the toolbar."
         case .vertical:
             help = CompactTabsPreference.isEnabled
-                ? "Tabs run down a narrow strip of icons beside the page. Move the pointer onto the strip to see the full list."
-                : "Tabs run down a sidebar beside the page. Drag its edge to resize it."
-            help += " Press ⌘S to hide the sidebar; while it is hidden, move the pointer to the left edge of the window to bring it back."
+                ? "The sidebar is a narrow strip of tab icons, and the address bar is above the page. Move the pointer onto the strip to see the full list."
+                : "The sidebar holds the tabs, and the address bar is above the page."
         case .sidebar:
-            help = "One sidebar holds the address bar, pinned sites, tab groups, tabs and your profile, with no toolbar. Press ⌘S to hide it; while it is hidden, move the pointer to that edge of the window to bring it back."
+            help = "The sidebar holds the address bar, pinned sites, tab groups, tabs and your profile, with no toolbar. A sidebar that holds the address bar cannot be compact."
         }
-        if tabLayoutHelpLabel.stringValue != help || wasHidden != sidebarEdgeRow?.isHidden
-            || slimWasHidden != slimTabsRow?.isHidden || tabBarWasHidden != alwaysShowTabBarRow?.isHidden {
+        if layout != .horizontal {
+            help += " Drag the sidebar's edge to resize it. Press ⌘S to hide it; while it is hidden, move the pointer to that edge of the window to bring it back."
+        }
+        if tabLayoutHelpLabel.stringValue != help || rowsChanged {
             tabLayoutHelpLabel.stringValue = help
             helpTextDidChange()
         }
