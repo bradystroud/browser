@@ -9,12 +9,14 @@ import AppKit
 ///
 /// - a navigation row level with the traffic lights: the lights, a hide-
 ///   sidebar button and the back/forward group;
-/// - the omnibox pill, full column width;
+/// - an identity row: the profile pill (or the Private badge) on the leading
+///   side, the Share and Tab Overview group on the trailing side;
+/// - the omnibox pill on a row of its own, full column width, so nothing
+///   shares the pill's width with the address;
 /// - the vertical TabStripView, unchanged -- pinned favicon grid, group
 ///   folders, tabs, and its own New Tab row;
-/// - a footer with the profile pill on the leading side and the trailing
-///   toolbar controls (Reader, Downloads, password key, extensions) packed
-///   against the trailing side.
+/// - a footer with the trailing toolbar controls (Reader, Downloads,
+///   password key, extensions), packed from the leading side.
 ///
 /// BrowserWindowController still owns every one of those views and frames
 /// them; this type owns only what exists for this layout alone (the footer,
@@ -37,8 +39,9 @@ final class SidebarChrome {
     /// Level with the traffic lights, which BrowserWindow centres on
     /// toolbarHeight / 2 below the top of the window's chrome.
     static let navigationRowHeight = ChromeMetrics.toolbarHeight
+    static let identityRowHeight = ChromeMetrics.controlHeight + 10
     static let omniboxRowHeight = ChromeMetrics.omniboxHeight + 10
-    static var headerHeight: CGFloat { navigationRowHeight + omniboxRowHeight }
+    static var headerHeight: CGFloat { navigationRowHeight + identityRowHeight + omniboxRowHeight }
     static let footerHeight: CGFloat = 44
 
     /// How long the pointer has to rest on the hot zone before the sidebar
@@ -260,8 +263,15 @@ final class SidebarChrome {
         )
     }
 
+    /// Where a control `height` tall sits in the identity row, in the
+    /// header's own coordinates: centred in the row between the navigation
+    /// row and the omnibox row.
+    func identityRowY(forHeight height: CGFloat) -> CGFloat {
+        (Self.omniboxRowHeight + (Self.identityRowHeight - height) / 2).rounded()
+    }
+
     /// The omnibox pill, full column width less the edge insets, centred in
-    /// its row under the navigation row. The same whether or not it is
+    /// its row at the bottom of the header. The same whether or not it is
     /// focused: there is no wider band for it to grow into.
     var omniboxFrame: NSRect {
         let height = ChromeMetrics.omniboxHeight

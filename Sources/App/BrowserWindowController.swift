@@ -1701,7 +1701,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     /// Sizes/positions the pill to fit its current content: first in the
     /// toolbar row, before back/forward (layoutLeadingToolbarControls places
-    /// those after it), or in the sidebar layout's footer. Re-run whenever
+    /// those after it), or in the sidebar layout's identity row. Re-run whenever
     /// the content changes, since a rename changes the fitted width.
     private func layoutProfilePill() {
         guard let profilePillButton else { return }
@@ -3744,11 +3744,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 /// here, apart from the other two orientations' code, so the layout reads as
 /// one piece.
 extension BrowserWindowController {
-    /// The narrowest the profile pill is squeezed to before trailing controls
-    /// move into the footer's overflow menu: room for its glyph and a short
-    /// profile name.
-    fileprivate static let sidebarIdentityMinimumWidth: CGFloat = 76
-
     /// Hooks SidebarChrome up to this window. Called once, from setUpViews.
     fileprivate func installSidebarChrome(in contentView: NSView) {
         sidebarChrome.install(in: contentView, header: toolbarView)
@@ -3780,23 +3775,15 @@ extension BrowserWindowController {
     /// Everything that differs between the sidebar layout and the other two,
     /// switched both ways, so leaving the layout restores exactly what the
     /// other orientations expect: the toolbar band and its hairline, the
-    /// profile pill and private badge back in the toolbar row under the
-    /// omnibox, the trailing controls' toolbar autoresizing, square page
-    /// corners and the traffic lights at the leading edge.
+    /// private badge's and the trailing controls' toolbar autoresizing,
+    /// square page corners and the traffic lights at the leading edge. The
+    /// profile pill, the private badge and the Share group stay in the
+    /// toolbar view, which is the sidebar's header in this layout.
     fileprivate func setSidebarLayoutActive(_ active: Bool) {
         chromeBackground.isHidden = active
         chromeSeparator.isHidden = active
         toolbarView.isHidden = active && !sidebarChrome.isShown
 
-        let identityHost: NSView = active ? sidebarChrome.footerView : toolbarView
-        for view in [profilePillButton as NSView?, privateLabel as NSView?].compactMap({ $0 })
-        where view.superview !== identityHost {
-            if active {
-                identityHost.addSubview(view)
-            } else {
-                identityHost.addSubview(view, positioned: .below, relativeTo: omniboxContainerView)
-            }
-        }
         privateLabel?.autoresizingMask = active ? [] : [.minXMargin]
 
         contentContainerView.layer?.cornerRadius = active ? SidebarChrome.pageCornerRadius : 0
@@ -3850,12 +3837,12 @@ extension BrowserWindowController {
         sidebarChrome.apply(frames)
     }
 
-    /// The footer row: the trailing toolbar controls packed against the
-    /// column's trailing edge in slot order, as they are in the toolbar row,
-    /// then the profile pill or private badge on the leading side in what is
-    /// left. What does not fit between the edge insets with the pill kept
-    /// readable goes into the overflow menu, the last slots first, so nothing
-    /// is ever drawn past the column onto the page.
+    /// The footer row: the trailing toolbar controls in a row from the
+    /// column's leading edge, in the order they have in the toolbar row.
+    /// What does not fit between the edge insets goes into the overflow
+    /// menu, the last slots first, so nothing is ever drawn past the column
+    /// onto the page. Also lays out the header's identity row, which has to
+    /// follow the same events (a control appearing, the sidebar's edge).
     ///
     /// Overflowed controls, and every control while the sidebar is hidden,
     /// are parked outside the window: their owners decide whether they are
@@ -3882,10 +3869,7 @@ extension BrowserWindowController {
             }
         }
 
-        let identityWidth = sidebarIdentityFittedWidth().map {
-            min($0, Self.sidebarIdentityMinimumWidth) + ChromeMetrics.groupSpacing
-        } ?? 0
-        let room = footer.width - inset * 2 - identityWidth
+        let room = footer.width - inset * 2
         func rowWidth(_ count: Int) -> CGFloat {
             count == 0 ? 0 : CGFloat(count) * size + CGFloat(count - 1) * gap
         }
@@ -3900,7 +3884,11 @@ extension BrowserWindowController {
 
         let parkedY = -size * 2
         let rowY = (footer.midY - size / 2).rounded()
-        var minX = footer.maxX - inset
+        // The row is built from its trailing end, as the toolbar row is, so
+        // start that end where the whole row ends up against the leading
+        // inset.
+        let shownCount = fitting + (overflowed.isEmpty ? 0 : 1)
+        var minX = footer.minX + inset + rowWidth(shownCount)
         for (index, view) in visible[..<fitting].enumerated() {
             let maxX = index == 0 ? minX : minX - gap
             view.frame = NSRect(x: maxX - size, y: shown ? rowY : parkedY, width: size, height: size)
@@ -3922,6 +3910,25 @@ extension BrowserWindowController {
             sidebarChrome.setParked(view, true)
         }
         trailingControlsMinX = minX
+        layoutSidebarIdentityRow()
+    }
+
+    /// The header's identity row: the Share and Tab Overview group against
+    /// the trailing edge, then the profile pill or private badge on the
+    /// leading side in what is left. The sidebar's own New Tab row replaces
+    /// the group's "+", which is hidden in this layout.
+    fileprivate func layoutSidebarIdentityRow() {
+        let size = ChromeMetrics.controlHeight
+        let segment = ChromeMetrics.navigationSegmentWidth
+        var segmentX: CGFloat = 0
+        for button in trailingGroupButtons where !button.isHidden {
+            button.frame = NSRect(x: segmentX, y: 0, width: segment, height: size)
+            segmentX += segment
+        }
+        trailingGroup.frame = NSRect(
+            x: SidebarChrome.width - ChromeMetrics.edgeInset - segmentX,
+            y: sidebarChrome.identityRowY(forHeight: size), width: segmentX, height: size
+        )
         if profilePillButton != nil {
             layoutProfilePill()
         } else if let privateLabel {
@@ -3929,24 +3936,15 @@ extension BrowserWindowController {
         }
     }
 
-    /// The profile pill's or private badge's natural width, or nil if the
-    /// window has neither.
-    private func sidebarIdentityFittedWidth() -> CGFloat? {
-        if let profilePillButton {
-            return max(44, profilePillButton.fittingSize.width).rounded()
-        }
-        return privateLabel?.fittingSize.width
-    }
-
-    /// The profile pill or private badge at the footer's leading edge, in
-    /// footer coordinates, narrowed if the trailing controls need the room.
+    /// The profile pill or private badge at the identity row's leading edge,
+    /// in the header's coordinates, narrowed if the Share group needs the
+    /// room.
     fileprivate func layoutSidebarIdentityControl(_ view: NSView, fittedWidth: CGFloat) {
-        let footer = sidebarChrome.footerView.frame
         let leading = ChromeMetrics.edgeInset
-        let available = trailingControlsMinX - footer.minX - ChromeMetrics.groupSpacing - leading
+        let available = trailingGroup.frame.minX - ChromeMetrics.groupSpacing - leading
         let height = view === privateLabel ? view.fittingSize.height : ChromeMetrics.controlHeight
         view.frame = NSRect(
-            x: leading, y: ((footer.height - height) / 2).rounded(),
+            x: leading, y: sidebarChrome.identityRowY(forHeight: height),
             width: max(height, min(fittedWidth, available)).rounded(), height: height
         )
     }
