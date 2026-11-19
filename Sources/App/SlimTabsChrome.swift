@@ -1,8 +1,9 @@
 import AppKit
 
-/// Slim tabs for the "Tabs Down the Side" layout (SlimTabsPreference): the
-/// tab column is a narrow strip of favicons, and it widens to the full list
-/// while the pointer is on it.
+/// The slim and hidden tab columns of the "Tabs Down the Side" layout
+/// (VerticalTabsPresentation): the column is a narrow strip of favicons, or
+/// only a few points of margin at the window's edge, and it widens to the
+/// full list while the pointer is on it.
 ///
 /// The page is never overlapped and never resized. It is laid out against
 /// the slim width for good, and when the column widens the page *slides*
@@ -27,14 +28,24 @@ final class SlimTabsChrome {
     /// favicon, does not flash the list.
     private static let revealDelay: TimeInterval = 0.12
     /// How long after the pointer leaves the column it narrows again.
-    private static let concealDelay: TimeInterval = 0.35
+    /// Short: the wait is felt as lag before the column starts to move. It
+    /// only has to outlast a pointer that slips off the edge by a few points
+    /// and comes straight back.
+    private static let concealDelay: TimeInterval = 0.1
+    /// What a hidden column keeps at the window's leading edge. The page
+    /// never reaches that edge, so these points are plain AppKit space the
+    /// tracker can watch; a hot zone over the page itself would be an AppKit
+    /// view in the page's region, and the page takes the pointer there.
+    static let hiddenEdgeWidth: CGFloat = 6
     static let edgeShadowWidth: CGFloat = 14
     /// How far the column's material runs past its full width, so the
     /// spring's overshoot uncovers more material and not bare window.
     static let backdropOverrun: CGFloat = 32
 
     /// Holds the column's material at its full width and shows as much of it
-    /// as the column is wide. A material view resized on every frame would
+    /// as the column is wide. The window controller keeps the material here
+    /// for the whole "Tabs Down the Side" layout, slim or not, so the change
+    /// between the two can be sprung as well. A material view resized on every frame would
     /// redraw its backdrop on every frame; a clip that changes size costs
     /// nothing.
     let backdropClip: NSView = {
@@ -119,18 +130,26 @@ final class SlimTabsChrome {
             concealTimer?.invalidate()
             isExpanded = false
             tracker.isHidden = true
-            backdropClip.isHidden = true
             edgeShadow.isHidden = true
             return
         }
         tracker.isHidden = false
-        backdropClip.isHidden = false
         edgeShadow.isHidden = false
         tracker.frame = column
         tracker.autoresizingMask = [.height, .maxXMargin]
         // Unhiding or resizing alone does not reliably re-arm a tracking area.
         tracker.updateTrackingAreas()
         runTestCycleIfRequested()
+    }
+
+    /// Forgets that the column is out without telling anyone, for an owner
+    /// that is about to lay everything out again itself (the presentation
+    /// changed). The pointer may still be where the column was; it has to
+    /// leave and come back to bring the column out again.
+    func resetExpansion() {
+        revealTimer?.invalidate()
+        concealTimer?.invalidate()
+        isExpanded = false
     }
 
     /// Narrows the column at once, for whatever is about to cover the window.
@@ -198,6 +217,58 @@ final class SlimTabsChrome {
     }
 }
 
+/// The strip along the tab column's trailing edge that the user drags to
+/// resize the column. It lies inside the column, never on the page, and
+/// reports the pointer's position in its superview; what a drag means (a new
+/// width, or the change into and out of slim tabs) is the window
+/// controller's to decide.
+///
+/// The drag is followed through this view's own mouseDragged and mouseUp,
+/// which AppKit delivers to the view that took the mouse-down. A nested
+/// event-tracking loop is ruled out: it would block the run loop the engine
+/// is driven from (see BRWMessagePump in CLAUDE.md).
+final class TabColumnResizeHandle: NSView {
+    static let width: CGFloat = 6
+
+    var onDragBegan: ((CGFloat) -> Void)?
+    var onDragged: ((CGFloat) -> Void)?
+    var onDragEnded: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
+    private var isDragging = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    private func position(of event: NSEvent) -> CGFloat {
+        (superview ?? self).convert(event.locationInWindow, from: nil).x
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            isDragging = false
+            onDoubleClick?()
+            return
+        }
+        isDragging = true
+        onDragBegan?(position(of: event))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging else { return }
+        onDragged?(position(of: event))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        onDragEnded?()
+    }
+}
+
 /// The gradient SlimTabsChrome lays along the widened column's edge. It never
 /// takes a click.
 final class SlimEdgeShadowView: NSView {
@@ -241,7 +312,7 @@ enum ChromeMotion {
         /// Slightly under-damped: the column arrives with a small overshoot.
         static let expand = Spring(stiffness: 420, damping: 33)
         /// Critically damped: going away should not bounce.
-        static let collapse = Spring(stiffness: 560, damping: 47)
+        static let collapse = Spring(stiffness: 760, damping: 55)
 
         fileprivate func animation(keyPath: String) -> CASpringAnimation {
             let animation = CASpringAnimation(keyPath: keyPath)

@@ -385,7 +385,17 @@ final class TabStripView: NSView {
 
     /// The width the strip's contents are laid out against.
     private var layoutWidth: CGFloat {
-        isVertical && slimPresentation != .off ? Self.sidebarWidth : bounds.width
+        isVertical && slimPresentation != .off ? slimFullWidth : bounds.width
+    }
+
+    /// How wide the full list is while a slim presentation is on: the
+    /// user's chosen column width (VerticalTabsWidthPreference), which the
+    /// strip's own bounds cannot say while it is clipped narrower.
+    var slimFullWidth: CGFloat = TabStripView.sidebarWidth {
+        didSet {
+            guard oldValue != slimFullWidth, slimPresentation != .off else { return }
+            needsLayout = true
+        }
     }
 
     /// Changes the presentation and moves every item to its place in it,
@@ -397,7 +407,6 @@ final class TabStripView: NSView {
         abandonDrag()
         let wasCompact = isCompact
         slimPresentation = presentation
-        layer?.masksToBounds = presentation != .off
         guard isVertical else { return }
         let fade: CFTimeInterval? = spring == nil || wasCompact == isCompact
             ? nil : (isCompact ? Self.slimFadeOutDuration : Self.slimFadeInDuration)
@@ -546,6 +555,11 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        // The strip is the clip for everything in it: a strip whose frame is
+        // sprung narrower or wider (ChromeMotion) shows as much of its
+        // contents as it is wide on each frame, with nothing spilling toward
+        // the page.
+        layer?.masksToBounds = true
         scrollView.frame = bounds
         stripContentView.frame = bounds
         scrollView.drawsBackground = false
