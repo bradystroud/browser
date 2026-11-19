@@ -29,7 +29,10 @@ import AppKit
 /// BrowserWindowController.contentAreaTopY). For the same reason the reveal
 /// is not animated: every intermediate frame would be a renderer resize.
 final class SidebarChrome {
-    static let width = TabStripView.sidebarWidth
+    /// The column's width: the user's (VerticalTabsWidthPreference, changed
+    /// by dragging the column's edge), handed over by the window controller
+    /// before it asks for frames.
+    var width = TabStripView.sidebarWidth
     /// The margin between the page card and the window edge on the sides the
     /// sidebar is not on. It is also what makes the hidden sidebar reachable:
     /// the page never reaches the window edge, so the margin on the sidebar's
@@ -131,8 +134,7 @@ final class SidebarChrome {
         observers.append(center.addObserver(
             forName: .profileManagerDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            guard let self, self.isActive else { return }
-            self.onProfileChanged?()
+            self?.onProfileChanged?()
         })
         observers.append(center.addObserver(
             forName: NSPopover.willShowNotification, object: nil, queue: .main
@@ -172,7 +174,6 @@ final class SidebarChrome {
     /// `topInset` is the dev-build banner's height, which the whole layout
     /// sits below.
     func frames(in bounds: NSRect, topInset: CGFloat) -> Frames {
-        let width = Self.width
         let height = max(0, bounds.height - topInset)
         let inset = Self.pageInset
         let columnX = edge == .left ? 0 : bounds.width - width
@@ -235,6 +236,21 @@ final class SidebarChrome {
         // Unhiding alone does not reliably re-arm a tracking area.
         hotZone.updateTrackingAreas()
         columnTracker.updateTrackingAreas()
+        bringOutForTestIfRequested()
+    }
+
+    /// ChromeStateTestHook's `out`: a hidden sidebar comes out by itself,
+    /// once, and stays.
+    private var hasRunTestHook = false
+
+    private func bringOutForTestIfRequested() {
+        guard !hasRunTestHook, ChromeStateTestHook.bringsSidebarOut else { return }
+        hasRunTestHook = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + ChromeStateTestHook.sidebarOutDelay) { [weak self] in
+            guard let self, self.isActive else { return }
+            if !self.isShown { self.reveal() }
+            self.beginHold()
+        }
     }
 
     /// Autoresizing for anything pinned to the column: a fixed width that
@@ -249,7 +265,7 @@ final class SidebarChrome {
     func navigationGroupFrame(width groupWidth: CGFloat) -> NSRect {
         let height = ChromeMetrics.controlHeight
         return NSRect(
-            x: Self.width - ChromeMetrics.edgeInset - groupWidth,
+            x: width - ChromeMetrics.edgeInset - groupWidth,
             y: (Self.headerHeight - Self.navigationRowHeight / 2 - height / 2).rounded(),
             width: groupWidth, height: height
         )
@@ -277,7 +293,7 @@ final class SidebarChrome {
         let height = ChromeMetrics.omniboxHeight
         return NSRect(
             x: ChromeMetrics.edgeInset, y: ((Self.omniboxRowHeight - height) / 2).rounded(),
-            width: Self.width - ChromeMetrics.edgeInset * 2, height: height
+            width: width - ChromeMetrics.edgeInset * 2, height: height
         )
     }
 

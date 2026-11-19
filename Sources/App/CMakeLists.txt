@@ -68,6 +68,7 @@ set(BROWSER_SWIFT_SRCS
   TabStripOrientationPreference.swift
   SidebarChrome.swift
   SlimTabsChrome.swift
+  ChromeStateTestHook.swift
   PageZoom.swift
   WindowToast.swift
   EscapeDismissal.swift

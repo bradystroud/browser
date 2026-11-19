@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ChromeStateTestHook.applyPreferences()
         // Both install a global NSEvent monitor in their own init(), which
         // must exist before the user's first relevant keypress -- touching
         // .shared here (rather than only implicitly, e.g. the first time a
