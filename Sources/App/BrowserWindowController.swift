@@ -157,21 +157,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         solidFallbackColor: .controlBackgroundColor,
         cornerRadius: ChromeMetrics.toolbarCornerRadius
     )
-    /// Shows or hides the vertical tab sidebar. No layout places it on the
-    /// row any more (the View menu and the sidebar's own hide button do the
-    /// job), so it stays hidden: left visible at its zero frame, the glass
-    /// capsule bezel draws a dot at the toolbar's bottom-left corner.
-    private let sidebarToggleButton: NSButton = {
-        let button = NSButton()
-        button.title = ""
-        button.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Show Tab Sidebar")
-        button.imagePosition = .imageOnly
-        button.applyChromeAppearance(.glass)
-        button.toolTip = "Show or Hide Tab Sidebar"
-        button.isHidden = true
-        return button
-    }()
-    private static let sidebarToggleWidth: CGFloat = 40
     private let backButton = HoverFillButton(shape: .rectangle)
     private let forwardButton = HoverFillButton(shape: .rectangle)
     private let navigationDivider = HairlineView()
@@ -295,22 +280,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// material's clip, its edge shadow). Inert unless usesSlimTabs.
     private let slimTabs = SlimTabsChrome()
 
-    /// Slim tabs apply to "Tabs Down the Side" alone. An agent's window is
+    /// Slim tabs apply to "Tabs on Side" alone. An agent's window is
     /// always horizontal (see agentPresentation), so it never has them and
     /// its page never moves under the agent.
-    private var usesSlimTabs: Bool { tabColumnPresentation != .full }
+    private var usesSlimTabs: Bool { hidesTabColumn || compactsTabColumn }
 
-    /// How this window's tab column shows itself. Always full outside
-    /// "Tabs Down the Side" and in an agent's window.
-    private var tabColumnPresentation: VerticalTabsPresentation {
-        tabStripOrientation == .vertical && agentPresentation == nil
-            ? VerticalTabsPresentationPreference.current : .full
+    /// The two things "Tabs on Side" can do with its column. Hidden wins
+    /// while both are on. Neither applies in another layout (the sidebar
+    /// layout hides through SidebarChrome) or in an agent's window.
+    private var hidesTabColumn: Bool {
+        tabStripOrientation == .vertical && agentPresentation == nil && TabsHiddenPreference.isHidden
+    }
+    private var compactsTabColumn: Bool {
+        tabStripOrientation == .vertical && agentPresentation == nil && !hidesTabColumn
+            && CompactTabsPreference.isEnabled
     }
 
     /// How wide the column is while it is not out: the favicon strip, or
     /// the margin a hidden column keeps for the pointer to find.
     private var collapsedTabColumnWidth: CGFloat {
-        tabColumnPresentation == .hidden ? SlimTabsChrome.hiddenEdgeWidth : TabStripView.slimWidth
+        hidesTabColumn ? SlimTabsChrome.hiddenEdgeWidth : TabStripView.slimWidth
     }
 
     /// The tab column's trailing edge, dragged to resize it, and the button
@@ -320,7 +309,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     private let tabColumnToggleButton: NSButton = {
         let button = NSButton()
         button.title = ""
-        button.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Collapse Tabs")
+        button.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Compact Sidebar")
         button.imagePosition = .imageOnly
         button.applyChromeAppearance(.inline)
         button.isHidden = true
@@ -755,10 +744,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         return lightsMaxX + ChromeMetrics.groupSpacing + tabColumnToggleReservedWidth
     }
 
-    /// With slim tabs the column is too narrow for its own toggle button,
+    /// A compact column is too narrow for its own toggle button,
     /// which sits on the toolbar row after the traffic lights instead.
     private var tabColumnToggleReservedWidth: CGFloat {
-        usesSlimTabs ? ChromeMetrics.controlHeight + ChromeMetrics.groupSpacing : 0
+        compactsTabColumn ? ChromeMetrics.controlHeight + ChromeMetrics.groupSpacing : 0
     }
 
     private func setUpViews() {
@@ -811,7 +800,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         applyChromeLayout()
 
         // Every window follows the one preference -- see
-        // TabStripOrientationPreference.toggle(). Same block-observer shape
+        // TabStripOrientationPreference. Same block-observer shape
         // as the omnibox display/profile observers in init.
         NotificationCenter.default.addObserver(
             forName: .tabStripOrientationDidChange, object: nil, queue: .main
@@ -827,18 +816,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         ) { [weak self] _ in
             self?.updateTabStripRowVisibility()
         }
-        NotificationCenter.default.addObserver(
-            forName: .verticalTabsPresentationDidChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self, self.tabStripOrientation == .vertical, self.agentPresentation == nil else { return }
-            let animates = !ChromeMotion.isReduced && self.window?.isVisible == true
-            let becomesFull = VerticalTabsPresentationPreference.current == .full
-            self.slimTransitionSpring = animates ? (becomesFull ? .expand : .collapse) : nil
-            // A column that was out on hover belongs to the presentation
-            // that just ended.
-            self.slimTabs.resetExpansion()
-            self.applyChromeLayout()
-            self.slimTransitionSpring = nil
+        for name in [Notification.Name.tabsHiddenDidChange, .compactTabsDidChange] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.tabStripOrientation == .vertical, self.agentPresentation == nil else { return }
+                let animates = !ChromeMotion.isReduced && self.window?.isVisible == true
+                self.slimTransitionSpring = animates ? (self.usesSlimTabs ? .collapse : .expand) : nil
+                // A column that was out on hover belongs to the state that
+                // just ended.
+                self.slimTabs.resetExpansion()
+                self.applyChromeLayout()
+                self.slimTransitionSpring = nil
+            }
         }
         NotificationCenter.default.addObserver(
             forName: .verticalTabsWidthDidChange, object: nil, queue: .main
@@ -907,7 +895,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             tabSidebarSeparator.isHidden = true
             tabStripView.isHidden = !showsStrip
             newTabToolbarButton.isHidden = false
-            sidebarToggleButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Show Tab Sidebar")
             tabStripView.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: stripHeight)
             tabStripView.autoresizingMask = [.width, .minYMargin]
             chromeSeparator.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: hairline)
@@ -930,7 +917,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             // traffic lights, and the toolbar row starts beside it.
             tabStripView.isHidden = false
             newTabToolbarButton.isHidden = true
-            sidebarToggleButton.image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Hide Tab Sidebar")
             let sidebarWidth = tabColumnWidth
             let rowWidth = max(0, width - sidebarWidth)
             // Sprung only when the column has just stopped being slim.
@@ -993,10 +979,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tabColumnResizeHandle.onDragEnded = { [weak self] in self?.tabColumnDragEnded() }
         tabColumnResizeHandle.onDoubleClick = { [weak self] in self?.tabColumnEdgeDoubleClicked() }
         tabColumnToggleButton.target = self
-        tabColumnToggleButton.action = #selector(toggleSlimTabs(_:))
-        let columnMenu = NSMenu()
-        for item in TabLayoutMenuTarget.shared.makeTabColumnItems() { columnMenu.addItem(item) }
-        tabColumnToggleButton.menu = columnMenu
+        tabColumnToggleButton.action = #selector(toggleCompactTabs(_:))
         contentView.addSubview(tabColumnToggleButton)
         slimTabs.onExpansionChanged = { [weak self] in
             guard let self, self.usesSlimTabs else { return }
@@ -1013,7 +996,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
     /// Moves the views the tab column borrows into and out of its keeping.
     /// The column's material sits inside SlimTabsChrome's clip for the whole
-    /// "Tabs Down the Side" layout, slim or full, so the change between the
+    /// "Tabs on Side" layout, slim or full, so the change between the
     /// two can spring the clip; it sits directly in the content view for the
     /// other layouts.
     private func setSlimTabsActive(_ active: Bool) {
@@ -1058,34 +1041,25 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// button follows the traffic lights, which full screen takes away.
     private func layoutTabColumnToggle() {
         guard let contentView = window?.contentView, tabStripOrientation == .vertical else { return }
-        let presentation = tabColumnPresentation
-        let slim = presentation != .full
+        // A hidden sidebar has no compact state to show, so no button: ⌘S
+        // and the window's edge bring it back.
+        tabColumnToggleButton.isHidden = hidesTabColumn
+        let compact = compactsTabColumn
         let size = ChromeMetrics.controlHeight
         let rowMidY = contentView.bounds.height - chromeTopInset - Self.toolbarHeight / 2
         tabColumnToggleButton.frame = NSRect(
-            x: slim
+            x: compact
                 ? trafficLightReservedWidth - tabColumnToggleReservedWidth
                 : tabColumnWidth - ChromeMetrics.edgeInset - size,
             y: (rowMidY - size / 2).rounded(), width: size, height: size)
         tabColumnToggleButton.autoresizingMask = [.maxXMargin, .minYMargin]
-        let label: String
-        switch presentation {
-        case .full: label = "Collapse Tabs"
-        case .slim: label = "Expand Tabs"
-        case .hidden: label = "Show Tabs"
-        }
+        let label = compact ? "Expand Sidebar" : "Compact Sidebar"
         tabColumnToggleButton.toolTip = label
         tabColumnToggleButton.setAccessibilityLabel(label)
     }
 
-    /// The column button: slim or full, and a hidden column comes back.
-    /// Option-click hides the column; so does its context menu.
-    @objc private func toggleSlimTabs(_ sender: Any?) {
-        if NSEvent.modifierFlags.contains(.option) || tabColumnPresentation == .hidden {
-            VerticalTabsPresentationPreference.toggleHidden()
-        } else {
-            VerticalTabsPresentationPreference.toggleSlim()
-        }
+    @objc private func toggleCompactTabs(_ sender: Any?) {
+        CompactTabsPreference.isEnabled.toggle()
     }
 
     // MARK: - Resizing the tab column
@@ -1104,9 +1078,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             // out to; the page only slides, and the column stays slim.
             if slimTabs.isExpanded {
                 requestTabColumnWidth(proposed)
-            } else if tabColumnPresentation == .slim, proposed > Self.slimSnapOutWidth {
+            } else if compactsTabColumn, proposed > Self.slimSnapOutWidth {
                 tabColumnDrag = TabColumnDrag(anchorX: x, anchorWidth: VerticalTabsWidthPreference.width)
-                VerticalTabsPresentationPreference.current = .full
+                CompactTabsPreference.isEnabled = false
             }
         } else if proposed < Self.slimSnapInWidth {
             // The stored width is left as it was before this drag: it is
@@ -1114,7 +1088,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             pendingTabColumnWidth = nil
             liveTabColumnWidth = nil
             tabColumnDrag = TabColumnDrag(anchorX: x, anchorWidth: TabStripView.slimWidth)
-            VerticalTabsPresentationPreference.current = .slim
+            CompactTabsPreference.isEnabled = true
         } else {
             requestTabColumnWidth(proposed)
         }
@@ -1155,8 +1129,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// goes back to the standard width.
     private func tabColumnEdgeDoubleClicked() {
         tabColumnDrag = nil
-        if tabColumnPresentation == .slim, !slimTabs.isExpanded {
-            VerticalTabsPresentationPreference.current = .full
+        if compactsTabColumn, !slimTabs.isExpanded {
+            CompactTabsPreference.isEnabled = false
         } else {
             VerticalTabsWidthPreference.width = VerticalTabsWidthPreference.standard
         }
@@ -1176,7 +1150,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         let columnWidth = expanded ? fullWidth : collapsedWidth
         // A hidden column has no favicon strip to turn into: it is the full
         // list throughout, and the clip uncovers it.
-        let showsFullList = expanded || tabColumnPresentation == .hidden
+        let showsFullList = expanded || hidesTabColumn
         let columnHeight = max(0, contentView.bounds.height - chromeTopInset - Self.toolbarHeight)
         let column = NSRect(x: 0, y: 0, width: columnWidth, height: columnHeight)
         let hairline: CGFloat = 0.5
@@ -1210,7 +1184,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         slimTabs.apply(column: column)
         layoutTabColumnControls(columnWidth: columnWidth, columnHeight: columnHeight)
         // A hidden column's edge is the pointer's way in, not a handle.
-        tabColumnResizeHandle.isHidden = tabColumnPresentation == .hidden && !expanded
+        tabColumnResizeHandle.isHidden = hidesTabColumn && !expanded
     }
 
     // MARK: - Chrome geometry report
@@ -1248,7 +1222,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             }
             let named: [(String, NSView?)] = [
                 ("nav", self.navigationGroup), ("profilePill", self.profilePillButton),
-                ("omnibox", self.omniboxContainerView), ("sidebarToggle", self.sidebarToggleButton), ("trailingGroup", self.trailingGroup),
+                ("omnibox", self.omniboxContainerView), ("trailingGroup", self.trailingGroup),
                 ("privateBadge", self.privateLabel), ("hairline", self.chromeSeparator),
                 ("siteGlyph", self.siteButton), ("field", self.omniboxField),
                 ("page", self.contentContainerView), ("overflow", self.sidebarChrome.overflowButton),
@@ -1273,25 +1247,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
     }
 
-    /// View > Show/Hide Tab Sidebar. Flips the shared preference rather than
-    /// this window's own copy of it, so every open window follows -- this
-    /// controller only ever learns about the change through the notification
-    /// that flip posts (see setUpViews).
-    @objc func toggleTabSidebar(_ sender: Any?) {
-        TabStripOrientationPreference.toggle()
-    }
-
-    /// View > Always Show Tab Bar -- a shared preference, like the sidebar
-    /// toggle above.
-    @objc func toggleAlwaysShowTabBar(_ sender: Any?) {
-        AlwaysShowTabBarPreference.toggle()
-    }
-
     private func setUpToolbarContents() {
-        sidebarToggleButton.target = self
-        sidebarToggleButton.action = #selector(toggleTabSidebar(_:))
-        toolbarView.addSubview(sidebarToggleButton)
-
         // Back/forward: one glass group, two segments. The segments are
         // borderless with their own hover fill, clipped to the group's
         // rounded corners by the glass itself.
@@ -2991,16 +2947,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         case #selector(togglePinActiveTab(_:)):
             menuItem.title = (activeTab?.isPinned ?? false) ? "Unpin Tab" : "Pin Tab"
             return activeTab != nil
-        case #selector(toggleTabSidebar(_:)):
-            switch tabStripOrientation {
-            case .horizontal: menuItem.title = "Show Tab Sidebar"
-            case .vertical: menuItem.title = "Hide Tab Sidebar"
-            case .sidebar: menuItem.title = SidebarLayoutPreference.isHidden ? "Show Sidebar" : "Hide Sidebar"
-            }
-            return true
-        case #selector(toggleAlwaysShowTabBar(_:)):
-            menuItem.state = AlwaysShowTabBarPreference.isEnabled ? .on : .off
-            return tabStripOrientation == .horizontal
         case #selector(toggleDevTools(_:)):
             if activeTab?.capabilities.inAppDevTools ?? true {
                 menuItem.title = activeTab?.devTools.isOpen == true ? "Close Developer Tools" : "Open Developer Tools"

@@ -106,7 +106,7 @@ final class SidebarChrome {
     private var hideButtonEdge: SidebarEdge?
 
     var edge: SidebarEdge { SidebarLayoutPreference.edge }
-    var isShown: Bool { !SidebarLayoutPreference.isHidden || isRevealed }
+    var isShown: Bool { !TabsHiddenPreference.isHidden || isRevealed }
 
     init() {
         hideButton.target = self
@@ -118,16 +118,16 @@ final class SidebarChrome {
         overflowButton.action = #selector(overflowButtonTapped(_:))
         footerView.addSubview(overflowButton)
         let center = NotificationCenter.default
-        observers.append(center.addObserver(
-            forName: .sidebarLayoutPreferenceDidChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            // An explicit show or hide replaces any reveal in progress.
-            self.isRevealed = false
-            self.revealTimer?.invalidate()
-            self.concealTimer?.invalidate()
-            if self.isActive { self.onLayoutNeeded?() }
-        })
+        for name in [Notification.Name.sidebarLayoutPreferenceDidChange, .tabsHiddenDidChange] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self else { return }
+                // An explicit show or hide replaces any reveal in progress.
+                self.isRevealed = false
+                self.revealTimer?.invalidate()
+                self.concealTimer?.invalidate()
+                if self.isActive { self.onLayoutNeeded?() }
+            })
+        }
         observers.append(center.addObserver(
             forName: .profileManagerDidChange, object: nil, queue: .main
         ) { [weak self] _ in
@@ -356,13 +356,13 @@ final class SidebarChrome {
     /// On a sidebar the pointer brought out the preference already says
     /// hidden, so the button puts that reveal away at once instead.
     @objc private func hideButtonTapped() {
-        if SidebarLayoutPreference.isHidden {
+        if TabsHiddenPreference.isHidden {
             holdCount = 0
             hasPendingPopoverHold = false
             heldPopovers.removeAll()
             conceal()
         } else {
-            SidebarLayoutPreference.isHidden = true
+            TabsHiddenPreference.isHidden = true
         }
     }
 
