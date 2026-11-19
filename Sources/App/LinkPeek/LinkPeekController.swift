@@ -198,17 +198,8 @@ final class LinkPeekController: TabLifecycleObserver {
     /// while that view does not exist yet.
     @discardableResult
     private func focusPage(of tab: Tab) -> Bool {
-        guard let window = windowController?.window,
-              let view = Self.firstFocusableView(in: tab.devTools.pageView) else { return false }
-        return window.makeFirstResponder(view)
-    }
-
-    private static func firstFocusableView(in root: NSView) -> NSView? {
-        for subview in root.subviews where !subview.isHidden {
-            if subview.acceptsFirstResponder { return subview }
-            if let found = firstFocusableView(in: subview) { return found }
-        }
-        return nil
+        guard let window = windowController?.window else { return false }
+        return tab.focusPage(in: window)
     }
 
     func peekedTabDidRequestClose(_ tab: Tab) {

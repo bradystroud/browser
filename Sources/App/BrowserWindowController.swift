@@ -1120,7 +1120,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         }
         // Focus (a click or ⌘L) swaps the collapsed display for the full,
         // selected URL -- see OmniboxField.becomeFirstResponder().
-        omniboxField.expandedTextProvider = { [weak self] in self?.activeTab?.urlString }
+        omniboxField.expandedTextProvider = { [weak self] in
+            self?.activeTab.map { $0.omniboxDraft ?? $0.urlString }
+        }
         // The collapsed text is centred with the site glyph beside it, so
         // both move whenever the text changes or editing starts.
         omniboxField.onDisplayChange = { [weak self] in self?.layoutOmniboxInnerContent() }
@@ -1731,6 +1733,9 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         tab.matchExtensionAccess()
         let clampedIndex = min(max(index, 0), tabs.count)
         tabs.insert(tab, at: clampedIndex)
+        // activateTab reads activeTabIndex to put away the tab being left
+        // (its view, its omnibox draft), so it must point at that tab again.
+        activeTabIndex = activeTabObject.flatMap { obj in tabs.firstIndex { $0 === obj } }
         // Before activateTab, so the new tab's view is framed into the
         // already-resized content area rather than resized after appearing.
         updateTabStripRowVisibility()
@@ -1784,8 +1789,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         dismissPermissionPromptIfShowing()
 
         if let currentIndex = activeTabIndex, tabs.indices.contains(currentIndex) {
-            captureThumbnail(for: tabs[currentIndex])
-            tabs[currentIndex].hostView.removeFromSuperview()
+            let previous = tabs[currentIndex]
+            previous.omniboxDraft = unsubmittedOmniboxText(for: previous)
+            captureThumbnail(for: previous)
+            previous.hostView.removeFromSuperview()
         }
 
         activeTabIndex = index
@@ -1823,8 +1830,30 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             window?.makeFirstResponder(nil)
         }
         refreshToolbar(for: tab)
+        restoreOmniboxDraft()
         updateWindowTitle(for: tab)
         TabLifecycleCenter.shared.post(.becameActive, tab: tab, in: self)
+    }
+
+    /// What is in the omnibox now, if it is text the user typed for `tab`
+    /// and did not submit. Read just before another tab becomes active.
+    private func unsubmittedOmniboxText(for tab: Tab) -> String? {
+        guard omniboxField.currentEditor() != nil else { return nil }
+        let text = omniboxField.stringValue
+        return text.isEmpty || text == tab.urlString ? nil : text
+    }
+
+    /// Back on a tab that has unsubmitted omnibox text: show it again,
+    /// focused, with the caret at its end, as Safari does.
+    private func restoreOmniboxDraft() {
+        guard agentPresentation == nil, let tab = activeTab, let draft = tab.omniboxDraft else { return }
+        sidebarChrome.revealForOmnibox()
+        omniboxField.stringValue = draft
+        // OmniboxField.becomeFirstResponder reads the draft through
+        // expandedTextProvider, so it is cleared only after focus arrives.
+        window?.makeFirstResponder(omniboxField)
+        tab.omniboxDraft = nil
+        omniboxField.currentEditor()?.selectedRange = NSRange(location: (draft as NSString).length, length: 0)
     }
 
     /// Snapshots `tab`'s current on-screen appearance into thumbnailCache,
@@ -2384,7 +2413,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         if tab.needsInitialOmniboxFocus, !tab.isLoading, tab === activeTab {
             tab.needsInitialOmniboxFocus = false
             DispatchQueue.main.async { [weak self] in
-                self?.focusOmnibox(nil)
+                // Still in the omnibox: the user may already be typing, and
+                // focusOmnibox would replace what they typed.
+                guard let self, self.omniboxField.currentEditor() == nil else { return }
+                self.focusOmnibox(nil)
             }
         }
     }
@@ -2613,10 +2645,21 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // editor exists, controlTextDidBeginEditing deliberately leaves the
         // text alone so a keystroke-initiated edit isn't clobbered, so this
         // is the only place the expanded form gets written.
-        if let tab = activeTab {
-            omniboxField.stringValue = tab.urlString
-        }
+        let text = activeTab?.urlString
         sidebarChrome.revealForOmnibox()
+        // Already being edited (⌘L again, or ⌘T while typing in the old
+        // tab's omnibox): put the text into the live field editor. Setting
+        // stringValue does not reliably reach an editor that is already
+        // attached, which left the old tab's typing in a new tab's omnibox.
+        if let editor = omniboxField.currentEditor() {
+            if let text { editor.string = text }
+            autocomplete.dismiss()
+            editor.selectAll(nil)
+            return
+        }
+        if let text {
+            omniboxField.stringValue = text
+        }
         window?.makeFirstResponder(omniboxField)
         omniboxField.currentEditor()?.selectAll(nil)
     }
@@ -2758,8 +2801,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // End editing (and only then set the resolved text) before touching
         // CEF: ending the field's edit session re-syncs stringValue from the
         // (stale, pre-resolution) field editor buffer, which would otherwise
-        // clobber a value set while still editing.
-        window?.makeFirstResponder(nil)
+        // clobber a value set while still editing. Focus then goes to the
+        // page, as in Safari.
+        moveFocusToPage()
+        // Typed before a new tab's start page finished loading: that load
+        // ending must not pull focus back into the omnibox.
+        tab.needsInitialOmniboxFocus = false
         omniboxField.stringValue = resolved
         // Deferred a run-loop turn because Return's key-event dispatch runs
         // this method synchronously from deep inside AppKit's Text Services
@@ -2775,23 +2822,26 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.moveDown(_:)):
-            return previewAutocompleteSelection(delta: 1)
+            return previewAutocompleteSelection(delta: 1, in: textView)
         case #selector(NSResponder.moveUp(_:)):
-            return previewAutocompleteSelection(delta: -1)
+            return previewAutocompleteSelection(delta: -1, in: textView)
         case #selector(NSResponder.insertNewline(_:)):
             return commitHighlightedAutocompleteSuggestion()
         case #selector(NSResponder.cancelOperation(_:)):
-            // Standard browser Escape behavior: the first press just closes
-            // an open suggestions dropdown; only a second press (dropdown
-            // already closed) reverts the omnibox text and blurs it.
+            // Safari's Escape is three steps: close the suggestions and keep
+            // the text, then put the page's URL back (selected, still
+            // focused), then return focus to the page.
             if autocomplete.isVisible {
                 autocomplete.dismiss()
                 return true
             }
-            if let tab = activeTab {
-                omniboxField.stringValue = tab.urlString
+            let pageURL = activeTab?.urlString ?? ""
+            if textView.string != pageURL {
+                textView.string = pageURL
+                textView.selectAll(nil)
+                return true
             }
-            window?.makeFirstResponder(nil)
+            moveFocusToPage()
             return true
         default:
             return false
@@ -2803,12 +2853,48 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// standard browser omnibox behavior. Returns false (letting AppKit's
     /// default handling run) when the dropdown isn't showing, so arrow keys
     /// behave normally the rest of the time.
-    private func previewAutocompleteSelection(delta: Int) -> Bool {
-        guard autocomplete.isVisible, let suggestion = autocomplete.moveSelection(by: delta) else { return false }
-        // editText, not url: arrowing onto a *search* suggestion should preview
-        // the query you'd be searching for, not the engine's raw result URL.
-        omniboxField.stringValue = suggestion.editText
+    private func previewAutocompleteSelection(delta: Int, in textView: NSTextView) -> Bool {
+        guard autocomplete.isVisible, let preview = autocomplete.moveSelection(by: delta) else { return false }
+        switch preview {
+        case .typed(let text):
+            textView.string = text
+            textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        case .suggestion(let suggestion):
+            // editText, not url: arrowing onto a *search* suggestion should
+            // preview the query you'd be searching for, not the engine's raw
+            // result URL.
+            let text = suggestion.editText
+            textView.string = text
+            // As Safari does, select what the row adds to the typed text, so
+            // the next keystroke replaces only that part.
+            let typed = autocomplete.typedText as NSString
+            let full = text as NSString
+            let typedPrefix = typed.length > 0 && typed.length < full.length
+                && full.range(of: typed as String, options: [.anchored, .caseInsensitive]).location == 0
+            textView.setSelectedRange(typedPrefix
+                ? NSRange(location: typed.length, length: full.length - typed.length)
+                : NSRange(location: full.length, length: 0))
+        }
         return true
+    }
+
+    /// Ends editing in the omnibox and gives keyboard focus to the page, as
+    /// Safari does after Return or the last Escape, so Space and the arrow
+    /// keys scroll it straight away. With no engine view to take it (a tab
+    /// that is asleep or not yet created), focus stays with the window.
+    ///
+    /// Editing ends at once, but the page takes focus a run-loop turn later:
+    /// both callers run inside the field editor's key handling, and making
+    /// CEF's view first responder calls into CEF (see
+    /// commitOmniboxNavigation). Nothing else may have taken focus by then.
+    private func moveFocusToPage() {
+        guard let window else { return }
+        window.makeFirstResponder(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, window.firstResponder === window,
+                  let tab = self.activeTab else { return }
+            tab.focusPage(in: window)
+        }
     }
 
     private func commitHighlightedAutocompleteSuggestion() -> Bool {
@@ -2854,7 +2940,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         // where restoring the collapsed display is exactly what's wanted.
         setOmniboxFocused(false, animated: true, updatesText: false)
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.isOmniboxFocused, let tab = self.activeTab else { return }
+            // currentEditor: focus can come straight back in the same turn
+            // (⌘T or ⌘L while the field was being edited) before any keystroke
+            // sets isOmniboxFocused again, and rewriting the text then would
+            // drop the selection that focusOmnibox just made.
+            guard let self, !self.isOmniboxFocused, self.omniboxField.currentEditor() == nil,
+                  let tab = self.activeTab else { return }
             self.omniboxField.stringValue = Self.collapsedOmniboxDisplay(for: tab)
         }
     }

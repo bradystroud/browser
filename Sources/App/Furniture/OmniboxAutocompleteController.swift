@@ -114,6 +114,9 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
     private var engineSuggestions: [String] = []
     private(set) var suggestions: [OmniboxSuggestion] = []
     private var selectedIndex: Int = -1
+    /// The field's text as the user typed it, untrimmed -- what Up shows
+    /// again above the first row (see moveSelection).
+    private(set) var typedText = ""
 
     var isVisible: Bool { panel.isVisible }
 
@@ -175,6 +178,7 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
     func update(query: String, history: HistoryStore, below anchor: NSView, in window: NSWindow) {
         fetcher.cancel()
         engineSuggestions = []
+        typedText = query
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             dismiss()
@@ -318,21 +322,30 @@ final class OmniboxAutocompleteController: NSObject, NSTableViewDataSource, NSTa
         selectedIndex = -1
     }
 
-    /// Moves the highlighted row by `delta` (positive = down), clamped to
-    /// the suggestion list, and returns the newly-highlighted suggestion so
-    /// the caller can preview its `editText` in the omnibox -- mirrors
-    /// standard browser arrow-key-through-suggestions behavior.
-    @discardableResult
-    func moveSelection(by delta: Int) -> OmniboxSuggestion? {
+    /// What the omnibox shows after an arrow key: a highlighted row, or the
+    /// user's own text again once Up moves above the first row.
+    enum Preview {
+        case suggestion(OmniboxSuggestion)
+        case typed(String)
+    }
+
+    /// Moves the highlighted row by `delta` (positive = down), as Safari
+    /// does: the user's own text sits above the first row, and the list does
+    /// not wrap. Nil when Up is pressed with no row highlighted, so the
+    /// field's own Up (caret to the start) runs.
+    func moveSelection(by delta: Int) -> Preview? {
         guard !suggestions.isEmpty else { return nil }
-        if selectedIndex == -1 {
-            selectedIndex = delta > 0 ? 0 : suggestions.count - 1
-        } else {
-            selectedIndex = (selectedIndex + delta + suggestions.count) % suggestions.count
+        let target = min(max(selectedIndex + delta, -1), suggestions.count - 1)
+        if target == -1 {
+            guard selectedIndex != -1 else { return nil }
+            selectedIndex = -1
+            tableView.deselectAll(nil)
+            return .typed(typedText)
         }
+        selectedIndex = target
         tableView.selectRowIndexes([selectedIndex], byExtendingSelection: false)
         tableView.scrollRowToVisible(selectedIndex)
-        return suggestions[selectedIndex]
+        return .suggestion(suggestions[selectedIndex])
     }
 
     /// The currently arrow-key-highlighted suggestion, if any -- what Enter
