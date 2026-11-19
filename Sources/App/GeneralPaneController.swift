@@ -27,6 +27,11 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
     private let tabLayoutPopup = NSPopUpButton()
     private let sidebarEdgePopup = NSPopUpButton()
     private var sidebarEdgeRow: NSGridRow?
+    /// Only shown while "Tabs Down the Side" is the choice, the one layout
+    /// slim tabs apply to.
+    private let slimTabsCheckbox = NSButton(
+        checkboxWithTitle: "Slim tabs: show favicons only, and widen on hover", target: nil, action: nil)
+    private var slimTabsRow: NSGridRow?
     private let tabLayoutHelpLabel = SettingsForm.footnote()
     private var observers: [NSObjectProtocol] = []
 
@@ -191,9 +196,15 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         sidebarEdgePopup.target = self
         sidebarEdgePopup.action = #selector(sidebarEdgeChanged)
         sidebarEdgeRow = form.addRow("Sidebar position:", sidebarEdgePopup)
+        slimTabsCheckbox.target = self
+        slimTabsCheckbox.action = #selector(slimTabsChanged)
+        slimTabsRow = form.addRow(nil, slimTabsCheckbox)
         form.addFootnote(tabLayoutHelpLabel)
         // The View menu changes these too, while this pane may be open.
-        for name in [Notification.Name.tabStripOrientationDidChange, .sidebarLayoutPreferenceDidChange] {
+        for name in [
+            Notification.Name.tabStripOrientationDidChange, .sidebarLayoutPreferenceDidChange,
+            .slimTabsPreferenceDidChange,
+        ] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.updateTabLayoutRows()
             })
@@ -520,6 +531,10 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         SidebarLayoutPreference.edge = edges[index]
     }
 
+    @objc private func slimTabsChanged() {
+        SlimTabsPreference.isEnabled = slimTabsCheckbox.state == .on
+    }
+
     private func updateTabLayoutRows() {
         let layout = TabStripOrientationPreference.current
         if let index = TabStripOrientation.allCases.firstIndex(of: layout) {
@@ -530,16 +545,22 @@ final class GeneralPaneController: NSObject, SettingsPaneController {
         }
         let wasHidden = sidebarEdgeRow?.isHidden
         sidebarEdgeRow?.isHidden = layout != .sidebar
+        let slimWasHidden = slimTabsRow?.isHidden
+        slimTabsRow?.isHidden = layout != .vertical
+        slimTabsCheckbox.state = SlimTabsPreference.isEnabled ? .on : .off
         let help: String
         switch layout {
         case .horizontal:
             help = "Tabs run in a row under the toolbar."
         case .vertical:
-            help = "Tabs run down a sidebar beside the page, under the toolbar."
+            help = SlimTabsPreference.isEnabled
+                ? "Tabs run down a narrow strip of icons beside the page. Move the pointer onto the strip to see the full list."
+                : "Tabs run down a sidebar beside the page, under the toolbar."
         case .sidebar:
             help = "One sidebar holds the address bar, pinned sites, tab groups, tabs and your profile, with no toolbar. Press ⌃⌘S to hide it; while it is hidden, move the pointer to that edge of the window to bring it back."
         }
-        if tabLayoutHelpLabel.stringValue != help || wasHidden != sidebarEdgeRow?.isHidden {
+        if tabLayoutHelpLabel.stringValue != help || wasHidden != sidebarEdgeRow?.isHidden
+            || slimWasHidden != slimTabsRow?.isHidden {
             tabLayoutHelpLabel.stringValue = help
             helpTextDidChange()
         }

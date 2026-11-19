@@ -291,6 +291,16 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// What only the sidebar layout has (footer, hide button, reveal on
     /// hover) and its geometry. Inert in the other two orientations.
     private let sidebarChrome = SidebarChrome()
+    /// What only slim tabs have (the narrow column's pointer tracking, its
+    /// material's clip, its edge shadow). Inert unless usesSlimTabs.
+    private let slimTabs = SlimTabsChrome()
+
+    /// Slim tabs apply to "Tabs Down the Side" alone. An agent's window is
+    /// always horizontal (see agentPresentation), so it never has them and
+    /// its page never moves under the agent.
+    private var usesSlimTabs: Bool {
+        tabStripOrientation == .vertical && SlimTabsPreference.isEnabled && agentPresentation == nil
+    }
 
     /// Which way this window's tab strip runs. Initialised from the stored
     /// preference and kept in step with it by
@@ -675,7 +685,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
     /// where macOS hides them, and in sidebar mode, where they sit over the
     /// sidebar and the toolbar row starts beside it.
     private var trafficLightReservedWidth: CGFloat {
-        guard !isEnteringOrInFullScreen, tabStripOrientation == .horizontal else {
+        // The slim tab column is narrower than the lights, so the toolbar
+        // row runs the window's full width there and carries them, as it
+        // does over the horizontal strip.
+        guard !isEnteringOrInFullScreen, tabStripOrientation == .horizontal || usesSlimTabs else {
             return ChromeMetrics.edgeInset
         }
         let lightsMaxX = (window as? BrowserWindow)?.trafficLightsMaxX ?? ChromeMetrics.edgeInset + 60
@@ -727,6 +740,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         contentView.addSubview(contentContainerView)
 
         installSidebarChrome(in: contentView)
+        installSlimTabs(in: contentView)
 
         applyChromeLayout()
 
@@ -746,6 +760,12 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             forName: .alwaysShowTabBarDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             self?.updateTabStripRowVisibility()
+        }
+        NotificationCenter.default.addObserver(
+            forName: .slimTabsPreferenceDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.tabStripOrientation == .vertical else { return }
+            self.applyChromeLayout()
         }
     }
 
@@ -792,6 +812,7 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
 
         tabStripView.orientation = tabStripOrientation.stripAxis
         setSidebarLayoutActive(tabStripOrientation == .sidebar)
+        setSlimTabsActive(usesSlimTabs)
 
         switch tabStripOrientation {
         case .sidebar:
@@ -812,6 +833,17 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
             tabStripView.autoresizingMask = [.width, .minYMargin]
             chromeSeparator.frame = NSRect(x: 0, y: height - chromeHeight, width: width, height: hairline)
             contentContainerView.frame = NSRect(x: 0, y: 0, width: width, height: height - chromeHeight)
+        case .vertical where usesSlimTabs:
+            // The toolbar row runs the full width, as it does over the
+            // horizontal strip, and the tab column starts under it.
+            tabStripView.isHidden = false
+            newTabToolbarButton.isHidden = true
+            toolbarView.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: toolbarHeight)
+            chromeBackground.frame = toolbarView.frame
+            chromeSeparator.frame = NSRect(x: 0, y: height - toolbarHeight, width: width, height: hairline)
+            tabSidebarBackground.isHidden = false
+            tabSidebarSeparator.isHidden = false
+            layoutSlimTabColumn(spring: nil)
         case .vertical:
             // The sidebar runs the full height of the window, Safari/Arc
             // style: its top band, level with the toolbar row, carries the
@@ -854,6 +886,83 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         layoutOmniboxContainer()
         (window as? BrowserWindow)?.chromeLayoutDidChange()
         logChromeFramesIfRequested()
+    }
+
+    // MARK: - Slim tabs
+
+    private func installSlimTabs(in contentView: NSView) {
+        slimTabs.install(in: contentView, strip: tabStripView)
+        slimTabs.onExpansionChanged = { [weak self] in
+            guard let self, self.usesSlimTabs else { return }
+            let spring: ChromeMotion.Spring? = ChromeMotion.isReduced
+                ? nil : (self.slimTabs.isExpanded ? .expand : .collapse)
+            self.layoutSlimTabColumn(spring: spring)
+        }
+        slimTabs.isExpansionSuppressed = { [weak self] in self?.tabOverview.isShowing ?? false }
+        slimTabs.holdsExpansion = { [weak self] in
+            guard let self, let responder = self.window?.firstResponder as? NSView else { return false }
+            return responder.isDescendant(of: self.tabStripView)
+        }
+    }
+
+    /// Moves the views slim tabs borrow into and out of its keeping. The
+    /// column's material sits inside SlimTabsChrome's clip while slim tabs
+    /// are on, and directly in the content view for every other layout.
+    private func setSlimTabsActive(_ active: Bool) {
+        guard let contentView = window?.contentView else { return }
+        if active {
+            if tabSidebarBackground.superview !== slimTabs.backdropClip {
+                slimTabs.backdropClip.addSubview(tabSidebarBackground)
+            }
+            return
+        }
+        if tabSidebarBackground.superview !== contentView {
+            contentView.addSubview(tabSidebarBackground, positioned: .above, relativeTo: chromeBackground)
+        }
+        slimTabs.apply(column: nil)
+        tabStripView.setSlimPresentation(.off, spring: nil)
+    }
+
+    /// Frames everything that depends on how wide the slim tab column is:
+    /// the strip, its material and edge, and the page. The page keeps one
+    /// size, laid out against the slim width, and only its origin follows
+    /// the column -- widened, its far edge is past the window's (see
+    /// SlimTabsChrome for why it slides and is not covered or resized). With
+    /// `spring`, every one of them moves on it together.
+    private func layoutSlimTabColumn(spring: ChromeMotion.Spring?) {
+        guard let contentView = window?.contentView else { return }
+        let expanded = slimTabs.isExpanded
+        let columnWidth = expanded ? TabStripView.sidebarWidth : TabStripView.slimWidth
+        let columnHeight = max(0, contentView.bounds.height - chromeTopInset - Self.toolbarHeight)
+        let column = NSRect(x: 0, y: 0, width: columnWidth, height: columnHeight)
+        let hairline: CGFloat = 0.5
+        let shadowWidth = SlimTabsChrome.edgeShadowWidth
+        let pinnedToColumn: NSView.AutoresizingMask = [.height, .maxXMargin]
+
+        tabStripView.setSlimPresentation(expanded ? .expanded : .collapsed, spring: spring)
+        ChromeMotion.setFrame(tabStripView, to: column, spring: spring)
+        tabStripView.autoresizingMask = pinnedToColumn
+        ChromeMotion.setFrame(slimTabs.backdropClip, to: column, spring: spring)
+        slimTabs.backdropClip.autoresizingMask = pinnedToColumn
+        tabSidebarBackground.frame = NSRect(
+            x: 0, y: 0, width: TabStripView.sidebarWidth + SlimTabsChrome.backdropOverrun, height: columnHeight)
+        tabSidebarBackground.autoresizingMask = [.height]
+        ChromeMotion.setFrame(
+            tabSidebarSeparator,
+            to: NSRect(x: columnWidth - hairline, y: 0, width: hairline, height: columnHeight), spring: spring)
+        tabSidebarSeparator.autoresizingMask = pinnedToColumn
+        ChromeMotion.setFrame(
+            slimTabs.edgeShadow,
+            to: NSRect(x: columnWidth - shadowWidth, y: 0, width: shadowWidth, height: columnHeight), spring: spring)
+        slimTabs.edgeShadow.autoresizingMask = pinnedToColumn
+        ChromeMotion.setAlpha(slimTabs.edgeShadow, to: expanded ? 1 : 0, duration: spring == nil ? nil : 0.2)
+        ChromeMotion.setFrame(
+            contentContainerView,
+            to: NSRect(
+                x: columnWidth, y: 0,
+                width: max(0, contentView.bounds.width - TabStripView.slimWidth), height: columnHeight),
+            spring: spring)
+        slimTabs.apply(column: column)
     }
 
     // MARK: - Chrome geometry report
