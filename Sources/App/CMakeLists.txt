@@ -219,6 +219,8 @@ set(BROWSER_SWIFT_SRCS
   SiteSettings/SiteSettingsStore.swift
   SiteSettings/SiteSettingsSheetController.swift
   SiteSettings/SiteSettingsEnforcer.swift
+  SiteSettings/CertificateExceptionStore.swift
+  SiteSettings/CertificateExceptionPrompt.swift
   ElementHider/ElementHiderScript.swift
   ElementHider/ElementHiderCoordinator.swift
   ElementHider/HiddenElementsSheetController.swift
@@ -418,6 +420,7 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebOrigin.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PageMessagePolicy.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PopupTargetPolicy.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CertificateExceptions.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/PublicSuffixList.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebAuthnAttestation.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/WebAuthnRequest.swift

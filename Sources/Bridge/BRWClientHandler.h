@@ -246,6 +246,15 @@ class BRWClientHandler : public CefClient,
                                   int error_code,
                                   const CefString& error_string) override;
 
+  // CefRequestHandler method: asks the delegate whether the user trusted
+  // this certificate (-browserShouldAllowCertificateErrorForURL:...).
+  // Without an override, CEF cancels every certificate error.
+  bool OnCertificateError(CefRefPtr<CefBrowser> browser,
+                          cef_errorcode_t cert_error,
+                          const CefString& request_url,
+                          CefRefPtr<CefSSLInfo> ssl_info,
+                          CefRefPtr<CefCallback> callback) override;
+
   // CefRequestHandler methods:
   // Returning `this` means OnBeforeResourceLoad below (this same object,
   // via CefResourceRequestHandler) is called for every resource this

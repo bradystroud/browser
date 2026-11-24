@@ -485,6 +485,44 @@ void BRWClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
   }
 }
 
+bool BRWClientHandler::OnCertificateError(CefRefPtr<CefBrowser> browser,
+                                          cef_errorcode_t cert_error,
+                                          const CefString& request_url,
+                                          CefRefPtr<CefSSLInfo> ssl_info,
+                                          CefRefPtr<CefCallback> callback) {
+  if (!delegate_ || !ssl_info ||
+      ![delegate_ respondsToSelector:@selector(browserShouldAllowCertificateErrorForURL:certificateChain:)]) {
+    return false;
+  }
+  CefRefPtr<CefX509Certificate> certificate = ssl_info->GetX509Certificate();
+  if (!certificate) {
+    return false;
+  }
+  NSMutableArray<NSData*>* chain = [NSMutableArray array];
+  auto append = [chain](CefRefPtr<CefBinaryValue> value) {
+    if (!value || value->GetSize() == 0) {
+      return;
+    }
+    NSMutableData* data = [NSMutableData dataWithLength:value->GetSize()];
+    value->GetData(data.mutableBytes, value->GetSize(), 0);
+    [chain addObject:data];
+  };
+  append(certificate->GetDEREncoded());
+  if (chain.count == 0) {
+    return false;
+  }
+  CefX509Certificate::IssuerChainBinaryList issuers;
+  certificate->GetDEREncodedIssuerChain(issuers);
+  for (const auto& issuer : issuers) {
+    append(issuer);
+  }
+  if (![delegate_ browserShouldAllowCertificateErrorForURL:ToNSString(request_url) certificateChain:chain]) {
+    return false;
+  }
+  callback->Continue();
+  return true;
+}
+
 void BRWClientHandler::OnTitleChange(CefRefPtr<CefBrowser> browser, const CefString& title) {
   if (delegate_ && [delegate_ respondsToSelector:@selector(browserDidChangeTitle:)]) {
     [delegate_ browserDidChangeTitle:ToNSString(title)];

@@ -42,6 +42,15 @@ final class WebKitNavigationState {
     /// BRWThreatListConsumeContinue does.
     let threatInterstitialGuards = NSMapTable<WKBackForwardListItem, NSString>.weakToStrongObjects()
 
+    /// Leaf fingerprints this tab accepted only because of a user's
+    /// certificate exception, so securityStatus() can still report them as
+    /// not valid.
+    var certificatesAcceptedByException: Set<String> = []
+
+    /// The certificate failure behind the error page on screen, so its
+    /// "Visit Anyway" link can only ever ask about that one certificate.
+    var certificateFailure: EngineCertificateFailure?
+
     /// An "Open in another app?" sheet is up for this tab.
     var externalAppPromptShowing = false
     /// The user said Cancel to one; the page gets no more until it commits
@@ -104,6 +113,11 @@ extension WebKitTab: WKNavigationDelegate {
             delegate?.engineTabDidRequestNewTab(url: url.absoluteString, disposition: disposition)
             return
         }
+        if let url = navigationAction.request.url, url.host == WebKitErrorPage.certificateExceptionHost {
+            decisionHandler(.cancel)
+            requestCertificateException(navigationAction: navigationAction)
+            return
+        }
         if let url = navigationAction.request.url,
            let originalURL = ThreatWarningLink.originalURL(fromContinueLink: url.absoluteString) {
             decisionHandler(.cancel)
@@ -145,6 +159,23 @@ extension WebKitTab: WKNavigationDelegate {
         navigationState.threatInterstitialGuards.removeObject(forKey: currentItem)
         WebKitEngine.addThreatSessionBypass(host: host, profileName: profileName)
         loadURL(originalURL)
+    }
+
+    /// The error page's "Visit Anyway…" link. Any page can link to the
+    /// marker host, so it does something only as a clicked main-frame link
+    /// on this tab's own certificate error page, and even then it only asks
+    /// the user: nothing is trusted without their answer.
+    private func requestCertificateException(navigationAction: WKNavigationAction) {
+        guard navigationAction.targetFrame?.isMainFrame == true,
+              navigationAction.navigationType == .linkActivated,
+              let failure = navigationState.certificateFailure,
+              let failedURL = navigationState.failedURL,
+              failedURL.absoluteString == failure.url,
+              webView.url == failedURL else {
+            NSLog("Browser: ignored a certificate-exception link outside the certificate error page")
+            return
+        }
+        delegate?.engineTabDidRequestCertificateException()
     }
 
     /// The standard macOS link-click modifier overrides, or nil for an
@@ -222,6 +253,7 @@ extension WebKitTab: WKNavigationDelegate {
         }
         if navigation !== navigationState.errorPageNavigation {
             navigationState.failedURL = nil
+            navigationState.certificateFailure = nil
         }
         navigationState.externalAppPromptsSuppressed = false
         // CEF's OnLoadStart, which fires after commit but before the new
@@ -278,8 +310,12 @@ extension WebKitTab: WKNavigationDelegate {
         navigationState.mainDocumentLoad = EngineMainDocumentLoad(
             url: failingURL.absoluteString, httpStatus: nil,
             error: "\(error.localizedDescription) (\((error as NSError).domain) \((error as NSError).code))")
-        let page = WebKitErrorPage.loadFailure(error: error as NSError, url: failingURL)
+        let failure = certificateFailure(from: error as NSError, url: failingURL)
+        let page = WebKitErrorPage.loadFailure(error: error as NSError, url: failingURL,
+                                               offersCertificateException: failure != nil)
         showErrorPage(page, for: failingURL)
+        navigationState.certificateFailure = failure
+        if let failure { delegate?.engineTabDidRefuseCertificate(failure) }
     }
 
     /// The renderer process died (a crash, or the OS reclaiming memory).
@@ -502,13 +538,60 @@ extension WebKitTab: WKNavigationDelegate {
         return source.isMainFrame
     }
 
+    // MARK: - Certificates
+
+    /// A refused certificate the user could trust: a TLS trust failure whose
+    /// error carries the server's chain. A client-certificate error is not
+    /// one, since no exception can fix it.
+    private func certificateFailure(from error: NSError, url: URL) -> EngineCertificateFailure? {
+        guard error.domain == NSURLErrorDomain,
+              [NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasBadDate,
+               NSURLErrorServerCertificateHasUnknownRoot, NSURLErrorServerCertificateNotYetValid,
+               NSURLErrorSecureConnectionFailed].contains(error.code),
+              url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased(), !host.isEmpty,
+              let value = error.userInfo[NSURLErrorFailingURLPeerTrustErrorKey],
+              CFGetTypeID(value as CFTypeRef) == SecTrustGetTypeID()
+        else { return nil }
+        let trust = value as! SecTrust
+        guard let fingerprint = Self.leafFingerprint(trust) else { return nil }
+        return EngineCertificateFailure(url: url.absoluteString, host: host, fingerprint: fingerprint, serverTrust: trust)
+    }
+
+    static func leafFingerprint(_ trust: SecTrust) -> String? {
+        guard let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else { return nil }
+        return CertificateExceptions.fingerprint(ofDER: SecCertificateCopyData(leaf) as Data)
+    }
+
+    /// Accepts a server's certificate only when the user trusted that exact
+    /// certificate for that host. Everything else takes WebKit's default
+    /// handling, which refuses an untrusted certificate. A certificate the
+    /// system already trusts is accepted either way.
+    private func handleServerTrust(_ challenge: URLAuthenticationChallenge,
+                                   completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let host = challenge.protectionSpace.host.lowercased()
+        guard let trust = challenge.protectionSpace.serverTrust,
+              let fingerprint = Self.leafFingerprint(trust),
+              delegate?.engineTabShouldTrustCertificate(host: host, fingerprint: fingerprint) == true
+        else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        navigationState.certificatesAcceptedByException.insert(fingerprint)
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+
     // MARK: - HTTP authentication
 
-    /// Basic/Digest only get a username/password prompt. Every other method
-    /// -- above all server trust -- takes WebKit's default handling, which
-    /// rejects an untrusted certificate outright.
+    /// Basic/Digest get a username/password prompt, and server trust goes
+    /// to handleServerTrust. Every other method takes WebKit's default
+    /// handling.
     func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let method = challenge.protectionSpace.authenticationMethod
+        if method == NSURLAuthenticationMethodServerTrust {
+            handleServerTrust(challenge, completionHandler: completionHandler)
+            return
+        }
         guard method == NSURLAuthenticationMethodHTTPBasic || method == NSURLAuthenticationMethodHTTPDigest else {
             completionHandler(.performDefaultHandling, nil)
             return
@@ -609,11 +692,17 @@ struct FaviconCandidate {
 /// resources and no script: the page runs with the failing site's origin as
 /// its base, and must render when the network is exactly what's broken.
 enum WebKitErrorPage {
-    static func loadFailure(error: NSError, url: URL) -> String {
+    /// The "Visit Anyway…" link's host. `.invalid` never resolves, and
+    /// WebKitTab cancels the navigation before it is sent.
+    static let certificateExceptionHost = "browser-certificate-exception.invalid"
+
+    static func loadFailure(error: NSError, url: URL, offersCertificateException: Bool = false) -> String {
         let host = url.host ?? url.absoluteString
         let (heading, explanation) = describe(error, host: host)
         return render(heading: heading, explanation: explanation, url: url,
-                      detail: "\(error.localizedDescription) (\(error.domain) \(error.code))")
+                      detail: "\(error.localizedDescription) (\(error.domain) \(error.code))",
+                      secondaryLink: offersCertificateException
+                          ? ("Visit Anyway\u{2026}", "https://\(certificateExceptionHost)/visit") : nil)
     }
 
     static func httpError(status: Int, url: URL) -> String {
@@ -659,9 +748,13 @@ enum WebKitErrorPage {
         }
     }
 
-    private static func render(heading: String, explanation: String, url: URL, detail: String?) -> String {
+    private static func render(heading: String, explanation: String, url: URL, detail: String?,
+                               secondaryLink: (title: String, href: String)? = nil) -> String {
         let href = escape(url.absoluteString)
         let detailHTML = detail.map { "<p class=\"detail\">\(escape($0))</p>" } ?? ""
+        let secondaryHTML = secondaryLink.map {
+            "<a class=\"secondary\" href=\"\(escape($0.href))\">\(escape($0.title))</a>"
+        } ?? ""
         // No <title>: an empty title makes the tab show the URL, and a real
         // one would overwrite the history entry's title for that URL.
         return """
@@ -680,13 +773,14 @@ enum WebKitErrorPage {
         .detail { color: var(--muted); font-size: 13px; }
         a.button { display: inline-block; margin-top: 12px; padding: 8px 18px; border-radius: 8px;
           background: var(--accent); color: #fff; text-decoration: none; font-weight: 500; }
+        a.secondary { display: inline-block; margin: 12px 0 0 16px; color: var(--muted); font-size: 13px; }
         </style></head>
         <body><main>
         <h1>\(escape(heading))</h1>
         <p>\(escape(explanation))</p>
         <p class="url">\(href)</p>
         \(detailHTML)
-        <a class="button" href="\(href)">Try Again</a>
+        <a class="button" href="\(href)">Try Again</a>\(secondaryHTML)
         </main></body></html>
         """
     }

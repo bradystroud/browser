@@ -18,6 +18,9 @@ import AppKit
 ///   popover also persist through.
 /// - Auto-mute -> SiteSettingsStore, the only genuinely new state here, and
 ///   enforced by SiteSettingsEnforcer rather than merely remembered.
+/// - Certificate -> CertificateExceptionStore, through the tab, which also
+///   holds the certificate the engine last refused for this host. The row
+///   shows only when one of the two exists.
 ///
 /// What is deliberately *not* here: pop-up windows, an auto-play policy,
 /// screen sharing, and "use Reader automatically". Each of those is a real
@@ -144,7 +147,7 @@ private final class SiteSettingsViewController: NSViewController {
     /// the sheet's right margin whatever the labels say and at whatever size
     /// the system font renders them.
     private static var popupWidth: CGFloat {
-        let titles = ["Page Zoom", "Sound", "Content Blocker"] + permissionSpecs.map(\.title)
+        let titles = ["Page Zoom", "Sound", "Content Blocker", "Certificate"] + permissionSpecs.map(\.title)
         let widest = titles
             .map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }
             .max() ?? 0
@@ -163,6 +166,7 @@ private final class SiteSettingsViewController: NSViewController {
     private let soundPopup = NSPopUpButton()
     private let blockerPopup = NSPopUpButton()
     private var permissionPopups: [NSPopUpButton] = []
+    private let certificateButton = NSButton(title: "", target: nil, action: nil)
     private let footnote = NSTextField(wrappingLabelWithString: "")
 
     init(host: String, origin: String, tab: Tab, profile: Profile, isPrivate: Bool) {
@@ -321,6 +325,16 @@ private final class SiteSettingsViewController: NSViewController {
         grid.addRow(with: [rowLabel("Sound"), soundPopup])
         grid.addRow(with: [rowLabel("Content Blocker"), blockerPopup])
 
+        if hasCertificateRow {
+            certificateButton.bezelStyle = .rounded
+            certificateButton.target = self
+            certificateButton.action = #selector(certificateButtonPressed)
+            certificateButton.translatesAutoresizingMaskIntoConstraints = false
+            certificateButton.widthAnchor.constraint(equalToConstant: Self.popupWidth).isActive = true
+            addSectionHeader("Security", to: grid)
+            grid.addRow(with: [rowLabel("Certificate"), certificateButton])
+        }
+
         addSectionHeader("Permissions", to: grid)
 
         permissionPopups = Self.permissionSpecs.enumerated().map { index, spec in
@@ -361,6 +375,50 @@ private final class SiteSettingsViewController: NSViewController {
         grid.cell(atColumnIndex: 0, rowIndex: grid.numberOfRows - 1).xPlacement = .leading
     }
 
+    // MARK: - Certificate
+
+    private var hasCertificateException: Bool {
+        tab?.certificateExceptions.hasException(host: host) ?? false
+    }
+
+    private var refusedCertificate: EngineCertificateFailure? {
+        tab?.refusedCertificates[host]
+    }
+
+    /// Decided once, as the sheet opens: a row that vanished after
+    /// "Stop Trusting" would move every row below it under the pointer.
+    private lazy var hasCertificateRow: Bool =
+        (tab?.usesCertificateExceptions ?? false) && (hasCertificateException || refusedCertificate != nil)
+
+    private func refreshCertificate() {
+        guard hasCertificateRow else { return }
+        if hasCertificateException {
+            certificateButton.title = "Stop Trusting"
+            certificateButton.isEnabled = true
+        } else if refusedCertificate != nil {
+            certificateButton.title = "Trust Certificate\u{2026}"
+            certificateButton.isEnabled = true
+        } else {
+            certificateButton.title = "Not Trusted"
+            certificateButton.isEnabled = false
+        }
+    }
+
+    @objc private func certificateButtonPressed(_ sender: Any?) {
+        guard let tab else { return }
+        if hasCertificateException {
+            tab.removeCertificateException(host: host)
+            refresh()
+            return
+        }
+        // The question is its own sheet, so this one goes first.
+        let host = self.host
+        onDone?()
+        DispatchQueue.main.async {
+            CertificateExceptionPrompt.present(for: tab, host: host)
+        }
+    }
+
     private static var zoomTitles: [String] {
         PageZoom.steps.map { PageZoom.percentLabel(for: $0) }
     }
@@ -395,6 +453,8 @@ private final class SiteSettingsViewController: NSViewController {
             }
             popup.isEnabled = !isPrivate
         }
+
+        refreshCertificate()
 
         footnote.stringValue = footnoteText(blockingEnabled: blocking.isEnabled)
     }
@@ -517,6 +577,9 @@ private final class SiteSettingsViewController: NSViewController {
             }
         }
         siteSettingsStore?.clear(host: host)
+        if hasCertificateException {
+            tab?.removeCertificateException(host: host)
+        }
         SiteSettingsEnforcer.shared.applySettingsChanged(host: host, profileId: profile.id)
         if !isPrivate {
             var settings = blockingSettings

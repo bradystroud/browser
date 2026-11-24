@@ -244,17 +244,25 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
     /// certificate viewer; nothing evaluates it.
     func securityStatus() -> EngineSecurityStatus? {
         guard let status = browser?.securityStatus() else { return nil }
-        let certificates = status.certificateChain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) }
-        var trust: SecTrust?
-        if !certificates.isEmpty {
-            SecTrustCreateWithCertificates(certificates as CFArray, SecPolicyCreateSSL(true, nil), &trust)
-        }
+        let trust = Self.displayTrust(for: status.certificateChain)
         return EngineSecurityStatus(
             isSecureConnection: status.isSecureConnection,
             hasCertificateError: status.hasCertificateError,
             hasInsecureContent: status.hasInsecureContent,
             serverTrust: trust)
     }
+
+    func forgetCertificateDecisions() { browser?.forgetCertificateDecisions() }
+
+    /// A trust object for the system certificate viewer only.
+    private static func displayTrust(for chain: [Data]) -> SecTrust? {
+        let certificates = chain.compactMap { SecCertificateCreateWithData(nil, $0 as CFData) }
+        guard !certificates.isEmpty else { return nil }
+        var trust: SecTrust?
+        SecTrustCreateWithCertificates(certificates as CFArray, SecPolicyCreateSSL(true, nil), &trust)
+        return trust
+    }
+
     func printToPDF(path: String, completion: @escaping (Bool, String) -> Void) {
         guard let browser else { return completion(false, "The page has not loaded yet.") }
         browser.printToPDF(withPath: path, completion: completion)
@@ -399,6 +407,22 @@ private final class CEFTab: NSObject, EngineTab, BRWBrowserDelegate {
 
     func browserDidRequestViewSource(forPageURL pageURL: String) {
         delegate?.engineTabDidRequestViewSource(pageURL: pageURL)
+    }
+
+    /// Loads it when the user trusted this exact certificate for the host.
+    /// Otherwise reports the refusal, so the user can look at the
+    /// certificate and trust it from Site Settings.
+    func browserShouldAllowCertificateError(forURL url: String, certificateChain: [Data]) -> Bool {
+        guard let parsed = URL(string: url), let host = parsed.host?.lowercased(), !host.isEmpty,
+              let leaf = certificateChain.first else { return false }
+        let fingerprint = CertificateExceptions.fingerprint(ofDER: leaf)
+        if delegate?.engineTabShouldTrustCertificate(host: host, fingerprint: fingerprint) == true {
+            return true
+        }
+        delegate?.engineTabDidRefuseCertificate(EngineCertificateFailure(
+            url: url, host: host, fingerprint: fingerprint,
+            serverTrust: Self.displayTrust(for: certificateChain)))
+        return false
     }
 
     func browserDidRequestSiteInformation() {
