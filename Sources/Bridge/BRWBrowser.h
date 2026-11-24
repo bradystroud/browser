@@ -329,6 +329,16 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// max given. The delegate resizes the host view to fit; the bridge does not.
 /// Implementing this is what tells CEF the resize is handled.
 - (void)browserDidAutoResizeToSize:(NSSize)size;
+
+/// Chromium judged a server's certificate not valid while loading `url`
+/// (CefRequestHandler::OnCertificateError, a main-frame or subframe
+/// navigation). `certificateChain` is the server's certificate followed by
+/// its issuer chain, each DER-encoded. Return YES to load it anyway; NO,
+/// or no delegate, cancels the load as Chromium would. Chromium then
+/// remembers a YES for this profile's context until
+/// -forgetCertificateDecisions or the next launch.
+- (BOOL)browserShouldAllowCertificateErrorForURL:(NSString *)url
+                                certificateChain:(NSArray<NSData *> *)certificateChain;
 @end
 
 /// What Chromium recorded about how the visible page arrived, read from its
@@ -562,6 +572,11 @@ typedef NS_ENUM(NSInteger, BRWDevToolsPanel) {
 /// is not http(s), or one still committing). UI thread only, like every
 /// CefBrowserHost navigation-entry read -- always the main thread here.
 - (nullable BRWSecurityStatus *)securityStatus;
+
+/// Drops every certificate error Chromium was told to allow in this
+/// browser's request context (CefRequestContext::ClearCertificateExceptions),
+/// so the next load asks -browserShouldAllowCertificateErrorForURL: again.
+- (void)forgetCertificateDecisions;
 
 /// Opens CEF's native print dialog for this tab's current page (see
 /// BRWBrowser.mm's -print for what "native" actually means in this Alloy-

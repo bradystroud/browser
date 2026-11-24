@@ -76,12 +76,17 @@ protocol TabDelegate: AnyObject {
     /// says no (see ExtensionIsolationPolicy): its tabs are built without
     /// the extension system and refuse extension pages.
     func tabRunsExtensions(_ tab: Tab) -> Bool
+    /// Whether the user's certificate exceptions apply in `tab`. An agent's
+    /// window says no: a page an agent drives never loads past a
+    /// certificate error, and never offers to.
+    func tabUsesCertificateExceptions(_ tab: Tab) -> Bool
 }
 
 extension TabDelegate {
     func tabHoldsEngine(_ tab: Tab) -> Bool { false }
     func tabShowsStartPage(_ tab: Tab) -> Bool { true }
     func tabRunsExtensions(_ tab: Tab) -> Bool { true }
+    func tabUsesCertificateExceptions(_ tab: Tab) -> Bool { true }
 }
 
 /// Mirrors EngineTabDelegate.engineTabDidBeginDownload -- a plain Swift value
@@ -1047,6 +1052,46 @@ final class Tab: NSObject, EngineTabDelegate {
 
     func engineTabDidChangeSecurityState() {
         delegate?.tabDidChangeDisplayState(self)
+    }
+
+    // MARK: - Certificate exceptions
+
+    /// The newest certificate the engine refused on this tab, per host, so
+    /// Site Settings can offer to trust it.
+    private(set) var refusedCertificates: [String: EngineCertificateFailure] = [:]
+
+    var usesCertificateExceptions: Bool { delegate?.tabUsesCertificateExceptions(self) ?? true }
+
+    var certificateExceptions: CertificateExceptionStore {
+        CertificateExceptionStoreManager.store(forProfileId: profileId, isPrivate: isPrivate)
+    }
+
+    func engineTabShouldTrustCertificate(host: String, fingerprint: String) -> Bool {
+        usesCertificateExceptions && certificateExceptions.trusts(host: host, fingerprint: fingerprint)
+    }
+
+    func engineTabDidRefuseCertificate(_ failure: EngineCertificateFailure) {
+        refusedCertificates[failure.host] = failure
+        delegate?.tabDidChangeDisplayState(self)
+    }
+
+    func engineTabDidRequestCertificateException() {
+        guard let host = SiteIdentity.host(forURLString: urlString) else { return }
+        CertificateExceptionPrompt.present(for: self, host: host)
+    }
+
+    /// Trusts the certificate last refused for `host` and loads the page
+    /// that failed again. Does nothing when no certificate was refused.
+    func trustRefusedCertificate(host: String) {
+        guard usesCertificateExceptions, let failure = refusedCertificates.removeValue(forKey: host) else { return }
+        certificateExceptions.trust(host: failure.host, fingerprint: failure.fingerprint)
+        load(url: failure.url)
+    }
+
+    /// Stops trusting every certificate trusted for `host`, now.
+    func removeCertificateException(host: String) {
+        certificateExceptions.remove(host: host)
+        browser?.forgetCertificateDecisions()
     }
 
     /// "View Page Source" from the native context menu. Opens Chromium's own

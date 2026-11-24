@@ -449,6 +449,12 @@ bool IsCertStatusError(cef_cert_status_t status) {
               certificateChain:chain];
 }
 
+- (void)forgetCertificateDecisions {
+  if (_handler && _handler->GetBrowser()) {
+    _handler->GetBrowser()->GetHost()->GetRequestContext()->ClearCertificateExceptions(nullptr);
+  }
+}
+
 - (void)print {
   if (_handler && _handler->GetBrowser()) {
     _handler->GetBrowser()->GetHost()->Print();

@@ -603,11 +603,10 @@ final class WebKitTab: NSObject, EnginePopupTab {
         PageZoom.level(forFactor: Double(webView.pageZoom))
     }
 
-    /// WebKit gets no say from this app on server trust (see
-    /// WebKitTab+Navigation's authentication handler, which leaves it to
-    /// WebKit's default handling), and that default refuses an untrusted
-    /// certificate outright -- so a page that loaded never has a
-    /// certificate error to report.
+    /// WebKit's default handling refuses an untrusted certificate outright,
+    /// so a page that loaded has a certificate error only when the app
+    /// accepted its certificate from a user's exception (see
+    /// WebKitTab+Navigation's server-trust handler, which records each one).
     ///
     /// Between a provisional start and its commit, webView.url is already
     /// the new address while serverTrust and hasOnlySecureContent still
@@ -616,9 +615,11 @@ final class WebKitTab: NSObject, EnginePopupTab {
         guard !navigationState.isProvisional else { return nil }
         guard let scheme = webView.url?.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return nil }
         let trust = webView.serverTrust
+        let acceptedByException = trust.flatMap(Self.leafFingerprint)
+            .map(navigationState.certificatesAcceptedByException.contains) ?? false
         return EngineSecurityStatus(
             isSecureConnection: scheme == "https" && trust != nil,
-            hasCertificateError: false,
+            hasCertificateError: acceptedByException,
             hasInsecureContent: !webView.hasOnlySecureContent,
             serverTrust: trust)
     }

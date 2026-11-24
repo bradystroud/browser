@@ -2629,6 +2629,10 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSTex
         agentPresentation == nil
     }
 
+    func tabUsesCertificateExceptions(_ tab: Tab) -> Bool {
+        agentPresentation == nil
+    }
+
     func tabRunsExtensions(_ tab: Tab) -> Bool {
         runsExtensions
     }

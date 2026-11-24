@@ -233,11 +233,44 @@ protocol EngineTabDelegate: AnyObject {
     /// (the first report can be the view's size before layout), so the
     /// receiver clamps it.
     func engineTabDidAutoResize(to size: NSSize)
+
+    /// Asked when the engine judges a server's certificate not valid.
+    /// Returning true accepts it, because the user trusted this exact
+    /// certificate (`fingerprint`, the leaf's SHA-256) for `host` earlier.
+    /// Asked for subresources too, not only the main frame.
+    func engineTabShouldTrustCertificate(host: String, fingerprint: String) -> Bool
+
+    /// A main-frame load stopped because of the server's certificate and
+    /// nothing trusted it. The receiver keeps it, so the user can look at
+    /// the certificate and trust it.
+    func engineTabDidRefuseCertificate(_ failure: EngineCertificateFailure)
+
+    /// The user asked, from the engine's own error page, to visit the site
+    /// the last refused certificate belongs to. The receiver confirms with
+    /// the user before it trusts anything.
+    func engineTabDidRequestCertificateException()
 }
 
 extension EngineTabDelegate {
     func engineTabShouldStartMainFrameNavigation(_ url: String) -> Bool { true }
     func engineTabDidAutoResize(to size: NSSize) {}
+    func engineTabShouldTrustCertificate(host: String, fingerprint: String) -> Bool { false }
+    func engineTabDidRefuseCertificate(_ failure: EngineCertificateFailure) {}
+    func engineTabDidRequestCertificateException() {}
+}
+
+/// A main-frame load the engine refused because of the server's
+/// certificate -- see EngineTabDelegate.engineTabDidRefuseCertificate.
+struct EngineCertificateFailure {
+    /// The address that failed to load.
+    let url: String
+    /// Lowercased.
+    let host: String
+    /// Lowercase hex SHA-256 of the leaf certificate's DER encoding
+    /// (CertificateExceptions.fingerprint(ofDER:)).
+    let fingerprint: String
+    /// The chain, for the system certificate viewer.
+    let serverTrust: SecTrust?
 }
 
 /// One tab's engine-side browser surface -- the engine-agnostic counterpart
@@ -345,6 +378,11 @@ protocol EngineTab: AnyObject {
     /// can observe them, and otherwise with each loading-state change.
     func securityStatus() -> EngineSecurityStatus?
 
+    /// Drops every "visit anyway" decision the engine itself remembers for
+    /// this tab's profile, so a certificate exception the user removed stops
+    /// applying now rather than at the next launch.
+    func forgetCertificateDecisions()
+
     /// Opens the engine's native print dialog for this tab's current page --
     /// see BRWBrowser.h's -print for what "native" actually means in this
     /// Alloy-style app (browser-5kq.6).
@@ -421,6 +459,9 @@ extension EngineTab {
 
     /// No page-driven sizing (see `EngineCapabilities.pageAutoResize`).
     func setAutoResize(enabled: Bool, minSize: NSSize, maxSize: NSSize) {}
+
+    /// Nothing remembered by the engine itself.
+    func forgetCertificateDecisions() {}
 }
 
 /// The end of one main-frame document load. `sequence` grows with every
