@@ -76,9 +76,19 @@ final class OmniboxField: NSTextField {
             stringValue = text
             currentEditor()?.selectAll(nil)
         }
+        justBecameFirstResponder = true
+        DispatchQueue.main.async { [weak self] in self?.justBecameFirstResponder = false }
         onDisplayChange?()
         return accepted
     }
+
+    /// True from the moment focus arrives until the end of that run-loop
+    /// turn. A click that focuses the field reaches mouseDown in the same
+    /// turn (NSWindow makes the field first responder, then sends it the
+    /// mouse-down), so this is how mouseDown tells a focusing click from a
+    /// later one. The field editor already exists by then, so its presence
+    /// cannot tell them apart.
+    private var justBecameFirstResponder = false
 
     /// Safari's first click into the address bar selects the whole URL, even
     /// though becomeFirstResponder above already selected it: AppKit hands
@@ -88,10 +98,14 @@ final class OmniboxField: NSTextField {
     /// that selected part of the URL is kept, and a click while the field is
     /// already being edited never reaches this method (the field editor
     /// takes it), so a second click still places the caret.
+    ///
+    /// The flag is read before super: the editor's tracking loop runs
+    /// main-queue blocks while it waits for the mouse-up, which includes the
+    /// one that clears it.
     override func mouseDown(with event: NSEvent) {
-        let wasEditing = currentEditor() != nil
+        let isFocusingClick = justBecameFirstResponder
         super.mouseDown(with: event)
-        guard !wasEditing, let editor = currentEditor(), editor.selectedRange.length == 0 else { return }
+        guard isFocusingClick, let editor = currentEditor(), editor.selectedRange.length == 0 else { return }
         editor.selectAll(nil)
     }
 
