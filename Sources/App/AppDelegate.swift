@@ -167,7 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // first browser window when it closes.
         let showsOnboarding = OnboardingWindowController.shouldShowAtLaunch(coldLaunchWasRouted: coldLaunchWasRouted)
         if coldLaunchWasRouted || !restoredAnyWindow || CommandLineArgs.hasExplicitProfileOrURLOverride() {
-            if !coldLaunchWasRouted && !showsOnboarding {
+            let skipsDefaultWindow = CommandLineArgs.noDefaultWindow() && !CommandLineArgs.hasExplicitProfileOrURLOverride()
+            if !coldLaunchWasRouted && !showsOnboarding && !skipsDefaultWindow {
                 let profile = CommandLineArgs.profileName().map { ProfileManager.shared.profileOrCreate(named: $0) }
                     ?? ProfileManager.shared.fallbackProfile
                 WindowManager.shared.openNewWindow(profile: profile, initialURL: CommandLineArgs.initialURL())

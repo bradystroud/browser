@@ -38,6 +38,15 @@ enum CommandLineArgs {
         CommandLine.arguments.contains("--test-no-activate")
     }
 
+    /// `--no-default-window`: a launch with no session to restore opens no
+    /// window of its own. The `browser` CLI passes it when it starts the app
+    /// for a command (`open`, `window new`, `focus`) that opens its own
+    /// window, which would otherwise arrive beside a fallback-profile window
+    /// nobody asked for. A restored session and a routed link still open.
+    static func noDefaultWindow() -> Bool {
+        CommandLine.arguments.contains("--no-default-window")
+    }
+
     /// `--show-onboarding [import|done]`: opens the welcome window at launch
     /// even though this is not a fresh install, or is a scratch
     /// `--profiles-root`, where it never opens by itself (see

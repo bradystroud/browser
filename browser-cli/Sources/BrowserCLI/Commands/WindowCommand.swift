@@ -17,7 +17,7 @@ public enum WindowCommand {
         if let profile = args.flags["profile"] { requestArgs["profile"] = profile }
         if let url = args.positionals.first { requestArgs["url"] = url }
 
-        return send(CLIRequest(command: "window-new", args: requestArgs), args: args) { response in
+        return send(CLIRequest(command: "window-new", args: requestArgs), args: args, launching: true) { response in
             response.message ?? "Opened a new window."
         }
     }
@@ -36,7 +36,7 @@ public enum WindowCommand {
             requestArgs["profile"] = profile
         }
 
-        return send(CLIRequest(command: "focus", args: requestArgs), args: args) { response in
+        return send(CLIRequest(command: "focus", args: requestArgs), args: args, launching: true) { response in
             response.message ?? "Focused."
         }
     }
@@ -55,9 +55,13 @@ public enum WindowCommand {
         }
     }
 
-    private static func send(_ request: CLIRequest, args: ParsedArgs, text: @escaping (CLIResponse) -> String) -> Bool {
+    /// `launching` starts the installed app first when it is not running
+    /// (AppLauncher); only commands that open a window ask for it.
+    private static func send(_ request: CLIRequest, args: ParsedArgs, launching: Bool = false, text: @escaping (CLIResponse) -> String) -> Bool {
         do {
-            let response = try SocketTargetResolver.send(request, args: args)
+            let response = launching
+                ? try AppLauncher.send(request, args: args)
+                : try SocketTargetResolver.send(request, args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "\(request.command) failed", json: args.jsonOutput)
             }
