@@ -121,6 +121,9 @@ struct BrowserCLIEntry {
           browser page <subcommand> ...   (agent control; `browser page help`)
           browser --version               (the app version and the commit it was built from)
 
+        open, window new and focus start the installed Browser.app when it is
+        not running (pass --no-launch to fail instead). They never start it
+        for --socket, BROWSER_CLI_SOCKET or --profiles-root.
         Socket commands accept --socket <absolute-path> before or after the command.
         BROWSER_CLI_SOCKET supplies a default explicit socket.
         Every command accepts --json for machine-readable output, and

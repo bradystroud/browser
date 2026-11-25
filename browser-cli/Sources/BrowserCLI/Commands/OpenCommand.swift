@@ -27,7 +27,7 @@ public enum OpenCommand {
         if args.flags["little"] != nil { requestArgs["little"] = "true" }
 
         do {
-            let response = try SocketTargetResolver.send(CLIRequest(command: "open", args: requestArgs), args: args)
+            let response = try AppLauncher.send(CLIRequest(command: "open", args: requestArgs), args: args)
             guard response.ok else {
                 return Output.emitError(response.error ?? "open failed", json: args.jsonOutput)
             }
