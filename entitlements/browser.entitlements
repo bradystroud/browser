@@ -28,5 +28,15 @@
 	     reads Contacts, so the helpers do not carry it. -->
 	<key>com.apple.security.personal-information.addressbook</key>
 	<true/>
+	<!-- Camera and microphone the same way: under the hardened runtime
+	     with a real signature, macOS refuses capture for both engines with
+	     no system prompt, and the page sees only a blocked device. Ad-hoc
+	     dev builds ignore entitlements, so only a release shows it. TCC
+	     checks the responsible process, which is the app, so the helpers
+	     do not carry them. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>
