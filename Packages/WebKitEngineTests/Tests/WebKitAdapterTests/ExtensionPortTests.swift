@@ -13,7 +13,8 @@ final class ExtensionPortTests: XCTestCase {
         func extensionOpenWindow(profileId: String, urls: [URL], focused: Bool) -> ExtensionHostWindow? { nil }
         func extensionConfirm(_ request: ExtensionConsentRequest) async -> Bool { false }
         func extensionNotify(_ message: String, profileId: String) {}
-        func extensionsDidChange(profileId: String) {}
+        var changes = 0
+        func extensionsDidChange(profileId: String) { changes += 1 }
     }
 
     private var manager: WebKitExtensionManager { .shared }
@@ -55,13 +56,19 @@ final class ExtensionPortTests: XCTestCase {
 
     /// Installs a store-style extension with the given files and grants, and
     /// loads it.
-    private func install(id: String, manifest: [String: Any], files: [String: String], grants: [String]) async throws -> WKWebExtensionContext {
+    private func install(id: String, manifest: [String: Any], files: [String: String], binaries: [String: Data] = [:],
+                         grants: [String]) async throws -> WKWebExtensionContext {
         let extensions = root.appendingPathComponent(profileId).appendingPathComponent("WebExtensions", isDirectory: true)
         let folder = extensions.appendingPathComponent(id, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: manifest).write(to: folder.appendingPathComponent("manifest.json"))
         for (name, text) in files {
             try Data(text.utf8).write(to: folder.appendingPathComponent(name))
+        }
+        for (name, data) in binaries {
+            let file = folder.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file)
         }
         let record = InstalledWebExtension(id: id, source: .webStore, name: manifest["name"] as? String ?? id, version: "1.0", grants: grants)
         try InstalledWebExtensionList(extensions: [record]).save(to: extensions.appendingPathComponent("installed.json"))
@@ -323,6 +330,120 @@ final class ExtensionPortTests: XCTestCase {
         let got = await received(in: popup)
         XCTAssertEqual(got, Self.deliveredByWebKit)
     }
+
+    // MARK: - Whether iCloud Passwords is paired
+
+    /// A one-colour PNG, for icons that must differ.
+    private func png(red: CGFloat, size: Int) -> Data {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(deviceRed: red, green: 0.2, blue: 0.4, alpha: 1).setFill()
+        NSRect(x: 0, y: 0, width: size, height: size).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        return rep.representation(using: .png, properties: [:])!
+    }
+
+    /// A host that says "unpaired" at once and "paired" a moment later, as
+    /// the only thing it ever says.
+    private func writePairingHost(origin: String) throws {
+        let script = """
+        #!/usr/bin/perl
+        use strict; binmode STDIN; binmode STDOUT; $| = 1;
+        sub say { my ($b) = @_; print pack("L", length($b)) . $b; }
+        my $h; exit 0 if read(STDIN, $h, 4) != 4;
+        my $n = unpack("L", $h); my $b = ''; read(STDIN, $b, $n);
+        say('{"state":"unpaired"}');
+        select(undef, undef, undef, 1.5);
+        say('{"state":"paired"}');
+        while (read(STDIN, $h, 4) == 4) { my $n = unpack("L", $h); read(STDIN, $b, $n); }
+        """
+        let path = hostFolder.appendingPathComponent("pairing-host")
+        try script.write(to: path, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        let manifest: [String: Any] = ["name": Self.hostName, "description": "test", "path": path.path, "type": "stdio", "allowed_origins": [origin]]
+        try JSONSerialization.data(withJSONObject: manifest).write(to: hostFolder.appendingPathComponent(Self.hostName + ".json"))
+    }
+
+    /// iCloud Passwords' way of showing it is paired, in shape: the worker
+    /// sets the unpaired icon, starts its helper, and sets the paired icon
+    /// when the helper says so. The default icon is the paired one.
+    private func installPairingShape() async throws -> WKWebExtensionContext {
+        let id = ICloudPasswordsExtension.storeID
+        try writePairingHost(origin: "chrome-extension://\(id)/")
+        let manifest: [String: Any] = [
+            "manifest_version": 3, "name": "iCloud Passwords", "version": "1.0",
+            "permissions": ["nativeMessaging"],
+            "background": ["service_worker": "background.js"],
+            "action": ["default_icon": ["16": "images/PasswordsToolbar_icon16.png", "32": "images/PasswordsToolbar_icon32.png"]],
+        ]
+        let worker = """
+        function setToolbarIcon(name) {
+          chrome.action.setIcon({ path: { 16: "images/" + name + "_icon16.png", 32: "images/" + name + "_icon32.png" } });
+        }
+        setToolbarIcon("PasswordsToolbarUnpaired");
+        const port = chrome.runtime.connectNative("\(Self.hostName)");
+        port.onMessage.addListener(function (m) {
+          setToolbarIcon(m && m.state === "paired" ? "PasswordsToolbar" : "PasswordsToolbarUnpaired");
+        });
+        port.postMessage("hello");
+        """
+        var images: [String: Data] = [:]
+        for (name, red) in [("PasswordsToolbar", 0.9), ("PasswordsToolbar-darkmode", 0.7),
+                            ("PasswordsToolbarUnpaired", 0.3), ("PasswordsToolbarUnpaired-darkmode", 0.1)] {
+            images["images/\(name)_icon16.png"] = png(red: red, size: 16)
+            images["images/\(name)_icon32.png"] = png(red: red, size: 32)
+        }
+        return try await install(id: id, manifest: manifest, files: ["background.js": worker], binaries: images,
+                                 grants: ["perm:nativeMessaging"])
+    }
+
+    private func isSetUp(_ id: String) -> Bool? {
+        manager.extensions(profileId: profileId).first { $0.id == id }?.isSetUp
+    }
+
+    /// Not paired while the worker shows the unpaired icon, paired once it
+    /// shows the paired one, and not paired again once its helper is gone,
+    /// whatever the icon still says. Each change reaches the host.
+    func testICloudPasswordsCountsAsSetUpOnlyWhilePairedWithItsHelperRunning() async throws {
+        let id = ICloudPasswordsExtension.storeID
+        let context = try await installPairingShape()
+        let started = await waitUntil(10) { !WebKitNativeMessaging.hostProcessIdentifiers(for: context).isEmpty }
+        XCTAssertTrue(started, "the helper never started: \(context.errors)")
+        XCTAssertEqual(isSetUp(id), false, "unpaired while its helper says so")
+
+        let changesBefore = host.changes
+        let paired = await waitUntil(10) { isSetUp(id) == true }
+        XCTAssertTrue(paired, "never counted as paired")
+        XCTAssertGreaterThan(host.changes, changesBefore)
+
+        let pid = try XCTUnwrap(WebKitNativeMessaging.hostProcessIdentifiers(for: context).first)
+        let changesBeforeExit = host.changes
+        kill(pid, SIGKILL)
+        let ended = await waitUntil(10) { isSetUp(id) == false }
+        XCTAssertTrue(ended, "still counted as paired after the helper died")
+        let told = await waitUntil(5) { host.changes > changesBeforeExit }
+        XCTAssertTrue(told, "the toolbar was never told the helper ended")
+    }
+
+    /// Turned off, it is not paired.
+    func testICloudPasswordsTurnedOffIsNotSetUp() async throws {
+        let id = ICloudPasswordsExtension.storeID
+        _ = try await installPairingShape()
+        let paired = await waitUntil(10) { isSetUp(id) == true }
+        XCTAssertTrue(paired)
+        manager.setEnabled(false, extensionId: id, profileId: profileId)
+        XCTAssertEqual(isSetUp(id), false)
+    }
+
+    /// Every other extension has nothing to set up, so nothing changes for it.
+    func testOtherExtensionsHaveNoSetUpState() async throws {
+        let other = String(repeating: "m", count: 32)
+        _ = try await startNativePortExtension(id: other)
+        XCTAssertNil(isSetUp(other))
+    }
+
 }
 
 private extension WKWebView {

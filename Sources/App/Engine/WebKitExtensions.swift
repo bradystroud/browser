@@ -163,6 +163,14 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
     func activate(host: ExtensionHost, storageDirectory: @escaping (String) -> URL?) {
         self.host = host
         self.storageDirectory = storageDirectory
+        // A helper starting or ending can change whether an extension is set
+        // up (EngineExtensionSummary.isSetUp), and with it the toolbar.
+        MainActor.assumeIsolated {
+            WebKitNativeMessaging.hostsDidChange = { [weak self] context in
+                guard let self, let profile = self.profiles.values.first(where: { $0.contexts[context.uniqueIdentifier] === context }) else { return }
+                self.host?.extensionsDidChange(profileId: profile.profileId)
+            }
+        }
         guard updateTimer == nil else { return }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in
             guard let self else { return }
@@ -380,6 +388,7 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
 
     private func start(_ found: WKWebExtension, record: InstalledWebExtension, in profile: WebKitExtensionProfile) throws {
         let context = WKWebExtensionContext(for: found)
+        MainActor.assumeIsolated { WebKitExtensionSetupState.forget(profile.resourceFolder(for: record)) }
         context.uniqueIdentifier = record.id
         if let base = URL(string: "\(Self.pageScheme)://\(record.id)/") { context.baseURL = base }
         context.isInspectable = true
@@ -487,7 +496,10 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
                 isPinned: record.pinned,
                 isLoaded: context?.isLoaded ?? false,
                 hasOptionsPage: context?.optionsPageURL != nil,
-                errors: profile.errors[record.id] ?? [])
+                errors: profile.errors[record.id] ?? [],
+                isSetUp: MainActor.assumeIsolated {
+                    WebKitExtensionSetupState.isSetUp(context, id: record.id, package: profile.resourceFolder(for: record))
+                })
         }
     }
 
@@ -690,6 +702,16 @@ final class WebKitExtensionManager: NSObject, EngineExtensionManager {
         let tab = window.extensionActiveTab.map { profile.tabAdapter(for: $0) }
         if let tab { context.userGesturePerformed(in: tab) }
         context.performAction(for: tab)
+    }
+
+    /// The extension's own popup in `window`, whatever engine the window's
+    /// page runs in (a WebKit popup, from this manager's context), and left
+    /// open when it already is.
+    func openPopup(extensionId id: String, window: ExtensionHostWindow) {
+        guard let profile = profiles[window.extensionProfileId], let context = profile.contexts[id] else { return }
+        if profile.shownPopoverExtensionId == id, profile.shownPopover?.isShown == true { return }
+        profile.actionWindow = window
+        context.performAction(for: nil)
     }
 
     // MARK: - Updates

@@ -18,6 +18,7 @@ final class ICloudPasswordsSection: NSObject {
     }()
     private let setUpButton = NSButton(title: "Set Up…", target: nil, action: nil)
     private let turnOnButton = NSButton(title: "Turn On", target: nil, action: nil)
+    private let pairButton = NSButton(title: "Pair…", target: nil, action: nil)
     private let optionsButton = NSButton(title: "Options…", target: nil, action: nil)
     private let removeButton = NSButton(title: "Remove…", target: nil, action: nil)
     private let manageButton = NSButton(title: "Manage Extensions…", target: nil, action: nil)
@@ -36,7 +37,7 @@ final class ICloudPasswordsSection: NSObject {
     func install(in form: SettingsForm, hostView: NSView) {
         self.hostView = hostView
         for (button, action) in [
-            (setUpButton, #selector(setUp)), (turnOnButton, #selector(turnOn)),
+            (setUpButton, #selector(setUp)), (turnOnButton, #selector(turnOn)), (pairButton, #selector(pair)),
             (optionsButton, #selector(openOptions)), (removeButton, #selector(remove)),
             (manageButton, #selector(manage)),
         ] {
@@ -45,7 +46,7 @@ final class ICloudPasswordsSection: NSObject {
         }
         form.beginSection()
         form.addRow("iCloud Passwords:", statusLabel)
-        buttonRow = form.addRow(nil, setUpButton, turnOnButton, optionsButton, manageButton, removeButton)
+        buttonRow = form.addRow(nil, setUpButton, turnOnButton, pairButton, optionsButton, manageButton, removeButton)
         observer = NotificationCenter.default.addObserver(
             forName: .browserExtensionsDidChange, object: nil, queue: .main
         ) { [weak self] notification in
@@ -77,7 +78,8 @@ final class ICloudPasswordsSection: NSObject {
             installed: found != nil,
             enabled: found?.isEnabled ?? false,
             loaded: found?.isLoaded ?? false,
-            errorCount: found?.errors.count ?? 0
+            errorCount: found?.errors.count ?? 0,
+            paired: found?.isSetUp == true
         )
     }
 
@@ -94,7 +96,9 @@ final class ICloudPasswordsSection: NSObject {
                 ? "Setting up…"
                 : "Fill and save passwords from the Passwords app, with Apple's iCloud Passwords extension. Works in WebKit tabs."
         case .ready:
-            text = "On. To pair, click the iCloud Passwords button in the toolbar and enter the code that macOS shows."
+            text = "On, not paired yet. Click Pair… and enter the code that macOS shows. The iCloud Passwords button appears in the toolbar once this profile is paired."
+        case .paired:
+            text = "On and paired. Fills from the Passwords app in WebKit tabs."
         case .turnedOff:
             text = "The extension is turned off."
         case .hasProblem:
@@ -106,10 +110,12 @@ final class ICloudPasswordsSection: NSObject {
         setUpButton.isHidden = status != .notInstalled
         setUpButton.isEnabled = hasProfile && !installing
         turnOnButton.isHidden = status != .turnedOff
-        optionsButton.isHidden = !(status == .ready && summary?.hasOptionsPage == true)
-        removeButton.isHidden = status != .ready
+        pairButton.isHidden = status != .ready
+        let running = status == .ready || status == .paired
+        optionsButton.isHidden = !(running && summary?.hasOptionsPage == true)
+        removeButton.isHidden = !running
         manageButton.isHidden = status != .hasProblem
-        let anyButton = [setUpButton, turnOnButton, optionsButton, removeButton, manageButton].contains { !$0.isHidden }
+        let anyButton = [setUpButton, turnOnButton, pairButton, optionsButton, removeButton, manageButton].contains { !$0.isHidden }
         buttonRow?.isHidden = !anyButton
     }
 
@@ -127,7 +133,7 @@ final class ICloudPasswordsSection: NSObject {
             }
             do {
                 try await manager.installFromWebStore(ICloudPasswordsExtension.storeLink, profileId: profile.id)
-                // Pairing starts from the extension's own toolbar button.
+                // Its toolbar button shows once the profile is paired.
                 manager.setPinned(true, extensionId: ICloudPasswordsExtension.storeID, profileId: profile.id)
             } catch {
                 ExtensionsToolbarController.report(error, in: window)
@@ -138,6 +144,13 @@ final class ICloudPasswordsSection: NSObject {
     @objc private func turnOn() {
         guard let profile else { return }
         manager?.setEnabled(true, extensionId: Self.id, profileId: profile.id)
+    }
+
+    /// Pairing happens in the extension's own popup, which asks macOS for a
+    /// code; it opens over a window of this profile.
+    @objc private func pair() {
+        guard let profile else { return }
+        ExtensionsCoordinator.shared.openPopup(extensionId: Self.id, profile: profile)
     }
 
     @objc private func openOptions() {

@@ -203,6 +203,10 @@ final class CombinedExtensionManager: EngineExtensionManager, ExtensionHost {
         owner.performAction(extensionId: extensionId, window: window)
     }
 
+    func openPopup(extensionId: String, window: ExtensionHostWindow) {
+        owner.openPopup(extensionId: extensionId, window: window)
+    }
+
     @MainActor @discardableResult
     func checkForUpdates(profileId: String, force: Bool) async -> Int {
         let updated = await capturingConsent(profileId: profileId, extensionId: nil) {

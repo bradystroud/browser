@@ -134,6 +134,7 @@ set(BROWSER_SWIFT_SRCS
   Engine/WebKitExtensionAdapters.swift
   Engine/WebKitExtensionInstaller.swift
   Engine/WebKitExtensionPageWindow.swift
+  Engine/WebKitExtensionSetupState.swift
   Engine/WebKitNativeMessaging.swift
   Engine/ExtensionSettingsProvider.swift
   Routing/RoutingRulesStore.swift
@@ -434,6 +435,7 @@ set(BROWSER_WEBENGINE_CORE_SRCS
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ChromeExtensionUpdate.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/InstalledWebExtension.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ICloudPasswordsExtension.swift
+  ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ExtensionToolbarRule.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/ZipArchive.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionShim.swift
   ${CMAKE_SOURCE_DIR}/Packages/WebEngineCore/Sources/WebEngineCore/CEFExtensionPreparer.swift

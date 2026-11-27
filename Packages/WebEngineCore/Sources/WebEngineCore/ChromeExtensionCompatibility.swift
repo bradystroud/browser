@@ -329,6 +329,7 @@ public enum ChromeExtensionCompatibility {
       // levelOfControl }. The caller is whoever the engine says it is, so
       // nothing here names the extension.
       var SETTINGS_HOST = "dev.stroud.browser.settings";
+      var settingsPortsInUse = [];
       function settingsTransport() {
         var custom = typeof globalThis === "object" ? globalThis.__browserSettingsTransport : undefined;
         if (custom && typeof custom.request === "function") return custom;
@@ -349,9 +350,15 @@ public enum ChromeExtensionCompatibility {
               } catch (e) { reject(e); }
             });
           },
+          // The port is kept: WebKit disconnects a port whose script object
+          // is collected, and the changes would stop arriving.
           subscribe: function (onEvent) {
             if (typeof runtime.connectNative !== "function") return;
-            try { runtime.connectNative(SETTINGS_HOST).onMessage.addListener(onEvent); } catch (e) {}
+            try {
+              var port = runtime.connectNative(SETTINGS_HOST);
+              port.onMessage.addListener(onEvent);
+              settingsPortsInUse.push(port);
+            } catch (e) {}
           }
         };
       }
